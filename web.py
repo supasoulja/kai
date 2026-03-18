@@ -20,6 +20,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import kai.config as cfg
@@ -67,7 +68,7 @@ _MAX_INPUT_CHARS = 8000
 # ── Session auth ──────────────────────────────────────────────────────────────
 # In-memory token store. Tokens survive until server restart or explicit logout.
 
-_session_tokens: dict[str, str] = {}   # token → username
+_session_tokens: dict[str, dict] = {}   # token → {"name": str, "user_id": int}
 
 
 class _AuthGuard:
@@ -78,9 +79,14 @@ class _AuthGuard:
     responses (SSE chat) are never buffered.
     """
 
+    # Routes that never require auth (no cookie parsing needed)
     _PUBLIC = frozenset({
-        "/", "/users", "/users/login", "/users/register", "/users/logout",
+        "/login", "/users", "/users/login", "/users/register", "/users/logout",
     })
+    _PUBLIC_PREFIXES = ("/static/",)
+
+    # Routes that parse the cookie but don't reject if missing
+    _OPTIONAL_AUTH = frozenset({"/", "/dashboard/stats"})
 
     def __init__(self, app):
         self.app = app
@@ -89,7 +95,8 @@ class _AuthGuard:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        if scope.get("path", "") in self._PUBLIC:
+        path = scope.get("path", "")
+        if path in self._PUBLIC or any(path.startswith(p) for p in self._PUBLIC_PREFIXES):
             return await self.app(scope, receive, send)
 
         # Parse kai_session from the Cookie header
@@ -103,30 +110,106 @@ class _AuthGuard:
                         break
                 break
 
-        if not token or token not in _session_tokens:
+        user_info = _session_tokens.get(token) if token else None
+
+        if not user_info and path not in self._OPTIONAL_AUTH:
             resp = JSONResponse(
                 status_code=401,
                 content={"detail": "Not authenticated"},
             )
             return await resp(scope, receive, send)
 
+        # Inject user info into ASGI scope so routes can access it
+        if user_info:
+            scope.setdefault("state", {})
+            scope["state"]["user"] = user_info
         return await self.app(scope, receive, send)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _get_user(request: Request) -> dict | None:
+    """Extract the authenticated user dict from the request (set by _AuthGuard).
+    Returns {"name": str, "user_id": int} or None for public routes."""
+    return getattr(request.state, "user", None)
 
 
 # ── App state ──────────────────────────────────────────────────────────────────
 
-app    = FastAPI(title="Kai")
-_brain:  Brain | None        = None
-_memory: MemoryManager | None = None
+app = FastAPI(title="Kai")
 
-_HTML = Path(__file__).parent / "kai" / "static" / "index.html"
+# Shared across all users (expensive to duplicate)
+_ollama: OllamaClient | None = None
+_shared_tool_index: dict[str, list[float]] = {}
+_shared_domain_index: dict[str, list[float]] = {}
+
+# Per-user Brain + MemoryManager instances
+_user_brains: dict[int, Brain] = {}
+_user_brains_lock = threading.Lock()
+
+_STATIC_DIR = Path(__file__).parent / "kai" / "static"
+
+
+def _get_or_create_brain(user_id: int) -> Brain:
+    """Get (or lazily create) a per-user Brain instance. Thread-safe."""
+    brain = _user_brains.get(user_id)
+    if brain is not None:
+        return brain
+    with _user_brains_lock:
+        # Double-check after acquiring lock
+        brain = _user_brains.get(user_id)
+        if brain is not None:
+            return brain
+        memory = MemoryManager(embed_fn=_ollama.embed, user_id=user_id)
+        # Copy shared indexes so we don't re-embed per user
+        memory._domain_index = dict(_shared_domain_index)
+        seed_defaults(user_id=user_id)
+        brain = Brain(
+            memory=memory,
+            model=cfg.CHAT_MODEL,
+            ollama=_ollama,
+            tool_registry=tool_registry,
+            think=True,
+            user_id=user_id,
+        )
+        brain._tool_index = dict(_shared_tool_index)
+        brain._tool_index_ready = bool(_shared_tool_index)
+        brain._memory_router_ready = bool(_shared_domain_index)
+        _user_brains[user_id] = brain
+        return brain
+
+
+def _brain_for(request: Request) -> Brain:
+    """Get the Brain for the authenticated user. Raises 503 if Ollama not ready."""
+    if not _ollama:
+        raise HTTPException(status_code=503, detail="Not initialized")
+    user = _get_user(request)
+    uid = user["user_id"] if user else 0
+    return _get_or_create_brain(uid)
+
+
+def _uid_for(request: Request) -> int:
+    """Get the user_id for the authenticated user. Returns 0 for public routes."""
+    user = _get_user(request)
+    return user["user_id"] if user else 0
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    return HTMLResponse(content=_HTML.read_text(encoding="utf-8"))
+async def index(request: Request):
+    """Serve the main app page (or redirect to login if not authenticated)."""
+    user = _get_user(request)
+    if not user:
+        # Not authenticated — serve login page
+        return HTMLResponse(content=(_STATIC_DIR / "login.html").read_text(encoding="utf-8"))
+    return HTMLResponse(content=(_STATIC_DIR / "app.html").read_text(encoding="utf-8"))
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    """Serve the standalone login page."""
+    return HTMLResponse(content=(_STATIC_DIR / "login.html").read_text(encoding="utf-8"))
 
 
 _HIGHLIGHT_KEYS = {"user_name", "user_role", "location", "gaming"}
@@ -138,9 +221,11 @@ _HIGHLIGHT_LABELS = {
 }
 
 @app.get("/info")
-async def info():
-    facts   = _memory.list_facts()   if _memory else []
-    recents = _memory.recent_episodes(limit=1) if _memory else []
+async def info(request: Request):
+    brain = _brain_for(request)
+    memory = brain.memory
+    facts   = memory.list_facts()
+    recents = memory.recent_episodes(limit=1)
 
     # Build memory highlights: stable user facts worth showing in sidebar
     highlights = []
@@ -153,7 +238,7 @@ async def info():
             break
 
     return {
-        "model":          _brain.model if _brain else "unknown",
+        "model":          brain.model,
         "facts":          len(facts),
         "context_window": cfg.CONTEXT_WINDOW,
         "last_seen":      recents[0].timestamp.strftime("%b %d") if recents else None,
@@ -161,30 +246,53 @@ async def info():
     }
 
 
+@app.get("/dashboard/stats")
+async def dashboard_stats(request: Request):
+    """Aggregated counts for the dashboard stat cards."""
+    uid = _uid_for(request)
+    brain = _brain_for(request)
+    memory = brain.memory
+    from kai.db import get_conn
+    conn = get_conn()
+    facts_count = len(memory.list_facts())
+    sessions_count = conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE user_id = ?", (uid,)
+    ).fetchone()[0]
+    docs_count = conn.execute(
+        "SELECT COUNT(DISTINCT doc_id) FROM rag_documents WHERE user_id = ? OR shared = 1",
+        (uid,),
+    ).fetchone()[0]
+    notes_count = conn.execute(
+        "SELECT COUNT(*) FROM notes WHERE user_id = ?", (uid,)
+    ).fetchone()[0]
+    return {
+        "facts": facts_count,
+        "sessions": sessions_count,
+        "documents": docs_count,
+        "notes": notes_count,
+    }
+
+
 @app.post("/clear")
-async def clear():
-    if _brain:
-        brain = _brain  # capture non-None ref for closure
-        # Thread-safe snapshot then clear immediately so new messages start fresh.
-        # The snapshot is archived in the background — nothing is lost.
-        snapshot = brain.snapshot_history()
-        _brain.clear_history()
-        if any(m.get("role") != "system" for m in snapshot):
-            threading.Thread(
-                target=brain.flush_history_snapshot,
-                args=(snapshot,),
-                daemon=True,
-            ).start()
+async def clear(request: Request):
+    brain = _brain_for(request)
+    snapshot = brain.snapshot_history()
+    brain.clear_history()
+    if any(m.get("role") != "system" for m in snapshot):
+        threading.Thread(
+            target=brain.flush_history_snapshot,
+            args=(snapshot,),
+            daemon=True,
+        ).start()
     return {"ok": True}
 
 
 # ── Memory browser ─────────────────────────────────────────────────────────────
 
 @app.get("/memory/facts")
-async def get_memory_facts():
-    if not _memory:
-        return []
-    facts = _memory.list_facts()
+async def get_memory_facts(request: Request):
+    memory = _brain_for(request).memory
+    facts = memory.list_facts()
     return [
         {
             "key":        f.key,
@@ -197,32 +305,28 @@ async def get_memory_facts():
 
 
 @app.put("/memory/facts/{key}")
-async def update_memory_fact(key: str, req: FactUpdateRequest):
-    if not _memory:
-        raise HTTPException(status_code=503, detail="Memory not initialized")
+async def update_memory_fact(key: str, req: FactUpdateRequest, request: Request):
+    memory = _brain_for(request).memory
     value = req.value.strip()
     if not value:
         raise HTTPException(status_code=400, detail="Value cannot be empty")
-    _memory.set_fact(key, value, source="user_edit")
+    memory.set_fact(key, value, source="user_edit")
     return {"ok": True}
 
 
 @app.delete("/memory/facts/{key}")
-async def delete_memory_fact(key: str):
-    if not _memory:
-        raise HTTPException(status_code=503, detail="Memory not initialized")
-    _memory.delete_fact(key)
+async def delete_memory_fact(key: str, request: Request):
+    memory = _brain_for(request).memory
+    memory.delete_fact(key)
     return {"ok": True}
 
 
 @app.get("/memory/episodic")
-async def get_memory_episodic():
+async def get_memory_episodic(request: Request):
     """Return episodic summaries (compressed conversation memories)."""
-    if not _memory:
-        return []
+    uid = _uid_for(request)
     from kai.memory import episodic as _episodic
-    entries = _episodic.recent(limit=50)
-    # Return all non-turn entries (summaries + milestones) plus raw turns
+    entries = _episodic.recent(limit=50, user_id=uid)
     return [
         {
             "id":         e.id,
@@ -237,8 +341,9 @@ async def get_memory_episodic():
 # ── Session history ─────────────────────────────────────────────────────────────
 
 @app.get("/sessions")
-async def get_sessions():
-    return _sessions.list_sessions(limit=50)
+async def get_sessions(request: Request):
+    uid = _uid_for(request)
+    return _sessions.list_sessions(limit=50, user_id=uid)
 
 
 @app.get("/sessions/{session_id}/messages")
@@ -247,21 +352,20 @@ async def get_session_messages(session_id: str):
 
 
 @app.post("/sessions/{session_id}/load")
-async def load_session(session_id: str):
+async def load_session(session_id: str, request: Request):
     """Restore a past session into the brain's in-memory history."""
-    if not _brain:
-        raise HTTPException(status_code=503, detail="Brain not initialized")
+    brain = _brain_for(request)
     msgs = _sessions.get_messages(session_id)
     if not msgs:
         raise HTTPException(status_code=404, detail="Session not found or empty")
-    loaded = _brain.load_session(session_id, msgs)
+    loaded = brain.load_session(session_id, msgs)
     return {"ok": True, "loaded": loaded}
 
 
 # ── Feedback ───────────────────────────────────────────────────────────────────
 
 @app.post("/feedback")
-async def post_feedback(req: FeedbackRequest):
+async def post_feedback(req: FeedbackRequest, request: Request):
     if req.value not in (1, -1):
         raise HTTPException(status_code=400, detail="value must be 1 or -1")
 
@@ -269,10 +373,11 @@ async def post_feedback(req: FeedbackRequest):
     _sessions.save_feedback(req.message_id, req.value)
 
     # Record in episodic memory so Kai can learn from it
-    if _memory and req.snippet:
+    if req.snippet:
+        memory = _brain_for(request).memory
         label = "positive" if req.value == 1 else "negative"
         entry = f"User gave {label} feedback on this response: {req.snippet[:300]}"
-        _memory.add_episode(entry, entry_type="event", metadata={"feedback": req.value})
+        memory.add_episode(entry, entry_type="event", metadata={"feedback": req.value})
 
     return {"ok": True}
 
@@ -297,37 +402,38 @@ _MODE_RULES = {
 
 
 @app.get("/settings/mode")
-async def get_mode():
-    label = _memory.get_fact("response_mode") if _memory else None
-    label = label or "Short answers"
+async def get_mode(request: Request):
+    memory = _brain_for(request).memory
+    label = memory.get_fact("response_mode") or "Short answers"
     label_to_key = {v: k for k, v in _MODE_LABELS.items()}
     mode = label_to_key.get(label, "short")
     return {"mode": mode, "label": label}
 
 
 @app.post("/settings/mode")
-async def set_mode(req: ModeRequest):
+async def set_mode(req: ModeRequest, request: Request):
     if req.mode not in _MODE_RULES:
         raise HTTPException(status_code=400, detail=f"Invalid mode. Choose from: {list(_MODE_RULES)}")
+    memory = _brain_for(request).memory
     from kai.memory import procedural as _proc
-    _proc.set_rule("response_length", _MODE_RULES[req.mode])
-    if _memory:
-        _memory.set_fact("response_mode", _MODE_LABELS[req.mode], source="user_setting")
+    _proc.set_rule("response_length", _MODE_RULES[req.mode], user_id=memory.user_id)
+    memory.set_fact("response_mode", _MODE_LABELS[req.mode], source="user_setting")
     return {"ok": True, "mode": req.mode, "label": _MODE_LABELS[req.mode]}
 
 
 # ── Think mode ─────────────────────────────────────────────────────────────────
 
 @app.get("/settings/think")
-async def get_think():
-    return {"think": _brain._think if _brain else True}
+async def get_think(request: Request):
+    brain = _brain_for(request)
+    return {"think": brain._think}
 
 
 @app.post("/settings/think")
-async def set_think():
-    if _brain:
-        _brain._think = not _brain._think
-    return {"think": _brain._think if _brain else True}
+async def set_think(request: Request):
+    brain = _brain_for(request)
+    brain._think = not brain._think
+    return {"think": brain._think}
 
 
 # ── User auth ──────────────────────────────────────────────────────────────────
@@ -355,7 +461,7 @@ async def login_user(req: LoginRequest, response: Response):
 
     # Issue session token
     token = secrets.token_urlsafe(32)
-    _session_tokens[token] = user["name"]
+    _session_tokens[token] = {"name": user["name"], "user_id": user["id"]}
     response.set_cookie(
         key="kai_session",
         value=token,
@@ -365,8 +471,9 @@ async def login_user(req: LoginRequest, response: Response):
         max_age=86400 * 7,  # 7 days
     )
 
-    if _memory:
-        _memory.set_fact("user_name", user["name"], source="login")
+    # Eagerly create the user's Brain so it's warm when they start chatting
+    brain = _get_or_create_brain(user["id"])
+    brain.memory.set_fact("user_name", user["name"], source="login")
     return {"ok": True, "user": user}
 
 
@@ -390,7 +497,7 @@ async def register_user(req: LoginRequest, response: Response):
 
     # Issue session token (auto-login)
     token = secrets.token_urlsafe(32)
-    _session_tokens[token] = name
+    _session_tokens[token] = {"name": name, "user_id": user["id"]}
     response.set_cookie(
         key="kai_session",
         value=token,
@@ -400,8 +507,9 @@ async def register_user(req: LoginRequest, response: Response):
         max_age=86400 * 7,
     )
 
-    if _memory:
-        _memory.set_fact("user_name", name, source="login")
+    # Eagerly create the user's Brain
+    brain = _get_or_create_brain(user["id"])
+    brain.memory.set_fact("user_name", name, source="login")
     return {"ok": True, "user": user}
 
 
@@ -418,66 +526,72 @@ async def logout_user(request: Request, response: Response):
 # ── DM mode ────────────────────────────────────────────────────────────────────
 
 @app.get("/dm/status")
-async def dm_status():
+async def dm_status(request: Request):
     """Return current DM mode state and active campaign info."""
-    active = _campaign.get_active_campaign()
+    uid = _uid_for(request)
+    brain = _brain_for(request)
+    active = _campaign.get_active_campaign(user_id=uid)
     return {
-        "dm_mode":  _brain.dm_mode if _brain else False,
+        "dm_mode":  brain.dm_mode,
         "campaign": active,
-        "campaigns": _campaign.list_campaigns(),
+        "campaigns": _campaign.list_campaigns(user_id=uid),
     }
 
 
 @app.post("/dm/start")
-async def dm_start(req: DmStartRequest):
+async def dm_start(req: DmStartRequest, request: Request):
     """Enter DM mode. Creates a new campaign if name given, else resumes active."""
-    if not _brain:
-        raise HTTPException(status_code=503, detail="Brain not initialized")
+    uid = _uid_for(request)
+    brain = _brain_for(request)
     if req.campaign_name.strip():
-        _campaign.create_campaign(req.campaign_name.strip())
+        _campaign.create_campaign(req.campaign_name.strip(), user_id=uid)
     else:
         # Resume: ensure there's an active campaign
-        if not _campaign.get_active_campaign():
-            campaigns = _campaign.list_campaigns()
+        if not _campaign.get_active_campaign(user_id=uid):
+            campaigns = _campaign.list_campaigns(user_id=uid)
             if campaigns:
-                _campaign.set_active_campaign(campaigns[0]["id"])
+                _campaign.set_active_campaign(campaigns[0]["id"], user_id=uid)
             else:
                 raise HTTPException(
                     status_code=400,
                     detail="No active campaign. Provide a campaign_name to start one."
                 )
-    _brain.dm_mode = True
-    active = _campaign.get_active_campaign()
+    brain.dm_mode = True
+    active = _campaign.get_active_campaign(user_id=uid)
     return {"ok": True, "dm_mode": True, "campaign": active}
 
 
 @app.post("/dm/stop")
-async def dm_stop():
+async def dm_stop(request: Request):
     """Exit DM mode (campaign data is preserved)."""
-    if _brain:
-        _brain.dm_mode = False
+    brain = _brain_for(request)
+    brain.dm_mode = False
     return {"ok": True, "dm_mode": False}
 
 
 @app.post("/dm/campaigns/{campaign_id}/activate")
-async def dm_activate_campaign(campaign_id: str):
+async def dm_activate_campaign(campaign_id: str, request: Request):
     """Switch to a different campaign."""
-    if not _campaign.set_active_campaign(campaign_id):
+    uid = _uid_for(request)
+    brain = _brain_for(request)
+    if not _campaign.set_active_campaign(campaign_id, user_id=uid):
         raise HTTPException(status_code=404, detail="Campaign not found")
-    if _brain:
-        _brain.dm_mode = True
-    active = _campaign.get_active_campaign()
+    brain.dm_mode = True
+    active = _campaign.get_active_campaign(user_id=uid)
     return {"ok": True, "campaign": active}
 
 
 # ── Document RAG ─────────────────────────────────────────────────────────────
 
 @app.post("/docs/upload")
-async def upload_doc(file: UploadFile = File(...)):
+async def upload_doc(file: UploadFile = File(...), request: Request = None):
     """Ingest an uploaded document: extract text, chunk, embed, store."""
     import shutil, tempfile
     from pathlib import Path
     from kai.memory import documents as _docs
+
+    uid = _uid_for(request)
+    brain = _brain_for(request)
 
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _docs.ALLOWED_TYPES:
@@ -492,23 +606,19 @@ async def upload_doc(file: UploadFile = File(...)):
         tmp_path = Path(tmp.name)
 
     try:
-        # Use the brain's embed_fn if available, else fall back to text-only storage
-        embed_fn = _brain.get_embed_fn() if _brain else None
-        meta = _docs.ingest(tmp_path, embed_fn=embed_fn, original_name=file.filename)
+        embed_fn = brain.get_embed_fn()
+        meta = _docs.ingest(tmp_path, embed_fn=embed_fn, original_name=file.filename, user_id=uid)
 
-        # Inject the upload as a message in the conversation history so Kai
-        # sees it in the thread (not just the sidebar).  This makes documents
-        # part of the dialogue — the model will know a file was shared.
-        if _brain:
-            upload_note = (
-                f"[Document uploaded: {file.filename} — "
-                f"{meta.get('chunk_count', '?')} chunks, "
-                f"{meta.get('char_count', '?')} chars]"
+        # Inject the upload as a message in the conversation history
+        upload_note = (
+            f"[Document uploaded: {file.filename} — "
+            f"{meta.get('chunk_count', '?')} chunks, "
+            f"{meta.get('char_count', '?')} chars]"
+        )
+        with brain._history_lock:
+            brain._session_history.append(
+                {"role": "user", "content": upload_note}
             )
-            with _brain._history_lock:
-                _brain._session_history.append(
-                    {"role": "user", "content": upload_note}
-                )
 
         return {"ok": True, **meta}
     except ValueError as e:
@@ -520,27 +630,25 @@ async def upload_doc(file: UploadFile = File(...)):
 
 
 @app.get("/docs/list")
-async def list_docs():
+async def list_docs(request: Request):
     from kai.memory import documents as _docs
-    return _docs.list_documents()
+    uid = _uid_for(request)
+    return _docs.list_documents(user_id=uid)
 
 
 @app.delete("/docs/{doc_id}")
-async def delete_doc(doc_id: str):
+async def delete_doc(doc_id: str, request: Request):
     from kai.memory import documents as _docs
-    ok = _docs.delete_document(doc_id)
+    uid = _uid_for(request)
+    ok = _docs.delete_document(doc_id, user_id=uid)
     if not ok:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"ok": True, "deleted": doc_id}
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest):
-    if not _brain:
-        async def err_stream():
-            yield f'data: {json.dumps({"type":"error","text":"Brain not initialized"})}\n\n'
-            yield f'data: {json.dumps({"type":"done"})}\n\n'
-        return StreamingResponse(err_stream(), media_type="text/event-stream")
+async def chat(req: ChatRequest, request: Request):
+    brain = _brain_for(request)
 
     user_input = req.message.strip()
     if not user_input:
@@ -555,7 +663,6 @@ async def chat(req: ChatRequest):
             yield f'data: {json.dumps({"type":"done"})}\n\n'
         return StreamingResponse(too_long(), media_type="text/event-stream")
 
-    brain = _brain  # capture non-None ref for closure
     loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
     q: asyncio.Queue = asyncio.Queue()
 
@@ -627,9 +734,12 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
     _first_reply_done.wait(timeout=600)
 
     from kai.memory import episodic as _episodic
-    pending = _episodic.get_pending_turns_text()
-    if not pending or not _memory:
+    # Archive turns for user_id=0 (legacy/default user)
+    pending = _episodic.get_pending_turns_text(user_id=0)
+    if not pending:
         return
+    # Use a temporary MemoryManager for archiving
+    memory = MemoryManager(embed_fn=ollama.embed, user_id=0)
     try:
         resp = ollama.chat(
             messages=_build_compress_messages(pending[:4000]),
@@ -640,21 +750,21 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
         summary = resp.get("message", {}).get("content", "").strip()
         _, summary = _strip_thinking(summary)
         if summary:
-            _memory.archive_history(summary)
+            memory.archive_history(summary)
             print(f"[✓] Archived {len(pending.splitlines())} lines from previous session")
     except Exception as exc:
         print(f"[!] Startup archive failed (non-critical): {exc}")
 
 
 def _init() -> None:
-    global _brain, _memory
+    global _ollama, _shared_tool_index, _shared_domain_index
 
-    ollama = OllamaClient()
-    if not ollama.is_alive():
+    _ollama = OllamaClient()
+    if not _ollama.is_alive():
         print("[!] Ollama is not running. Start it with: ollama serve")
         sys.exit(1)
 
-    installed = ollama.installed_models()
+    installed = _ollama.installed_models()
     for m in [cfg.CHAT_MODEL, cfg.EMBED_MODEL]:
         base = m.split(":")[0]
         if m not in installed and base not in {x.split(":")[0] for x in installed}:
@@ -662,37 +772,37 @@ def _init() -> None:
             print(f"    ollama pull {m}")
             sys.exit(1)
 
-    _memory = MemoryManager(embed_fn=ollama.embed)
-    _semantic.migrate()   # remove stale volatile sys_* keys from previous sessions
+    # Shared embed function for campaign tools
+    _set_embed_fn(lambda text: _ollama.embed(text))
+
+    # Run system-level migrations and seeding (user_id=0)
+    _semantic.migrate()
     seed_defaults()
     seed_founding_entry()
 
-    _brain = Brain(
-        memory=_memory,
-        model=cfg.CHAT_MODEL,
-        ollama=ollama,
-        tool_registry=tool_registry,
-        think=True,
-    )
-    # Share embed function with campaign tools (avoids circular imports via _app_state)
-    _set_embed_fn(lambda text: ollama.embed(text))
-
-    # ── Pre-warm: build indexes now so the first message has zero cold-start ──
-    # The boot screen animation runs ~2s on the frontend — plenty of time.
+    # ── Pre-warm: build shared indexes once so per-user brains skip this step ──
     # Memory router (7 domain embeddings) + tool index (10 category embeddings)
-    # are done in two batch calls while the user is still watching the boot text.
-    _brain._ensure_memory_router()
-    _brain._ensure_tool_index()
+    from kai.memory import router as _router
+    try:
+        _shared_domain_index = _router.build_domain_index(_ollama.embed_batch)
+    except Exception:
+        _shared_domain_index = {}
+
+    try:
+        _shared_tool_index = tool_registry.build_category_index(_ollama.embed_batch)
+    except Exception:
+        _shared_tool_index = {}
+
     print(f"[✓] Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
 
     # Upgrade awareness — detect version changes and write an episodic memory entry
     from kai.upgrade import check_for_upgrade
-    upgrade_msg = check_for_upgrade(embed_fn=ollama.embed)
+    upgrade_msg = check_for_upgrade(embed_fn=_ollama.embed)
     if upgrade_msg:
         print(f"[✓] Upgrade detected: {upgrade_msg[:80]}...")
 
     # Archive any raw turns left from the previous session so they're searchable
-    threading.Thread(target=_archive_pending_turns, args=(ollama,), daemon=True).start()
+    threading.Thread(target=_archive_pending_turns, args=(_ollama,), daemon=True).start()
 
 
 def main() -> None:
@@ -715,6 +825,9 @@ def main() -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Serve CSS / JS from kai/static/
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     _init()
 

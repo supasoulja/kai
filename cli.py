@@ -80,6 +80,7 @@ Commands:
   :history      show last 10 episodic entries
   :trace        show last 10 turn traces (timing, tools used)
   :tools        list registered tools
+  :vector       show vector table stats (episodic + RAG embeddings)
   :model heavy  switch to qwen3:14b (thinking ON) for this session
   :model fast   switch back to qwen3:8b
   :debug        toggle debug mode
@@ -160,6 +161,9 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         else:
             print("  No tool registry loaded.")
 
+    elif command == ":vector":
+        _show_vector_stats()
+
     elif command == ":debug":
         cfg.DEBUG = not cfg.DEBUG
         print(f"  Debug mode: {'ON' if cfg.DEBUG else 'OFF'}")
@@ -198,6 +202,110 @@ def _show_memory(memory: MemoryManager) -> None:
             print(f"  [{ep.timestamp.strftime('%b %d %H:%M')}] {ep.content[:100]}...")
     else:
         print("  (none)")
+    print()
+
+
+def _show_vector_stats() -> None:
+    """Display stats about all vector tables (episodic + RAG)."""
+    from kai.db import get_conn, sqlite_vec_available
+
+    if not sqlite_vec_available():
+        print("  sqlite-vec is not installed — no vector tables available.")
+        return
+
+    conn = get_conn()
+
+    # ── Episodic vectors ──────────────────────────────────────────────────
+    print("\n── Episodic Vectors ──")
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM episodic_vec").fetchone()[0]
+        print(f"  Total vectors: {total}")
+
+        if total > 0:
+            # Break down by entry_type
+            rows = conn.execute(
+                "SELECT e.entry_type, COUNT(*) "
+                "FROM episodic_entries e "
+                "JOIN episodic_vec v ON e.rowid = v.rowid "
+                "GROUP BY e.entry_type ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            for entry_type, count in rows:
+                print(f"    {entry_type}: {count}")
+
+            # Show recent entries with vectors
+            print("\n  Recent entries with vectors:")
+            recent = conn.execute(
+                "SELECT e.entry_type, e.timestamp, substr(e.content, 1, 80) "
+                "FROM episodic_entries e "
+                "JOIN episodic_vec v ON e.rowid = v.rowid "
+                "ORDER BY e.timestamp DESC LIMIT 10"
+            ).fetchall()
+            for entry_type, ts, preview in recent:
+                ts_short = ts[:16].replace("T", " ")
+                print(f"    [{ts_short}] ({entry_type}) {preview}...")
+
+        # Entries WITHOUT vectors
+        no_vec = conn.execute(
+            "SELECT COUNT(*) FROM episodic_entries e "
+            "LEFT JOIN episodic_vec v ON e.rowid = v.rowid "
+            "WHERE v.rowid IS NULL"
+        ).fetchone()[0]
+        if no_vec > 0:
+            print(f"\n  Entries without vectors: {no_vec}")
+            type_rows = conn.execute(
+                "SELECT e.entry_type, COUNT(*) "
+                "FROM episodic_entries e "
+                "LEFT JOIN episodic_vec v ON e.rowid = v.rowid "
+                "WHERE v.rowid IS NULL "
+                "GROUP BY e.entry_type"
+            ).fetchall()
+            for entry_type, count in type_rows:
+                print(f"    {entry_type}: {count}")
+
+    except Exception as e:
+        print(f"  Error reading episodic_vec: {e}")
+
+    # ── RAG vectors ───────────────────────────────────────────────────────
+    print("\n── RAG Document Vectors ──")
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM rag_chunks_vec").fetchone()[0]
+        print(f"  Total chunk vectors: {total}")
+
+        if total > 0:
+            # Breakdown by document
+            rows = conn.execute(
+                "SELECT d.filename, COUNT(*) "
+                "FROM rag_chunks c "
+                "JOIN rag_chunks_vec v ON c.rowid = v.rowid "
+                "JOIN rag_documents d ON d.doc_id = c.doc_id "
+                "GROUP BY d.filename ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            for filename, count in rows:
+                print(f"    {filename}: {count} chunks")
+
+        # Chunks without vectors
+        no_vec = conn.execute(
+            "SELECT COUNT(*) FROM rag_chunks c "
+            "LEFT JOIN rag_chunks_vec v ON c.rowid = v.rowid "
+            "WHERE v.rowid IS NULL"
+        ).fetchone()[0]
+        if no_vec > 0:
+            print(f"  Chunks without vectors: {no_vec}")
+
+    except Exception as e:
+        print(f"  Error reading rag_chunks_vec: {e}")
+
+    # ── DB file size ──────────────────────────────────────────────────────
+    try:
+        db_size = cfg.DB_PATH.stat().st_size
+        if db_size < 1024 * 1024:
+            size_str = f"{db_size / 1024:.1f} KB"
+        else:
+            size_str = f"{db_size / (1024 * 1024):.1f} MB"
+        print(f"\n  DB file size: {size_str}")
+    except Exception:
+        pass
+
     print()
 
 

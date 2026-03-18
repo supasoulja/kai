@@ -18,68 +18,124 @@ EmbedFn = Callable[[str], list[float]]
 
 # ── Campaign management ────────────────────────────────────────────────────────
 
-def get_active_campaign() -> dict | None:
-    """Return the currently active campaign dict, or None."""
+def get_active_campaign(user_id: int = 0) -> dict | None:
+    """Return the user's currently active campaign dict, or None."""
     conn = get_conn()
     row = conn.execute(
-        "SELECT id, name, created_at, last_active "
-        "FROM campaigns WHERE is_active = 1 LIMIT 1"
+        "SELECT c.id, c.name, c.created_at, c.last_active "
+        "FROM campaigns c "
+        "JOIN user_active_campaigns uac ON uac.campaign_id = c.id "
+        "WHERE uac.user_id = ? LIMIT 1",
+        (user_id,)
     ).fetchone()
     if not row:
         return None
     return {"id": row[0], "name": row[1], "created_at": row[2], "last_active": row[3]}
 
 
-def create_campaign(name: str) -> str:
-    """Create a new campaign, deactivate any current one, return new ID."""
+def create_campaign(name: str, user_id: int = 0) -> str:
+    """Create a new campaign owned by user_id, set it as active, return new ID."""
     campaign_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
     conn = get_conn()
-    conn.execute("UPDATE campaigns SET is_active = 0")
     conn.execute(
-        "INSERT INTO campaigns (id, name, is_active, created_at, last_active) "
-        "VALUES (?, ?, 1, ?, ?)",
-        (campaign_id, name, now, now),
+        "INSERT INTO campaigns (id, owner_id, name, created_at, last_active) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (campaign_id, user_id, name, now, now),
+    )
+    # Set as active for this user
+    conn.execute(
+        "INSERT OR REPLACE INTO user_active_campaigns (user_id, campaign_id) "
+        "VALUES (?, ?)",
+        (user_id, campaign_id),
+    )
+    # Grant owner access
+    conn.execute(
+        "INSERT OR REPLACE INTO campaign_access (campaign_id, user_id, role) "
+        "VALUES (?, ?, 'owner')",
+        (campaign_id, user_id),
     )
     conn.commit()
     return campaign_id
 
 
-def set_active_campaign(campaign_id: str) -> bool:
-    """Switch active campaign by ID. Returns True if found."""
+def set_active_campaign(campaign_id: str, user_id: int = 0) -> bool:
+    """Switch this user's active campaign by ID. Returns True if found and accessible."""
     conn = get_conn()
-    if not conn.execute(
-        "SELECT 1 FROM campaigns WHERE id = ?", (campaign_id,)
-    ).fetchone():
-        return False
-    conn.execute("UPDATE campaigns SET is_active = 0")
+    # Check user has access (owner or invited)
+    has_access = conn.execute(
+        "SELECT 1 FROM campaign_access WHERE campaign_id = ? AND user_id = ?",
+        (campaign_id, user_id),
+    ).fetchone()
+    if not has_access:
+        # Also allow if user owns it (fallback for campaigns created before access table)
+        is_owner = conn.execute(
+            "SELECT 1 FROM campaigns WHERE id = ? AND owner_id = ?",
+            (campaign_id, user_id),
+        ).fetchone()
+        if not is_owner:
+            return False
     conn.execute(
-        "UPDATE campaigns SET is_active = 1, last_active = ? WHERE id = ?",
+        "INSERT OR REPLACE INTO user_active_campaigns (user_id, campaign_id) "
+        "VALUES (?, ?)",
+        (user_id, campaign_id),
+    )
+    conn.execute(
+        "UPDATE campaigns SET last_active = ? WHERE id = ?",
         (datetime.now().isoformat(), campaign_id),
     )
     conn.commit()
     return True
 
 
-def list_campaigns() -> list[dict]:
-    """Return all campaigns; active one first."""
+def list_campaigns(user_id: int = 0) -> list[dict]:
+    """Return campaigns accessible to this user (owned + invited)."""
     conn = get_conn()
+    # Get user's active campaign ID for sorting
+    active_row = conn.execute(
+        "SELECT campaign_id FROM user_active_campaigns WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    active_id = active_row[0] if active_row else None
+
     rows = conn.execute(
-        "SELECT id, name, is_active, created_at, last_active "
-        "FROM campaigns ORDER BY is_active DESC, last_active DESC"
+        "SELECT DISTINCT c.id, c.name, c.created_at, c.last_active "
+        "FROM campaigns c "
+        "LEFT JOIN campaign_access ca ON ca.campaign_id = c.id "
+        "WHERE c.owner_id = ? OR ca.user_id = ? "
+        "ORDER BY c.last_active DESC",
+        (user_id, user_id),
     ).fetchall()
     return [
-        {"id": r[0], "name": r[1], "is_active": bool(r[2]),
-         "created_at": r[3], "last_active": r[4]}
+        {"id": r[0], "name": r[1], "is_active": r[0] == active_id,
+         "created_at": r[2], "last_active": r[3]}
         for r in rows
     ]
 
 
-def end_campaign() -> None:
-    """Deactivate the current campaign (exit DM mode)."""
+def end_campaign(user_id: int = 0) -> None:
+    """Deactivate the current user's campaign (exit DM mode)."""
     conn = get_conn()
-    conn.execute("UPDATE campaigns SET is_active = 0")
+    conn.execute(
+        "DELETE FROM user_active_campaigns WHERE user_id = ?",
+        (user_id,),
+    )
     conn.commit()
+
+
+def add_campaign_access(campaign_id: str, target_user_id: int, role: str = "player") -> bool:
+    """Grant another user access to a campaign. Returns True on success."""
+    conn = get_conn()
+    # Verify campaign exists
+    if not conn.execute("SELECT 1 FROM campaigns WHERE id = ?", (campaign_id,)).fetchone():
+        return False
+    conn.execute(
+        "INSERT OR REPLACE INTO campaign_access (campaign_id, user_id, role) "
+        "VALUES (?, ?, ?)",
+        (campaign_id, target_user_id, role),
+    )
+    conn.commit()
+    return True
 
 
 # ── NPC management ─────────────────────────────────────────────────────────────
@@ -370,13 +426,14 @@ def build_campaign_context(
     embed_fn: EmbedFn | None = None,
     npc_top_k: int = 5,
     event_top_k: int = 5,
+    user_id: int = 0,
 ) -> str:
     """
     Build the [CAMPAIGN] context block injected into the system prompt.
     Pulls only the most relevant NPCs and events via vector search.
     Returns empty string if campaign not found.
     """
-    campaign = get_active_campaign()
+    campaign = get_active_campaign(user_id=user_id)
     if not campaign or campaign["id"] != campaign_id:
         return ""
 
@@ -424,9 +481,9 @@ def build_campaign_context(
     # Events — recent chronological + semantic search merged
     recent = recent_events(campaign_id, limit=event_top_k)
     if query and all_npcs:
-        semantic = search_events(campaign_id, query, embed_fn=embed_fn, top_k=event_top_k)
+        sem_events = search_events(campaign_id, query, embed_fn=embed_fn, top_k=event_top_k)
         seen = {e["id"] for e in recent}
-        extra = [e for e in semantic if e["id"] not in seen]
+        extra = [e for e in sem_events if e["id"] not in seen]
         all_ev = recent + extra
     else:
         all_ev = recent

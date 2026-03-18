@@ -86,32 +86,73 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     with _schema_lock:
         if _schema_initialized:
             return
+        _maybe_migrate_fresh(conn)
         _create_all_tables(conn)
         _schema_initialized = True
+
+
+def _maybe_migrate_fresh(conn: sqlite3.Connection) -> None:
+    """
+    Detect old schema (no user_id columns) and do a fresh-start migration.
+    Drops all data tables EXCEPT users. Called before _create_all_tables
+    so the new schema is created cleanly.
+    """
+    # Check if semantic_facts exists and has user_id
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(semantic_facts)").fetchall()}
+    except Exception:
+        return  # table doesn't exist yet — first run, nothing to migrate
+
+    if not cols or "user_id" in cols:
+        return  # already migrated or brand new DB
+
+    # Old schema detected — drop data tables (preserve users table)
+    tables_to_drop = [
+        "semantic_facts", "procedural_rules",
+        "episodic_entries", "episodic_transcripts",
+        "sessions", "session_messages",
+        "notes", "rag_documents", "rag_chunks",
+        "tool_aliases", "trace_log", "relationship_log",
+        "campaigns", "campaign_npcs", "campaign_events", "campaign_quests",
+    ]
+    # Drop vector tables first (virtual tables)
+    for vt in ["episodic_vec", "rag_chunks_vec", "campaign_npc_vec", "campaign_event_vec"]:
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {vt}")
+        except Exception:
+            pass
+    for table in tables_to_drop:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+    conn.commit()
 
 
 def _create_all_tables(conn: sqlite3.Connection) -> None:
     """Idempotent schema creation for every table in the project."""
     conn.executescript("""
-        -- Semantic memory
+        -- Semantic memory (per-user)
         CREATE TABLE IF NOT EXISTS semantic_facts (
-            key         TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            key         TEXT NOT NULL,
             value       TEXT NOT NULL,
             source      TEXT NOT NULL DEFAULT 'conversation',
             confidence  REAL NOT NULL DEFAULT 1.0,
-            updated_at  TEXT NOT NULL
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (user_id, key)
         );
 
-        -- Procedural memory
+        -- Procedural memory (per-user)
         CREATE TABLE IF NOT EXISTS procedural_rules (
-            key         TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            key         TEXT NOT NULL,
             value       TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (user_id, key)
         );
 
-        -- Episodic memory
+        -- Episodic memory (per-user)
         CREATE TABLE IF NOT EXISTS episodic_entries (
             id          TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
             content     TEXT NOT NULL,
             timestamp   TEXT NOT NULL,
             entry_type  TEXT NOT NULL DEFAULT 'turn',
@@ -120,13 +161,15 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS episodic_transcripts (
             archive_id  TEXT NOT NULL,
+            user_id     INTEGER NOT NULL DEFAULT 0,
             content     TEXT NOT NULL,
             timestamp   TEXT NOT NULL
         );
 
-        -- Sessions
+        -- Sessions (per-user)
         CREATE TABLE IF NOT EXISTS sessions (
             id            TEXT PRIMARY KEY,
+            user_id       INTEGER NOT NULL DEFAULT 0,
             title         TEXT NOT NULL,
             started_at    TEXT NOT NULL,
             last_active   TEXT NOT NULL,
@@ -136,13 +179,15 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS session_messages (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id  TEXT    NOT NULL REFERENCES sessions(id),
+            user_id     INTEGER NOT NULL DEFAULT 0,
             role        TEXT    NOT NULL,
             content     TEXT    NOT NULL,
             timestamp   TEXT    NOT NULL,
-            turn_order  INTEGER NOT NULL
+            turn_order  INTEGER NOT NULL,
+            feedback    INTEGER DEFAULT NULL
         );
 
-        -- Tool aliases
+        -- Tool aliases (global — shared across users)
         CREATE TABLE IF NOT EXISTS tool_aliases (
             alias       TEXT PRIMARY KEY,
             target      TEXT NOT NULL,
@@ -151,9 +196,10 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             created_at  TEXT NOT NULL
         );
 
-        -- Trace log
+        -- Trace log (per-user)
         CREATE TABLE IF NOT EXISTS trace_log (
             trace_id     TEXT PRIMARY KEY,
+            user_id      INTEGER NOT NULL DEFAULT 0,
             timestamp    TEXT NOT NULL,
             user_input   TEXT,
             model        TEXT,
@@ -163,21 +209,36 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             response_len INTEGER
         );
 
-        -- Relationship log
+        -- Relationship log (per-user)
         CREATE TABLE IF NOT EXISTS relationship_log (
             id          TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
             timestamp   TEXT NOT NULL,
             entry_type  TEXT NOT NULL,
             content     TEXT NOT NULL
         );
 
-        -- Campaigns
+        -- Campaigns (per-user ownership)
         CREATE TABLE IF NOT EXISTS campaigns (
             id          TEXT PRIMARY KEY,
+            owner_id    INTEGER NOT NULL DEFAULT 0,
             name        TEXT NOT NULL,
-            is_active   INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT NOT NULL,
             last_active TEXT NOT NULL
+        );
+
+        -- Per-user active campaign (replaces global is_active flag)
+        CREATE TABLE IF NOT EXISTS user_active_campaigns (
+            user_id     INTEGER PRIMARY KEY,
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id)
+        );
+
+        -- Campaign access control (owner + invited players)
+        CREATE TABLE IF NOT EXISTS campaign_access (
+            campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+            user_id     INTEGER NOT NULL,
+            role        TEXT NOT NULL DEFAULT 'player',
+            PRIMARY KEY (campaign_id, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS campaign_npcs (
@@ -210,17 +271,31 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
         );
 
-        -- Notes
+        -- Campaign characters (D&D Beyond linked)
+        CREATE TABLE IF NOT EXISTS campaign_characters (
+            id              TEXT PRIMARY KEY,
+            campaign_id     TEXT NOT NULL REFERENCES campaigns(id),
+            user_id         INTEGER NOT NULL DEFAULT 0,
+            name            TEXT NOT NULL,
+            dndbeyond_url   TEXT,
+            character_data  TEXT NOT NULL DEFAULT '{}',
+            updated_at      TEXT NOT NULL
+        );
+
+        -- Notes (per-user)
         CREATE TABLE IF NOT EXISTS notes (
             id          TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
             timestamp   TEXT NOT NULL,
             title       TEXT,
             content     TEXT NOT NULL
         );
 
-        -- RAG documents
+        -- RAG documents (per-user with optional sharing)
         CREATE TABLE IF NOT EXISTS rag_documents (
             doc_id      TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            shared      INTEGER NOT NULL DEFAULT 0,
             filename    TEXT NOT NULL,
             file_type   TEXT NOT NULL,
             char_count  INTEGER NOT NULL DEFAULT 0,
@@ -234,12 +309,16 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             chunk_index INTEGER NOT NULL,
             content     TEXT NOT NULL
         );
-    """)
 
-    # Migrate: add feedback column if missing
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(session_messages)").fetchall()}
-    if "feedback" not in cols:
-        conn.execute("ALTER TABLE session_messages ADD COLUMN feedback INTEGER DEFAULT NULL")
+        -- Indexes for user_id lookups
+        CREATE INDEX IF NOT EXISTS idx_semantic_user ON semantic_facts(user_id);
+        CREATE INDEX IF NOT EXISTS idx_episodic_user ON episodic_entries(user_id);
+        CREATE INDEX IF NOT EXISTS idx_episodic_type_user ON episodic_entries(user_id, entry_type);
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
+        CREATE INDEX IF NOT EXISTS idx_rag_docs_user ON rag_documents(user_id);
+        CREATE INDEX IF NOT EXISTS idx_campaigns_owner ON campaigns(owner_id);
+    """)
 
     # Vector tables (require sqlite-vec extension)
     if _check_sqlite_vec():

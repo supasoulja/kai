@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kai — Login</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #0d0d14;
+      color: #e0e0f0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-wrapper {
+      width: 100%;
+      max-width: 380px;
+      padding: 1.5rem;
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .brand-logo {
+      font-size: 2.8rem;
+      font-weight: 800;
+      color: #7b7bff;
+      letter-spacing: -1px;
+      line-height: 1;
+    }
+
+    .brand-tagline {
+      font-size: 0.85rem;
+      color: #8888aa;
+      margin-top: 0.35rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .card {
+      background: #13131f;
+      border: 1px solid #1e1e30;
+      border-radius: 12px;
+      padding: 2rem 2rem 1.75rem;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #c8c8e8;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .form-group {
+      margin-bottom: 1.1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #8888aa;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.45rem;
+    }
+
+    .form-group select,
+    .form-group input[type="text"],
+    .form-group input[type="password"] {
+      width: 100%;
+      background: #0d0d14;
+      border: 1px solid #2a2a40;
+      border-radius: 7px;
+      color: #e0e0f0;
+      font-size: 0.95rem;
+      padding: 0.6rem 0.85rem;
+      outline: none;
+      transition: border-color 0.2s;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+
+    .form-group select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238888aa' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.85rem center;
+      padding-right: 2.2rem;
+      cursor: pointer;
+    }
+
+    .form-group select:focus,
+    .form-group input[type="text"]:focus,
+    .form-group input[type="password"]:focus {
+      border-color: #7b7bff;
+    }
+
+    .form-group select option {
+      background: #13131f;
+      color: #e0e0f0;
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: #7b7bff;
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.7rem 1rem;
+      cursor: pointer;
+      margin-top: 0.5rem;
+      transition: background 0.2s, transform 0.1s;
+      letter-spacing: 0.02em;
+    }
+
+    .btn-primary:hover {
+      background: #6a6aee;
+    }
+
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .error-msg {
+      color: #ff6b6b;
+      font-size: 0.82rem;
+      margin-top: 0.9rem;
+      text-align: center;
+      min-height: 1.1em;
+    }
+
+    .card-footer {
+      text-align: center;
+      margin-top: 1.3rem;
+      font-size: 0.83rem;
+      color: #8888aa;
+    }
+
+    .card-footer a {
+      color: #7b7bff;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .card-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+<div class="login-wrapper">
+  <div class="brand">
+    <div class="brand-logo">Kai</div>
+    <div class="brand-tagline">Local AI Agent</div>
+  </div>
+
+  <div class="card">
+
+    <!-- LOGIN FORM -->
+    <div id="login-panel">
+      <div class="card-title">Sign In</div>
+      <form id="login-form" novalidate>
+        <div class="form-group">
+          <label for="login-user">User</label>
+          <select id="login-user" name="name" required>
+            <option value="" disabled selected>Loading users…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="login-pin">PIN</label>
+          <input
+            id="login-pin"
+            name="pin"
+            type="password"
+            maxlength="8"
+            placeholder="Enter your PIN"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+        <button type="submit" class="btn-primary" id="login-btn">Sign In</button>
+        <div class="error-msg" id="login-error" role="alert"></div>
+      </form>
+      <div class="card-footer">
+        No account? <a id="show-register">Create Account</a>
+      </div>
+    </div>
+
+    <!-- REGISTER FORM -->
+    <div id="register-panel" class="hidden">
+      <div class="card-title">Create Account</div>
+      <form id="register-form" novalidate>
+        <div class="form-group">
+          <label for="reg-name">Name</label>
+          <input
+            id="reg-name"
+            name="name"
+            type="text"
+            maxlength="64"
+            placeholder="Your name"
+            autocomplete="username"
+            required
+          />
+        </div>
+        <div class="form-group">
+          <label for="reg-pin">PIN</label>
+          <input
+            id="reg-pin"
+            name="pin"
+            type="password"
+            minlength="4"
+            maxlength="8"
+            placeholder="Choose a PIN (4–8 digits)"
+            autocomplete="new-password"
+            required
+          />
+        </div>
+        <button type="submit" class="btn-primary" id="register-btn">Create Account</button>
+        <div class="error-msg" id="register-error" role="alert"></div>
+      </form>
+      <div class="card-footer">
+        Already have an account? <a id="show-login">Back to Login</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const loginPanel    = document.getElementById('login-panel');
+  const registerPanel = document.getElementById('register-panel');
+  const showRegister  = document.getElementById('show-register');
+  const showLogin     = document.getElementById('show-login');
+  const loginUserSel  = document.getElementById('login-user');
+  const loginPinIn    = document.getElementById('login-pin');
+  const loginError    = document.getElementById('login-error');
+  const loginBtn      = document.getElementById('login-btn');
+  const loginForm     = document.getElementById('login-form');
+  const regNameIn     = document.getElementById('reg-name');
+  const regPinIn      = document.getElementById('reg-pin');
+  const registerError = document.getElementById('register-error');
+  const registerBtn   = document.getElementById('register-btn');
+  const registerForm  = document.getElementById('register-form');
+
+  // --- Toggle panels ---
+  showRegister.addEventListener('click', () => {
+    loginPanel.classList.add('hidden');
+    registerPanel.classList.remove('hidden');
+    loginError.textContent = '';
+    regNameIn.focus();
+  });
+
+  showLogin.addEventListener('click', () => {
+    registerPanel.classList.add('hidden');
+    loginPanel.classList.remove('hidden');
+    registerError.textContent = '';
+    loginUserSel.focus();
+  });
+
+  // --- Populate user dropdown ---
+  async function loadUsers() {
+    try {
+      const res = await fetch('/users');
+      if (!res.ok) throw new Error('Failed to load users');
+      const data = await res.json();
+      const names = Array.isArray(data.names) ? data.names : [];
+      loginUserSel.innerHTML = '';
+      if (names.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = 'No users yet — register first';
+        loginUserSel.appendChild(opt);
+      } else {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.textContent = 'Select a user…';
+        loginUserSel.appendChild(placeholder);
+        names.forEach(name => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          loginUserSel.appendChild(opt);
+        });
+      }
+    } catch (err) {
+      loginUserSel.innerHTML = '<option value="" disabled selected>Could not load users</option>';
+    }
+  }
+
+  loadUsers();
+
+  // --- Login ---
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError.textContent = '';
+    const name = loginUserSel.value;
+    const pin  = loginPinIn.value;
+
+    if (!name) {
+      loginError.textContent = 'Please select a user.';
+      return;
+    }
+    if (!pin) {
+      loginError.textContent = 'Please enter your PIN.';
+      return;
+    }
+
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Signing in…';
+
+    try {
+      const res = await fetch('/users/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, pin }),
+      });
+
+      if (res.ok) {
+        window.location.href = '/';
+      } else if (res.status === 401) {
+        loginError.textContent = 'Incorrect PIN. Please try again.';
+      } else {
+        loginError.textContent = 'Login failed. Please try again.';
+      }
+    } catch (err) {
+      loginError.textContent = 'Network error. Is the server running?';
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Sign In';
+    }
+  });
+
+  // --- Register ---
+  registerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    registerError.textContent = '';
+    const name = regNameIn.value.trim();
+    const pin  = regPinIn.value;
+
+    if (!name) {
+      registerError.textContent = 'Please enter a name.';
+      return;
+    }
+    if (pin.length < 4) {
+      registerError.textContent = 'PIN must be at least 4 characters.';
+      return;
+    }
+
+    registerBtn.disabled = true;
+    registerBtn.textContent = 'Creating account…';
+
+    try {
+      const res = await fetch('/users/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, pin }),
+      });
+
+      if (res.ok) {
+        window.location.href = '/';
+      } else if (res.status === 409) {
+        registerError.textContent = 'That name is already taken. Choose another.';
+      } else {
+        registerError.textContent = 'Registration failed. Please try again.';
+      }
+    } catch (err) {
+      registerError.textContent = 'Network error. Is the server running?';
+    } finally {
+      registerBtn.disabled = false;
+      registerBtn.textContent = 'Create Account';
+    }
+  });
+</script>
+
+</body>
+</html>

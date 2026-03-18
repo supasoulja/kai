@@ -22,8 +22,9 @@ EmbedFn = Callable[[str], list[float]] | None
 
 
 class MemoryManager:
-    def __init__(self, embed_fn: EmbedFn = None):
+    def __init__(self, embed_fn: EmbedFn = None, user_id: int = 0):
         self.embed_fn = embed_fn
+        self.user_id = user_id
         # Volatile runtime stats for the current session (not persisted to DB)
         self._session_state: dict[str, str] = {}
         # Memory router domain index — built once via init_router()
@@ -49,38 +50,41 @@ class MemoryManager:
     # ── Semantic ───────────────────────────────────────────────────────────────
 
     def set_fact(self, key: str, value: str, source: str = "conversation") -> None:
-        semantic.set_fact(key, value, source=source)
+        semantic.set_fact(key, value, source=source, user_id=self.user_id)
 
     def get_fact(self, key: str) -> str | None:
-        return semantic.get_fact(key)
+        return semantic.get_fact(key, user_id=self.user_id)
 
     def delete_fact(self, key: str) -> None:
-        semantic.delete_fact(key)
+        semantic.delete_fact(key, user_id=self.user_id)
 
     def list_facts(self) -> list[SemanticFact]:
-        return semantic.list_facts()
+        return semantic.list_facts(user_id=self.user_id)
 
     # ── Procedural ─────────────────────────────────────────────────────────────
 
     def set_rule(self, key: str, value: str) -> None:
-        procedural.set_rule(key, value)
+        procedural.set_rule(key, value, user_id=self.user_id)
 
     def get_rule(self, key: str) -> str | None:
-        return procedural.get_rule(key)
+        return procedural.get_rule(key, user_id=self.user_id)
 
     def list_rules(self) -> list[ProceduralRule]:
-        return procedural.list_rules()
+        return procedural.list_rules(user_id=self.user_id)
 
     # ── Episodic ───────────────────────────────────────────────────────────────
 
     def add_episode(self, content: str, entry_type: str = "turn", metadata: dict | None = None) -> str:
-        return episodic.add_entry(content, embed_fn=self.embed_fn, entry_type=entry_type, metadata=metadata)
+        return episodic.add_entry(
+            content, embed_fn=self.embed_fn, entry_type=entry_type,
+            metadata=metadata, user_id=self.user_id,
+        )
 
     def search_episodes(self, query: str, top_k: int = 5) -> list[EpisodicEntry]:
-        return episodic.search(query, embed_fn=self.embed_fn, top_k=top_k)
+        return episodic.search(query, embed_fn=self.embed_fn, top_k=top_k, user_id=self.user_id)
 
     def recent_episodes(self, limit: int = 5) -> list[EpisodicEntry]:
-        return episodic.recent(limit=limit)
+        return episodic.recent(limit=limit, user_id=self.user_id)
 
     def archive_history(self, summary_text: str) -> None:
         """
@@ -90,24 +94,25 @@ class MemoryManager:
         The full verbatim transcript is preserved in episodic_transcripts for detail lookup.
         """
         # Capture full transcript BEFORE turns are deleted
-        full_transcript = episodic.get_pending_turns_text()
+        full_transcript = episodic.get_pending_turns_text(user_id=self.user_id)
 
         # Store the summary archive — returns the new entry ID
         archive_id = episodic.add_entry(
             content    = summary_text,
             embed_fn   = self.embed_fn,
             entry_type = "archive",
+            user_id    = self.user_id,
         )
 
         # Link the full transcript to this archive
         if full_transcript:
-            episodic.save_transcript(archive_id, full_transcript)
+            episodic.save_transcript(archive_id, full_transcript, user_id=self.user_id)
 
-        episodic.delete_turns()  # raw turns captured — clean them up
+        episodic.delete_turns(user_id=self.user_id)  # raw turns captured — clean them up
 
     def get_transcript(self, archive_id: str) -> str | None:
         """Retrieve the full verbatim transcript for a given archive entry ID."""
-        return episodic.get_transcript(archive_id)
+        return episodic.get_transcript(archive_id, user_id=self.user_id)
 
     # ── Session state (volatile, in-memory only) ───────────────────────────────
 
@@ -133,6 +138,7 @@ class MemoryManager:
             dm_mode=dm_mode,
             query_embedding=query_embedding,
             domain_index=self._domain_index or None,
+            user_id=self.user_id,
         )
 
     def render_context(
@@ -158,8 +164,8 @@ class MemoryManager:
         History compression is handled by Brain._maybe_compress_history(), which
         fires based on token pressure and writes archives via archive_history().
         """
-        extractor.extract_and_save(user_text)
-        extractor.extract_stable_observations(assistant_text)
+        extractor.extract_and_save(user_text, user_id=self.user_id)
+        extractor.extract_stable_observations(assistant_text, user_id=self.user_id)
         volatile = extractor.extract_volatile_observations(assistant_text)
         if volatile:
             self.update_session_state(volatile)

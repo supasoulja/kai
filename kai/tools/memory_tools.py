@@ -6,6 +6,7 @@ from datetime import datetime
 from kai.tools.registry import registry
 from kai.memory import episodic
 from kai import sessions as _sessions
+from kai._app_state import get_current_user_id
 from kai.config import REFLECTIONS_PATH
 
 
@@ -28,7 +29,8 @@ from kai.config import REFLECTIONS_PATH
     }
 )
 def get_detail(archive_id: str) -> str:
-    transcript = episodic.get_transcript(archive_id)
+    user_id = get_current_user_id()
+    transcript = episodic.get_transcript(archive_id, user_id=user_id)
     if not transcript:
         return f"No full transcript found for archive ID: {archive_id}"
     return transcript
@@ -59,7 +61,8 @@ def get_detail(archive_id: str) -> str:
 )
 def search_history(query: str, limit: int = 10) -> str:
     limit = min(max(1, int(limit)), 20)
-    results = _sessions.search_messages(query, limit=limit)
+    user_id = get_current_user_id()
+    results = _sessions.search_messages(query, limit=limit, user_id=user_id)
     if not results:
         return f"No past messages found matching '{query}'."
     lines = [f"Found {len(results)} message(s) matching '{query}':\n"]

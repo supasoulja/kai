@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kai</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">Kai</div>
+    <div class="sidebar-tagline">Local AI Agent</div>
+
+    <div class="kai-face" id="kai-face">( ^ &#8255; ^ )</div>
+
+    <!-- Model -->
+    <div class="sidebar-section">Model</div>
+    <div class="stat-row">
+      <span class="stat-label">Active</span>
+      <span class="stat-value" id="s-model">—</span>
+    </div>
+
+    <!-- Session metrics -->
+    <div class="sidebar-section">Session</div>
+    <div class="stat-row">
+      <span class="stat-label">Context</span>
+      <span class="stat-value" id="s-ctx">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Uptime</span>
+      <span class="stat-value" id="s-uptime">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Tokens</span>
+      <span class="stat-value" id="s-tokens">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Avg Think</span>
+      <span class="stat-value" id="s-think">—</span>
+    </div>
+
+    <!-- History -->
+    <div class="hist-section-hdr">
+      <div class="sidebar-section" style="margin-bottom:0">History</div>
+      <button class="btn-hist-open" onclick="openHistoryPanel()">view all &rsaquo;</button>
+    </div>
+    <div class="info-panel" id="s-recent-sessions">
+      <div class="info-row"><span class="info-key">&mdash;</span><span class="info-val">no sessions yet</span></div>
+    </div>
+
+    <!-- New Chat -->
+    <button class="btn-new-chat" id="newChatBtn">+ New Chat</button>
+
+    <p class="sidebar-hint">Enter to send &middot; Shift+Enter for newline</p>
+  </aside>
+
+  <!-- ── Main area ── -->
+  <div id="main">
+
+    <!-- Top bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn" data-tab="chat">Chat</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+      <div class="tab-bar-spacer"></div>
+      <div class="tab-bar-right">
+        <a href="/dnd" class="topbar-link">D&amp;D</a>
+        <span class="topbar-user" id="topbar-user"></span>
+        <button class="topbar-logout" id="topbar-logout">Logout</button>
+      </div>
+    </div>
+
+    <!-- Tab content -->
+    <div id="tab-content">
+
+      <!-- ── Dashboard Panel ── -->
+      <div id="panel-dashboard" class="tab-pane active">
+       <div class="dashboard">
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <span class="stat-card-icon">&#128221;</span>
+            <span class="stat-card-value" id="dash-facts">0</span>
+            <span class="stat-card-label">Facts</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-icon">&#128172;</span>
+            <span class="stat-card-value" id="dash-sessions">0</span>
+            <span class="stat-card-label">Sessions</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-icon">&#128196;</span>
+            <span class="stat-card-value" id="dash-documents">0</span>
+            <span class="stat-card-label">Documents</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-icon">&#128204;</span>
+            <span class="stat-card-value" id="dash-notes">0</span>
+            <span class="stat-card-label">Notes</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="dashboard-section-title">Recent Sessions</div>
+          <div id="dash-recent-sessions" class="recent-sessions-list">No recent sessions</div>
+        </div>
+
+        <div>
+          <div class="dashboard-section-title">Quick Actions</div>
+          <div class="quick-actions">
+            <button class="quick-action-btn" id="dash-new-chat">+ New Chat</button>
+            <button class="quick-action-btn" id="dash-upload-doc">Upload Document</button>
+            <a href="/dnd" class="quick-action-btn">Enter D&amp;D</a>
+          </div>
+        </div>
+
+       </div><!-- /.dashboard -->
+      </div>
+
+      <!-- ── Chat Panel ── -->
+      <div id="panel-chat" class="tab-pane">
+
+        <div id="messages">
+          <div id="welcome">
+            <div class="w-logo">Kai</div>
+            <div class="w-sub">Your local AI assistant. Ask me anything.</div>
+            <div class="suggestions">
+              <span class="suggestion">What's my GPU temp?</span>
+              <span class="suggestion">What's taking up disk space?</span>
+              <span class="suggestion">Check for Windows updates</span>
+              <span class="suggestion">What's my network info?</span>
+              <span class="suggestion">Any recent system errors?</span>
+              <span class="suggestion">What programs start with Windows?</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="input-area">
+          <div class="input-wrap">
+            <textarea id="input" placeholder="Message Kai&hellip;" rows="1"></textarea>
+            <button id="sendBtn" title="Send (Enter)">&uarr;</button>
+          </div>
+          <div class="input-hint">Running locally</div>
+        </div>
+
+      </div>
+
+      <!-- ── Settings Panel ── -->
+      <div id="panel-settings" class="tab-pane">
+       <div class="settings-pane">
+
+        <!-- Response Mode -->
+        <div class="settings-section">
+          <div class="settings-label">Response Mode</div>
+          <div class="mode-selector-wrap">
+            <button class="mode-pill" id="mode-pill" onclick="toggleModeDropdown()">
+              <span id="mode-label">Short answers</span>
+              <span class="mode-arrow">&#9662;</span>
+            </button>
+            <div id="mode-dropdown" class="mode-dropdown">
+              <button class="mode-option" data-mode="short">
+                <strong>short</strong>
+                <span class="mode-option-desc">Brief, concise answers</span>
+              </button>
+              <button class="mode-option" data-mode="long">
+                <strong>long</strong>
+                <span class="mode-option-desc">Detailed explanations</span>
+              </button>
+              <button class="mode-option" data-mode="chat">
+                <strong>chat</strong>
+                <span class="mode-option-desc">Conversational style</span>
+              </button>
+              <button class="mode-option" data-mode="research">
+                <strong>research</strong>
+                <span class="mode-option-desc">In-depth analysis</span>
+              </button>
+              <button class="mode-option" data-mode="dm">
+                <strong>dm</strong>
+                <span class="mode-option-desc">Dungeon Master mode</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reasoning -->
+        <div class="settings-section">
+          <button class="btn-think-toggle active" id="think-toggle" onclick="toggleThink()">
+            <span>Reasoning</span>
+            <span id="think-status">ON</span>
+          </button>
+        </div>
+
+        <!-- Memory -->
+        <div class="settings-section">
+          <div class="settings-header">
+            <span class="settings-label">Memory</span>
+            <span class="badge" id="s-fact-count">0</span>
+            <button class="settings-view-btn" onclick="openMemoryPanel()">View All</button>
+          </div>
+          <div id="s-highlights"></div>
+        </div>
+
+        <!-- Documents -->
+        <div class="settings-section">
+          <div class="settings-header">
+            <span class="settings-label">Documents</span>
+            <span class="badge" id="s-doc-count">0</span>
+            <button class="settings-view-btn" onclick="openDocsPanel()">Manage</button>
+          </div>
+          <div id="s-docs-preview"></div>
+        </div>
+
+        <!-- DM Mode -->
+        <div class="settings-section">
+          <button id="dm-toggle">
+            <span>DM Mode</span>
+            <span id="dm-campaign-name">Off</span>
+          </button>
+        </div>
+
+        <!-- User -->
+        <div class="settings-section">
+          <div class="settings-header">
+            <span class="settings-label">User</span>
+          </div>
+          <div class="settings-user-row">
+            <span id="settings-user-name"></span>
+            <button class="btn" id="settings-logout">Logout</button>
+          </div>
+        </div>
+
+       </div><!-- /.settings-pane -->
+      </div>
+
+    </div><!-- /tab-content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+
+<!-- ── Overlay Panels ── -->
+
+<!-- History panel -->
+<div id="history-panel">
+  <div class="hist-panel-hdr">
+    <div class="hist-panel-title">History</div>
+    <button class="btn-hist-close" onclick="closeHistoryPanel()" title="Close">&times;</button>
+  </div>
+  <div class="hist-list" id="hist-list">
+    <div class="mem-empty">Loading&hellip;</div>
+  </div>
+</div>
+
+<!-- DM mode dialog -->
+<div id="dm-dialog-overlay">
+  <div class="dm-dialog">
+    <h3>Start DM Mode</h3>
+    <p>Kai will track NPCs, quests, and events automatically while you play.<br>
+       Leave blank to resume an existing campaign.</p>
+    <input id="dm-campaign-input" type="text" placeholder="Campaign name (e.g. Curse of Strahd)" maxlength="80">
+    <div class="dm-dialog-actions">
+      <button class="btn-dm-cancel" onclick="closeDmDialog()">Cancel</button>
+      <button class="btn-dm-confirm" onclick="confirmDmStart()">Start</button>
+    </div>
+  </div>
+</div>
+
+<!-- Memory browser panel -->
+<div id="memory-panel">
+  <div class="mem-panel-hdr">
+    <div class="mem-panel-title">Memory</div>
+    <input class="mem-filter" id="mem-filter" placeholder="Filter facts&hellip;" oninput="filterMemory(this.value)">
+    <button class="btn-mem-close" onclick="closeMemoryPanel()" title="Close">&times;</button>
+  </div>
+  <div class="mem-tabs">
+    <button class="mem-tab active" id="tab-facts" onclick="switchMemTab('facts')">Facts</button>
+    <button class="mem-tab" id="tab-summaries" onclick="switchMemTab('summaries')">Summaries</button>
+  </div>
+  <div class="mem-list" id="mem-list">
+    <div class="mem-empty">Loading&hellip;</div>
+  </div>
+</div>
+
+<!-- Documents panel -->
+<div id="docs-panel">
+  <div class="docs-panel-hdr">
+    <div class="docs-panel-title">Documents</div>
+    <button class="btn-docs-close" onclick="closeDocsPanel()">&times;</button>
+  </div>
+  <label class="docs-upload-zone" id="docs-drop-zone">
+    Drop files here or click to upload
+    <br><small style="opacity:0.6">.txt &nbsp;.md &nbsp;.pdf &nbsp;.docx &nbsp;.csv &nbsp;.py &nbsp;.json</small>
+    <input type="file" id="docs-file-input" accept=".txt,.md,.pdf,.docx,.csv,.py,.json" multiple style="display:none">
+  </label>
+  <div class="docs-upload-status" id="docs-upload-status"></div>
+  <div class="docs-list" id="docs-list">
+    <div class="mem-empty">No documents uploaded yet.</div>
+  </div>
+</div>
+
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<script src="/static/app.js"></script>
+
+</body>
+</html>

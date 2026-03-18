@@ -7,7 +7,7 @@ docs.delete  — remove a document by ID
 """
 from kai.tools.registry import registry
 from kai.memory import documents as _docs
-from kai._app_state import get_embed_fn as _get_embed_fn
+from kai._app_state import get_embed_fn as _get_embed_fn, get_current_user_id
 
 
 @registry.tool(
@@ -34,9 +34,10 @@ from kai._app_state import get_embed_fn as _get_embed_fn
 )
 def docs_search(query: str, top_k: int = 5) -> str:
     top_k = min(max(1, int(top_k)), 10)
-    if not _docs.has_documents():
+    user_id = get_current_user_id()
+    if not _docs.has_documents(user_id=user_id):
         return "No documents have been uploaded yet."
-    results = _docs.search(query, embed_fn=_get_embed_fn(), top_k=top_k)
+    results = _docs.search(query, embed_fn=_get_embed_fn(), top_k=top_k, user_id=user_id)
     if not results:
         return f"No relevant content found for: {query!r}"
     lines = [f"Found {len(results)} passage(s) matching {query!r}:\n"]
@@ -57,7 +58,8 @@ def docs_search(query: str, top_k: int = 5) -> str:
     ),
 )
 def docs_list() -> str:
-    docs = _docs.list_documents()
+    user_id = get_current_user_id()
+    docs = _docs.list_documents(user_id=user_id)
     if not docs:
         return "No documents uploaded yet."
     lines = [f"{len(docs)} document(s) available:\n"]
@@ -88,7 +90,8 @@ def docs_list() -> str:
     },
 )
 def docs_delete(doc_id: str) -> str:
-    ok = _docs.delete_document(doc_id.strip())
+    user_id = get_current_user_id()
+    ok = _docs.delete_document(doc_id.strip(), user_id=user_id)
     if ok:
         return f"Document {doc_id!r} deleted successfully."
     return f"Document {doc_id!r} not found."

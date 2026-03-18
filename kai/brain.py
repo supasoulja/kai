@@ -445,12 +445,14 @@ class Brain:
         model: str = CHAT_MODEL,
         ollama: OllamaClient | None = None,
         think: bool = False,
+        user_id: int = 0,
     ):
         self.memory = memory
         self.tool_registry = tool_registry
         self.model = model
         self.ollama = ollama or OllamaClient()
         self._think = think
+        self.user_id = user_id
         self._session_history: list[dict] = []  # rolling conversation turns for this session
         self._history_lock = threading.Lock()    # protects _session_history mutations
         self.session_id: str | None = None       # current persisted session UUID
@@ -460,6 +462,7 @@ class Brain:
         self._tool_index_ready: bool = False
         self._memory_router_ready: bool = False       # memory domain index built lazily
         self._compressing: bool = False               # prevents concurrent history compressions
+        self._turn_count: int = 0                     # monotonic counter for learn-rate gating
 
     def clear_history(self) -> None:
         """Clear in-memory conversation history (call on /clear)."""
@@ -467,6 +470,7 @@ class Brain:
             self._session_history.clear()
         self.session_id  = None
         self._turn_order = 0
+        self._turn_count = 0
 
     def snapshot_history(self) -> list[dict]:
         """Thread-safe snapshot of current history for archiving."""
@@ -713,9 +717,9 @@ class Brain:
         """Persist user+assistant messages to the sessions DB. Returns assistant message id."""
         try:
             if not self.session_id:
-                self.session_id = sessions.new_session(user_input)
-            sessions.append_message(self.session_id, "user",      user_input, self._turn_order)
-            msg_id = sessions.append_message(self.session_id, "assistant", response, self._turn_order + 1)
+                self.session_id = sessions.new_session(user_input, user_id=self.user_id)
+            sessions.append_message(self.session_id, "user",      user_input, self._turn_order, user_id=self.user_id)
+            msg_id = sessions.append_message(self.session_id, "assistant", response, self._turn_order + 1, user_id=self.user_id)
             self._turn_order += 2
             return msg_id
         except Exception:
@@ -791,7 +795,11 @@ class Brain:
         Runs in a daemon thread — never blocks the user.
         """
         self.memory.commit_turn(user_input, assistant_text)
-        if LEARN_FROM_CONVERSATION:
+        self._turn_count += 1
+        # Rate-limit: only extract knowledge every 3rd turn to reduce Ollama
+        # queue pressure. The background LLM call delays the next turn's embed
+        # + chat because Ollama serializes GPU work.
+        if LEARN_FROM_CONVERSATION and self._turn_count % 3 == 0:
             try:
                 self._extract_knowledge(user_input, assistant_text)
             except Exception:
@@ -845,6 +853,9 @@ class Brain:
     def _execute_tool(self, name: str, args: dict, trace_id: str) -> dict:
         if not self.tool_registry:
             return {"success": False, "error": f"No tool registry — cannot run '{name}'"}
+        # Set thread-local user_id so tools can scope DB queries per-user
+        from kai._app_state import set_current_user_id
+        set_current_user_id(self.user_id)
         try:
             output = self.tool_registry.execute(name, args)
             return {"success": True, "output": output}

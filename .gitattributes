@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalize all text files to LF in the repo.
+# Git will convert to CRLF on checkout on Windows if core.autocrlf is true,
+# but the stored version is always LF — keeps diffs clean cross-platform.
+* text=auto eol=lf
+
+# Explicitly binary — never mangle these
+*.png binary
+*.jpg binary
+*.ico binary
+*.db  binary

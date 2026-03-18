@@ -85,7 +85,7 @@ VOLATILE_DB_KEYS = {
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def extract_and_save(text: str) -> list[tuple[str, str]]:
+def extract_and_save(text: str, user_id: int = 0) -> list[tuple[str, str]]:
     """
     Scan a user message for stable semantic facts. Save any found.
     Returns list of (key, value) pairs saved.
@@ -99,13 +99,13 @@ def extract_and_save(text: str) -> list[tuple[str, str]]:
                 continue
             if value.lower() in _JUNK_VALUES:
                 continue
-            key = key_name if key_name in _SINGLETON_KEYS else _next_slot(key_name, value)
-            semantic.set_fact(key, value, source="user_message")
+            key = key_name if key_name in _SINGLETON_KEYS else _next_slot(key_name, value, user_id)
+            semantic.set_fact(key, value, source="user_message", user_id=user_id)
             saved.append((key, value))
     return saved
 
 
-def extract_stable_observations(text: str) -> list[tuple[str, str]]:
+def extract_stable_observations(text: str, user_id: int = 0) -> list[tuple[str, str]]:
     """
     Scan Kai's response for stable hardware facts worth keeping across sessions.
     Saves to semantic DB. Returns list of (key, value) pairs saved.
@@ -115,7 +115,7 @@ def extract_stable_observations(text: str) -> list[tuple[str, str]]:
         match = pattern.search(text)
         if match:
             value = match.group(1).strip()
-            semantic.set_fact(key, value, source="observation")
+            semantic.set_fact(key, value, source="observation", user_id=user_id)
             saved.append((key, value))
     return saved
 
@@ -135,13 +135,13 @@ def extract_volatile_observations(text: str) -> dict[str, str]:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _next_slot(base_key: str, value: str) -> str:
+def _next_slot(base_key: str, value: str, user_id: int = 0) -> str:
     """
     For accumulating keys (preference_1, preference_2, ...):
     - If this exact value already stored, return same key (no duplicate).
     - Otherwise find the next free numbered slot.
     """
-    existing = semantic.list_facts()
+    existing = semantic.list_facts(user_id=user_id)
     for f in existing:
         if f.key.startswith(base_key) and f.value.lower().strip() == value.lower().strip():
             return f.key  # already have it

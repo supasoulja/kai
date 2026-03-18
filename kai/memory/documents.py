@@ -79,7 +79,12 @@ def _chunk(text: str) -> list[str]:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def ingest(filepath: Path, embed_fn: EmbedFn, original_name: str | None = None) -> dict:
+def ingest(
+    filepath: Path,
+    embed_fn: EmbedFn,
+    original_name: str | None = None,
+    user_id: int = 0,
+) -> dict:
     """
     Extract text from filepath, chunk it, embed each chunk, store everything.
     Returns metadata dict: {doc_id, filename, file_type, char_count, chunk_count}.
@@ -109,9 +114,9 @@ def ingest(filepath: Path, embed_fn: EmbedFn, original_name: str | None = None) 
     # Persist document record and all chunks in one transaction
     conn = get_conn()
     conn.execute(
-        "INSERT INTO rag_documents (doc_id, filename, file_type, char_count, chunk_count, uploaded_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (doc_id, filename, file_type, char_count, len(chunks), now),
+        "INSERT INTO rag_documents (doc_id, user_id, filename, file_type, char_count, chunk_count, uploaded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (doc_id, user_id, filename, file_type, char_count, len(chunks), now),
     )
     chunk_rows = []
     for i, chunk_text in enumerate(chunks):
@@ -164,20 +169,27 @@ def search(
     query: str,
     embed_fn: EmbedFn | None = None,
     top_k: int = 5,
+    query_embedding: list[float] | None = None,
+    user_id: int = 0,
 ) -> list[dict]:
     """
     Find the most relevant chunks for query.
     Returns list of dicts: {doc_id, doc_name, chunk_index, content, distance}.
     Uses vector search when available, falls back to LIKE substring search.
+    Scoped to user's own docs + shared docs.
     """
-    if embed_fn and sqlite_vec_available():
-        return _vector_search(query, embed_fn, top_k)
-    return _text_search(query, top_k)
+    if (query_embedding or embed_fn) and sqlite_vec_available():
+        return _vector_search(query, embed_fn, top_k, query_embedding, user_id)
+    return _text_search(query, top_k, user_id)
 
 
-def _vector_search(query: str, embed_fn: EmbedFn, top_k: int) -> list[dict]:
+def _vector_search(
+    query: str, embed_fn: EmbedFn, top_k: int,
+    query_embedding: list[float] | None = None,
+    user_id: int = 0,
+) -> list[dict]:
     import sqlite_vec
-    embedding = embed_fn(query)
+    embedding = query_embedding or embed_fn(query)
     conn = get_conn()
 
     # Step 1: pure KNN — no JOINs inside the MATCH query
@@ -190,14 +202,14 @@ def _vector_search(query: str, embed_fn: EmbedFn, top_k: int) -> list[dict]:
         return []
     rowid_to_dist = {r[0]: r[1] for r in knn_rows}
     placeholders  = ",".join("?" * len(rowid_to_dist))
-    # Step 2: fetch chunk content + doc name
+    # Step 2: fetch chunk content + doc name, filtered by user ownership or shared
     rows = conn.execute(
         f"SELECT c.rowid, c.doc_id, c.chunk_index, c.content, d.filename "
         f"FROM rag_chunks c "
         f"JOIN rag_documents d ON d.doc_id = c.doc_id "
-        f"WHERE c.rowid IN ({placeholders}) "
+        f"WHERE c.rowid IN ({placeholders}) AND (d.user_id = ? OR d.shared = 1) "
         f"LIMIT ?",
-        (*rowid_to_dist.keys(), top_k),
+        (*rowid_to_dist.keys(), user_id, top_k),
     ).fetchall()
 
     return [
@@ -212,16 +224,16 @@ def _vector_search(query: str, embed_fn: EmbedFn, top_k: int) -> list[dict]:
     ]
 
 
-def _text_search(query: str, top_k: int) -> list[dict]:
+def _text_search(query: str, top_k: int, user_id: int = 0) -> list[dict]:
     conn = get_conn()
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     rows = conn.execute(
         "SELECT c.doc_id, c.chunk_index, c.content, d.filename "
         "FROM rag_chunks c "
         "JOIN rag_documents d ON d.doc_id = c.doc_id "
-        "WHERE c.content LIKE ? ESCAPE '\\' "
+        "WHERE (d.user_id = ? OR d.shared = 1) AND c.content LIKE ? ESCAPE '\\' "
         "LIMIT ?",
-        (f"%{escaped}%", top_k),
+        (user_id, f"%{escaped}%", top_k),
     ).fetchall()
     return [
         {
@@ -235,12 +247,14 @@ def _text_search(query: str, top_k: int) -> list[dict]:
     ]
 
 
-def list_documents() -> list[dict]:
-    """Return all uploaded documents sorted by upload time (newest first)."""
+def list_documents(user_id: int = 0) -> list[dict]:
+    """Return documents visible to this user (own + shared), newest first."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT doc_id, filename, file_type, char_count, chunk_count, uploaded_at "
-        "FROM rag_documents ORDER BY uploaded_at DESC"
+        "FROM rag_documents WHERE user_id = ? OR shared = 1 "
+        "ORDER BY uploaded_at DESC",
+        (user_id,)
     ).fetchall()
     return [
         {
@@ -255,18 +269,22 @@ def list_documents() -> list[dict]:
     ]
 
 
-def has_documents() -> bool:
-    """Fast check — returns True if any documents are stored."""
+def has_documents(user_id: int = 0) -> bool:
+    """Fast check — returns True if any documents are visible to this user."""
     conn = get_conn()
-    row = conn.execute("SELECT 1 FROM rag_documents LIMIT 1").fetchone()
+    row = conn.execute(
+        "SELECT 1 FROM rag_documents WHERE user_id = ? OR shared = 1 LIMIT 1",
+        (user_id,)
+    ).fetchone()
     return row is not None
 
 
-def delete_document(doc_id: str) -> bool:
-    """Delete a document and all its chunks + vectors. Returns True if found."""
+def delete_document(doc_id: str, user_id: int = 0) -> bool:
+    """Delete a document and all its chunks + vectors. Owner-only enforcement."""
     conn = get_conn()
     row = conn.execute(
-        "SELECT 1 FROM rag_documents WHERE doc_id = ?", (doc_id,)
+        "SELECT 1 FROM rag_documents WHERE doc_id = ? AND user_id = ?",
+        (doc_id, user_id)
     ).fetchone()
     if not row:
         return False

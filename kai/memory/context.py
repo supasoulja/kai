@@ -32,6 +32,7 @@ def build(
     dm_mode: bool = False,
     query_embedding: list[float] | None = None,
     domain_index: dict[str, list[float]] | None = None,
+    user_id: int = 0,
 ) -> ContextBlock:
     """
     Build a ContextBlock for the given query.
@@ -45,9 +46,9 @@ def build(
     everything (same as pre-router behavior).
     """
     identity_text = build_identity_block()
-    proc_rules    = procedural.list_rules()
-    all_facts     = semantic.list_facts()
-    doc_inv       = _fetch_doc_inventory()
+    proc_rules    = procedural.list_rules(user_id=user_id)
+    all_facts     = semantic.list_facts(user_id=user_id)
+    doc_inv       = _fetch_doc_inventory(user_id=user_id)
 
     # ── Route: classify query → active domains ────────────────────────────────
     if query_embedding and domain_index:
@@ -63,23 +64,23 @@ def build(
     sem_facts = router.filter_facts(all_facts, active)
 
     # ── Episodic: only search when "history" domain is active ─────────────────
-    episodes = _fetch_episodic(query, embed_fn) if "history" in active else []
+    episodes = _fetch_episodic(query, embed_fn, query_embedding, user_id) if "history" in active else []
 
     # ── RAG chunks: only search when "documents" domain is active ─────────────
-    rag_chunks = _fetch_rag_chunks(query, embed_fn) if "documents" in active else []
+    rag_chunks = _fetch_rag_chunks(query, embed_fn, query_embedding, user_id) if "documents" in active else []
 
     # ── Campaign: only when dm_mode AND domain active ─────────────────────────
     campaign_text = ""
     if dm_mode and "campaign" in active:
-        campaign_text = _fetch_campaign(query, embed_fn)
+        campaign_text = _fetch_campaign(query, embed_fn, user_id)
 
     # ── Memory directory: always built, always injected ───────────────────────
     directory = router.build_directory(
         semantic_facts=all_facts,
         doc_inventory=doc_inv,
-        episodic_count=router.get_episodic_count(),
-        learned_count=router.get_learned_count(),
-        campaign_name=router.get_active_campaign_name() if dm_mode else None,
+        episodic_count=router.get_episodic_count(user_id=user_id),
+        learned_count=router.get_learned_count(user_id=user_id),
+        campaign_name=router.get_active_campaign_name(user_id=user_id) if dm_mode else None,
         session_keys=list((session_state or {}).keys()),
     )
 
@@ -110,6 +111,8 @@ def build(
 def _fetch_episodic(
     query: str,
     embed_fn: Callable[[str], list[float]] | None,
+    query_embedding: list[float] | None = None,
+    user_id: int = 0,
 ) -> list:
     """
     Fetch episodic context for the current query.
@@ -117,30 +120,39 @@ def _fetch_episodic(
     Falls back to raw turns if no summaries exist yet (e.g. first session before any
     compression or clear-chat has fired).
     """
-    results = episodic.search_non_turns(query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K)
+    results = episodic.search_non_turns(
+        query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K,
+        query_embedding=query_embedding, user_id=user_id,
+    )
     if not results:
-        # No archives yet — surface raw turns so the model has some cross-session context.
-        # Raw turns are larger but better than nothing while the system is still warm.
-        results = episodic.search(query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K)
+        results = episodic.search(
+            query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K,
+            query_embedding=query_embedding, user_id=user_id,
+        )
     return results
 
 
 def _fetch_rag_chunks(
     query: str,
     embed_fn: Callable[[str], list[float]] | None,
+    query_embedding: list[float] | None = None,
+    user_id: int = 0,
 ) -> list[dict]:
     """
     Auto-inject relevant document chunks from uploaded files.
     Only fires when documents exist and embed_fn is available.
     Similarity-gated by RAG_THRESHOLD so irrelevant docs don't pollute context.
     """
-    if not embed_fn or not query.strip():
+    if not (embed_fn or query_embedding) or not query.strip():
         return []
     try:
         from kai.memory import documents as _docs
-        if not _docs.has_documents():
+        if not _docs.has_documents(user_id=user_id):
             return []
-        results = _docs.search(query.strip(), embed_fn=embed_fn, top_k=RAG_TOP_K)
+        results = _docs.search(
+            query.strip(), embed_fn=embed_fn, top_k=RAG_TOP_K,
+            query_embedding=query_embedding, user_id=user_id,
+        )
         return [
             {
                 "doc_name":    r["doc_name"],
@@ -154,7 +166,7 @@ def _fetch_rag_chunks(
         return []
 
 
-def _fetch_doc_inventory() -> list[dict]:
+def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
     """
     Return a brief list of all uploaded documents (filename + type + chunk count).
     Cheap query — no embeddings, no content. Always runs so the model knows
@@ -162,9 +174,9 @@ def _fetch_doc_inventory() -> list[dict]:
     """
     try:
         from kai.memory import documents as _docs
-        if not _docs.has_documents():
+        if not _docs.has_documents(user_id=user_id):
             return []
-        return _docs.list_documents()
+        return _docs.list_documents(user_id=user_id)
     except Exception:
         return []
 
@@ -172,11 +184,12 @@ def _fetch_doc_inventory() -> list[dict]:
 def _fetch_campaign(
     query: str,
     embed_fn: Callable[[str], list[float]] | None,
+    user_id: int = 0,
 ) -> str:
     """Fetch the active campaign's context block (NPCs, quests, events)."""
     try:
         from kai import campaign as _camp
-        active = _camp.get_active_campaign()
+        active = _camp.get_active_campaign(user_id=user_id)
         if not active:
             return ""
         return _camp.build_campaign_context(

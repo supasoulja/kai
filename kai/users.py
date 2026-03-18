@@ -74,7 +74,8 @@ def create_user(name: str, pin: str, machine_key_hash: str) -> dict | None:
                 "INSERT INTO users (name, pin_hash, machine_hash, created_at) VALUES (?, ?, ?, ?)",
                 (name, _hash(pin), machine_key_hash, now),
             )
-        return {"name": name}
+            user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return {"name": name, "id": user_id}
     except sqlite3.IntegrityError:
         return None  # name already taken
 
@@ -91,12 +92,12 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
         return None
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT name, pin_hash, machine_hash FROM users WHERE name = ? COLLATE NOCASE",
+            "SELECT id, name, pin_hash, machine_hash FROM users WHERE name = ? COLLATE NOCASE",
             (name,),
         ).fetchone()
         if not row:
             return None
-        stored_name, pin_hash, machine_hash = row
+        user_id, stored_name, pin_hash, machine_hash = row
         # Both factors must pass — check both before returning to avoid timing leaks
         pin_ok     = (pin_hash     == _hash(pin))
         machine_ok = (machine_hash == machine_key_hash)
@@ -106,4 +107,13 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
         conn.execute(
             "UPDATE users SET last_seen = ? WHERE name = ?", (now, stored_name)
         )
-    return {"name": stored_name, "last_seen": now}
+    return {"name": stored_name, "id": user_id, "last_seen": now}
+
+
+def get_user_id(name: str) -> int | None:
+    """Look up a user's integer ID by name. Returns None if not found."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE name = ? COLLATE NOCASE", (name.strip(),)
+        ).fetchone()
+    return row[0] if row else None

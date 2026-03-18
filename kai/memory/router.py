@@ -285,27 +285,30 @@ def build_directory(
 
 # ── Episodic count (lightweight query) ───────────────────────────────────────
 
-def get_episodic_count() -> int:
+def get_episodic_count(user_id: int = 0) -> int:
     """Count archive/summary episodic entries (excludes turns and learned). Cheap DB query."""
     try:
         from kai.db import get_conn
         conn = get_conn()
         row = conn.execute(
             "SELECT COUNT(*) FROM episodic_entries "
-            "WHERE entry_type NOT IN ('turn', 'learned')"
+            "WHERE user_id = ? AND entry_type NOT IN ('turn', 'learned')",
+            (user_id,)
         ).fetchone()
         return row[0] if row else 0
     except Exception:
         return 0
 
 
-def get_learned_count() -> int:
+def get_learned_count(user_id: int = 0) -> int:
     """Count knowledge entries extracted from conversations. Cheap DB query."""
     try:
         from kai.db import get_conn
         conn = get_conn()
         row = conn.execute(
-            "SELECT COUNT(*) FROM episodic_entries WHERE entry_type = 'learned'"
+            "SELECT COUNT(*) FROM episodic_entries "
+            "WHERE user_id = ? AND entry_type = 'learned'",
+            (user_id,)
         ).fetchone()
         return row[0] if row else 0
     except Exception:
@@ -314,13 +317,16 @@ def get_learned_count() -> int:
 
 # ── Campaign name (lightweight query) ────────────────────────────────────────
 
-def get_active_campaign_name() -> str | None:
-    """Return the active campaign's name, or None. Cheap DB query."""
+def get_active_campaign_name(user_id: int = 0) -> str | None:
+    """Return the user's active campaign name, or None. Cheap DB query."""
     try:
         from kai.db import get_conn
         conn = get_conn()
         row = conn.execute(
-            "SELECT name FROM campaigns WHERE is_active = 1 LIMIT 1"
+            "SELECT c.name FROM campaigns c "
+            "JOIN user_active_campaigns uac ON uac.campaign_id = c.id "
+            "WHERE uac.user_id = ? LIMIT 1",
+            (user_id,)
         ).fetchone()
         return row[0] if row else None
     except Exception:

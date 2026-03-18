@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from kai.db import get_conn
+from kai._app_state import get_current_user_id
 from kai.tools.registry import registry
 
 
@@ -26,10 +27,11 @@ from kai.tools.registry import registry
 def save_note(content: str, title: str = "") -> str:
     note_id = str(uuid.uuid4())[:8]
     ts = datetime.now().isoformat()
+    user_id = get_current_user_id()
     conn = get_conn()
     conn.execute(
-        "INSERT INTO notes (id, timestamp, title, content) VALUES (?, ?, ?, ?)",
-        (note_id, ts, title or None, content),
+        "INSERT INTO notes (id, user_id, timestamp, title, content) VALUES (?, ?, ?, ?, ?)",
+        (note_id, user_id, ts, title or None, content),
     )
     conn.commit()
     return f"Saved note [{note_id}]: {title or content[:40]}"
@@ -47,14 +49,15 @@ def save_note(content: str, title: str = "") -> str:
     },
 )
 def search_notes(query: str) -> str:
+    user_id = get_current_user_id()
     conn = get_conn()
     # Escape LIKE wildcards so user input is treated literally
     escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     rows = conn.execute(
         "SELECT id, timestamp, title, content FROM notes "
-        "WHERE content LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
+        "WHERE user_id = ? AND (content LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\') "
         "ORDER BY timestamp DESC LIMIT 5",
-        (f"%{escaped}%", f"%{escaped}%"),
+        (user_id, f"%{escaped}%", f"%{escaped}%"),
     ).fetchall()
 
     if not rows:
@@ -72,10 +75,12 @@ def search_notes(query: str) -> str:
     description="List the most recent saved notes (titles and dates).",
 )
 def list_notes() -> str:
+    user_id = get_current_user_id()
     conn = get_conn()
     rows = conn.execute(
         "SELECT id, timestamp, title, content FROM notes "
-        "ORDER BY timestamp DESC LIMIT 10"
+        "WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10",
+        (user_id,)
     ).fetchall()
 
     if not rows:

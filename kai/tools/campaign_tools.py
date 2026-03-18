@@ -12,6 +12,7 @@ like "who is the blacksmith again?" or "what quests do we have?"
 """
 from kai.tools.registry import registry
 from kai import campaign as _camp
+from kai._app_state import get_current_user_id
 
 
 def _get_embed_fn():
@@ -42,7 +43,7 @@ def _get_embed_fn():
     },
 )
 def campaign_npc_save(name: str, role: str, description: str = "", status: str = "alive") -> dict:
-    camp = _camp.get_active_campaign()
+    camp = _camp.get_active_campaign(user_id=get_current_user_id())
     if not camp:
         return {"success": False, "error": "No active campaign. Start one with campaign.status first."}
     npc_id = _camp.upsert_npc(
@@ -76,7 +77,7 @@ def campaign_npc_save(name: str, role: str, description: str = "", status: str =
     },
 )
 def campaign_event_log(content: str) -> dict:
-    camp = _camp.get_active_campaign()
+    camp = _camp.get_active_campaign(user_id=get_current_user_id())
     if not camp:
         return {"success": False, "error": "No active campaign."}
     event_id = _camp.log_event(camp["id"], content, embed_fn=_get_embed_fn())
@@ -100,7 +101,7 @@ def campaign_event_log(content: str) -> dict:
     },
 )
 def campaign_quest_update(name: str, description: str = "", status: str = "active") -> dict:
-    camp = _camp.get_active_campaign()
+    camp = _camp.get_active_campaign(user_id=get_current_user_id())
     if not camp:
         return {"success": False, "error": "No active campaign."}
     quest_id = _camp.upsert_quest(camp["id"], name, description, status)
@@ -126,7 +127,7 @@ def campaign_quest_update(name: str, description: str = "", status: str = "activ
     },
 )
 def campaign_recall(query: str) -> dict:
-    camp = _camp.get_active_campaign()
+    camp = _camp.get_active_campaign(user_id=get_current_user_id())
     if not camp:
         return {"success": False, "error": "No active campaign."}
     cid      = camp["id"]
@@ -165,9 +166,9 @@ def campaign_recall(query: str) -> dict:
     parameters={},
 )
 def campaign_status() -> dict:
-    camp = _camp.get_active_campaign()
+    camp = _camp.get_active_campaign(user_id=get_current_user_id())
     if not camp:
-        campaigns = _camp.list_campaigns()
+        campaigns = _camp.list_campaigns(user_id=get_current_user_id())
         return {
             "success": False,
             "error": "No active campaign.",
