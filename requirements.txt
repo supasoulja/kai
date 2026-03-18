@@ -1,0 +1,6 @@
+pydantic>=2.0
+sqlite-vec
+psutil
+fastapi
+uvicorn[standard]
+pytest

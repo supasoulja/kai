@@ -1,0 +1,27 @@
+{
+    "version": "0.7.0",
+    "updated": "2026-03-16",
+    "notes": [
+        "New: Conversational Learning — Kai extracts knowledge from each conversation (corrections, cultural references, facts) and saves them as permanent searchable entries",
+        "New: Learned knowledge entries (entry_type='learned') persist across sessions and surface via embedding search when relevant topics come up",
+        "New: Smart pre-filter skips knowledge extraction for trivial exchanges (greetings, short responses) to avoid Ollama queue delays",
+        "New: Memory Directory shows learned knowledge count alongside other memory stores",
+        "Changed: Chat model upgraded from qwen3:8b to qwen3.5:9b (256K context, multimodal, better comprehension)",
+        "Fixed: Identity domain always active in memory router — user name/role never filtered out regardless of query",
+        "New: Memory Router — query-based routing classifies each message and activates only relevant memory stores",
+        "New: Memory Directory — tiny always-injected block showing what data exists in each store",
+        "New: Semantic fact filtering — only facts matching active domains are injected (not all facts every turn)",
+        "New: Episodic and RAG searches skipped when their domain is not active (saves ~30ms per skip)",
+        "New: Single query embedding shared by both memory router and tool router (zero extra Ollama calls)",
+        "Improved: Identity rules updated — rule 8 teaches Kai to use the Memory Directory for unloaded data",
+        "Fixed: Temperature tool crash — missing global declaration caused UnboundLocalError on first call",
+        "Fixed: AMD RDNA3 GPU support — pyadl ADL fallback now correctly yields to WMI when sensors fail",
+        "Fixed: GPU name showed bytes prefix (b'...') for AMD cards — normalised to string",
+        "Fixed: WMI VRAM overflow — cards with >4 GB now show n/a instead of false 4.0 GB",
+        "Fixed: Episodic memory never injected — context budget was smaller than identity block alone",
+        "Fixed: Uploaded documents invisible to Kai — doc inventory now always injected into context",
+        "New: Document uploads appear in conversation thread — Kai sees files as part of the dialogue",
+        "Improved: Context budget raised to 10000 chars — episodic and doc data now fit",
+        "Improved: Memory rules apply to ALL messages — no more 'no stored info' claims on greetings"
+    ]
+}
