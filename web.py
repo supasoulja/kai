@@ -16,7 +16,13 @@ import threading
 import webbrowser
 from pathlib import Path
 
-import uvicorn
+try:
+    import uvicorn
+except ModuleNotFoundError:
+    print("ERROR: uvicorn is not installed in this Python environment.")
+    print(f"  Python executable: {sys.executable}")
+    print(f"  Fix:  {sys.executable} -m pip install uvicorn[standard]")
+    sys.exit(1)
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse

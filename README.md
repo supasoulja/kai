@@ -28,15 +28,15 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 ```bash
 # 1. Clone the repo
 git clone <repo-url>
-cd kai
+cd newb_agent
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
 # 3. Pull required models
-ollama pull qwen3:8b           # primary model — chat, tools, summarization (~5GB)
-ollama pull qwen3:14b          # reasoning model — heavy tasks / :model heavy (~9GB)
-ollama pull nomic-embed-text   # embeddings for episodic search (~274MB)
+ollama pull qwen3.5:9b            # primary model — chat, tools, summarization (~6.6GB)
+ollama pull qwen3:14b              # reasoning model — heavy tasks / :model heavy (~9GB)
+ollama pull qwen3-embedding:4b     # embeddings — episodic + document vector search (~4GB)
 
 # 4. Run (web UI)
 python web.py
@@ -47,6 +47,8 @@ python cli.py
 
 The web UI opens automatically at `http://localhost:7860`.
 
+First run creates a machine certificate and prompts you to register an account (name + PIN).
+
 ---
 
 ## AMD GPU Note
@@ -55,8 +57,8 @@ If Ollama is running on CPU instead of GPU, the context window may be too large.
 The config sets `CONTEXT_WINDOW = 8192` to fit in 16GB VRAM. Verify with `ollama ps`:
 
 ```
-NAME        SIZE    PROCESSOR    CONTEXT
-qwen3:8b    4.9 GB  100% GPU     8192
+NAME           SIZE    PROCESSOR    CONTEXT
+qwen3.5:9b    6.6 GB  100% GPU     8192
 ```
 
 If it still shows CPU, verify your ROCm or AMDGPU-PRO drivers are installed.
@@ -66,14 +68,17 @@ If it still shows CPU, verify your ROCm or AMDGPU-PRO drivers are installed.
 ## Web UI
 
 ```
-python web.py [--port 8080]
+python web.py [--port 8080] [--no-browser]
 ```
 
-Dark-themed single-page interface with:
-- Sidebar: model name, memory stats, clear button
-- Animated ASCII face that reacts to what Kai is doing
-- Streamed responses with status indicator ("Checking temperatures...", "Searching web...")
-- Markdown rendering on completed responses
+Multi-user web interface with:
+- **Login/register** — name + PIN + machine-bound certificate (no cloud auth)
+- **Dashboard** — memory stats, recent sessions, quick actions
+- **Chat** — streamed responses with status indicator, markdown rendering, animated ASCII face
+- **Settings** — response mode, reasoning toggle, memory browser, document upload, DM mode
+- **D&D DM mode** — full campaign management with NPCs, quests, and event logs
+
+Each user gets isolated memory, sessions, and campaigns.
 
 ---
 
@@ -93,7 +98,7 @@ python cli.py [--debug] [--model heavy]
 | `:trace` | Show last 10 turn traces with timing |
 | `:tools` | List registered tools |
 | `:model heavy` | Switch to qwen3:14b (thinking ON) |
-| `:model fast` | Switch back to qwen3:8b |
+| `:model fast` | Switch back to qwen3.5:9b |
 | `:debug` | Toggle debug output |
 | `exit` | Quit |
 
@@ -167,6 +172,25 @@ Four tiers — all SQLite, all local:
 - On "New Chat", the current session is compressed and archived before clearing
 - Volatile stats (CPU%, temps) never touch the DB; they live in the session cache only
 - On startup, any stale volatile facts from old sessions are automatically purged
+- **Per-user isolation** — every memory table is scoped by `user_id`; users never see each other's data
+
+**Document RAG:**
+- Upload PDFs and text files via the web UI
+- Documents are chunked and embedded for vector search
+- Relevant chunks are auto-injected into context when the query matches
+- Owner-only delete; shared documents visible to all users
+
+---
+
+## Authentication
+
+Kai uses a three-factor local auth system:
+
+1. **Name** — identifies the account (case-insensitive)
+2. **PIN** — 4+ digits, stored only as a SHA-256 hash
+3. **Machine certificate** — a 30-byte random key generated once per installation (`kai/device.py`). Its hash is stored per user at registration. A copied database is useless on another machine.
+
+Session cookies (httpOnly, strict SameSite) keep you logged in for 7 days.
 
 ---
 
@@ -183,48 +207,60 @@ Edit `kai/persona.md` — no code changes needed. The file controls:
 ## Project Structure
 
 ```
-kai/
-├── persona.md            ← edit this to change behavior
-├── brain.py              ← Ollama HTTP client + ReAct tool-call loop
-├── identity.py           ← builds system prompt from persona.md
-├── config.py             ← all settings (models, paths, thresholds)
-├── schema.py             ← shared data types
-├── trace.py              ← turn timing and observability
-├── sessions.py           ← persist and browse conversation history
-├── campaign.py           ← D&D campaign data (DM mode)
-├── _app_state.py         ← shared embed function (avoids circular imports)
-├── memory/
-│   ├── manager.py        ← single interface over all memory tiers
-│   ├── semantic.py       ← long-term key-value facts
-│   ├── procedural.py     ← behavioral rules
-│   ├── episodic.py       ← session summaries + vector search
-│   ├── extractor.py      ← auto-extract facts from conversation
-│   ├── summarizer.py     ← compress turns into episodic summaries
-│   └── context.py        ← assembles the system prompt context block
-├── tools/
-│   ├── registry.py       ← tool router + Ollama schema declarations
-│   ├── system_info.py    ← CPU, RAM, disk
-│   ├── temps.py          ← GPU/CPU temperatures
-│   ├── pc_tools.py       ← startup programs, event logs, deep scan
-│   ├── system_ops.py     ← restore points, cleanup, disk cleanup
-│   ├── file_tools.py     ← large/old/recent file search + read/list
-│   ├── workspace_tools.py← file write/append/edit + git clone/pull
-│   ├── network.py        ← ping, traceroute, diagnostics
-│   ├── crash_logs.py     ← Windows error event parsing
-│   ├── campaign_tools.py ← NPC/event/quest tools for DM mode
-│   ├── search.py         ← DuckDuckGo web search
-│   ├── weather.py        ← weather via DuckDuckGo
-│   ├── notes.py          ← note save/search
-│   └── time_tool.py      ← current datetime
-└── static/
-    └── index.html        ← web UI (single file, no build step)
-web.py                    ← FastAPI server + SSE streaming
-cli.py                    ← terminal REPL entry point
-tests/
-├── test_memory.py
-├── test_brain.py
-├── test_tools.py
-└── test_integration.py   ← requires Ollama running
+newb_agent/
+├── web.py                    <- FastAPI server + SSE streaming + multi-user auth
+├── cli.py                    <- terminal REPL entry point
+├── requirements.txt
+├── kai/
+│   ├── persona.md            <- edit this to change behavior
+│   ├── brain.py              <- Ollama HTTP client + ReAct tool-call loop
+│   ├── identity.py           <- builds system prompt from persona.md
+│   ├── config.py             <- all settings (models, paths, thresholds)
+│   ├── schema.py             <- shared data types
+│   ├── trace.py              <- turn timing and observability
+│   ├── sessions.py           <- persist and browse conversation history
+│   ├── campaign.py           <- D&D campaign data (DM mode)
+│   ├── db.py                 <- database schema + migrations
+│   ├── users.py              <- user registration, login, machine-bound auth
+│   ├── device.py             <- machine certificate generation
+│   ├── upgrade.py            <- version change detection
+│   ├── _app_state.py         <- thread-local user_id + shared embed function
+│   ├── memory/
+│   │   ├── manager.py        <- single interface over all memory tiers
+│   │   ├── semantic.py       <- long-term key-value facts
+│   │   ├── procedural.py     <- behavioral rules
+│   │   ├── episodic.py       <- session summaries + vector search
+│   │   ├── documents.py      <- document RAG (upload, chunk, search)
+│   │   ├── extractor.py      <- auto-extract facts from conversation
+│   │   ├── context.py        <- assembles the system prompt context block
+│   │   └── router.py         <- memory domain routing via embeddings
+│   ├── tools/
+│   │   ├── registry.py       <- tool router + Ollama schema declarations
+│   │   ├── system_info.py    <- CPU, RAM, disk
+│   │   ├── temps.py          <- GPU/CPU temperatures
+│   │   ├── pc_tools.py       <- startup programs, event logs, deep scan
+│   │   ├── system_ops.py     <- restore points, cleanup, disk cleanup
+│   │   ├── file_tools.py     <- large/old/recent file search + read/list
+│   │   ├── workspace_tools.py<- file write/append/edit + git clone/pull
+│   │   ├── network.py        <- ping, traceroute, diagnostics
+│   │   ├── crash_logs.py     <- Windows error event parsing
+│   │   ├── campaign_tools.py <- NPC/event/quest tools for DM mode
+│   │   ├── search.py         <- DuckDuckGo web search
+│   │   ├── weather.py        <- weather via DuckDuckGo
+│   │   ├── notes.py          <- note save/search
+│   │   ├── rag.py            <- document upload/search/delete tools
+│   │   ├── memory_tools.py   <- episodic search + session recall tools
+│   │   └── time_tool.py      <- current datetime
+│   └── static/
+│       ├── login.html        <- login/register page
+│       ├── app.html          <- main app shell (Dashboard | Chat | Settings)
+│       ├── style.css         <- shared CSS (dark theme)
+│       └── app.js            <- tab switching, SSE streaming, all UI logic
+└── tests/
+    ├── test_memory.py
+    ├── test_brain.py
+    ├── test_tools.py
+    └── test_integration.py   <- requires Ollama running
 ```
 
 ---
@@ -232,10 +268,10 @@ tests/
 ## Running Tests
 
 ```bash
-# Unit tests — no Ollama needed
+# Unit tests -- no Ollama needed
 python -m pytest tests/test_memory.py tests/test_brain.py tests/test_tools.py -v
 
-# Integration tests — requires Ollama + models
+# Integration tests -- requires Ollama + models
 python -m pytest tests/test_integration.py -v -s
 ```
 
@@ -246,11 +282,12 @@ python -m pytest tests/test_integration.py -v -s
 All settings are in `kai/config.py`:
 
 ```python
-CHAT_MODEL            = "qwen3:8b"         # chat + tools
-REASONING_MODEL       = "qwen3:14b"        # heavy tasks (:model heavy)
-EMBED_MODEL           = "nomic-embed-text" # episodic vector search
-CONTEXT_WINDOW        = 8192               # tokens passed to Ollama
-HISTORY_CHAR_LIMIT    = 12000              # compress history when it exceeds this (~3k tokens)
-HISTORY_COMPRESS_KEEP = 4                  # keep last N exchanges verbatim after compression
-EPISODIC_TOP_K        = 5                  # archive entries injected per prompt
+CHAT_MODEL            = "qwen3.5:9b"          # chat + tools
+REASONING_MODEL       = "qwen3:14b"           # heavy tasks (:model heavy)
+EMBED_MODEL           = "qwen3-embedding:4b"  # episodic + document vector search
+SUMMARY_MODEL         = "qwen3:14b"           # background summarization
+CONTEXT_WINDOW        = 8192                   # tokens passed to Ollama
+HISTORY_CHAR_LIMIT    = 12000                  # compress history when exceeded (~3k tokens)
+HISTORY_COMPRESS_KEEP = 4                      # keep last N exchanges verbatim after compression
+EPISODIC_TOP_K        = 5                      # archive entries injected per prompt
 ```
