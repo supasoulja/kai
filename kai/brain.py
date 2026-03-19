@@ -197,6 +197,88 @@ LEARN_PROMPT = (
 )
 
 
+# ── Auto-think: skip reasoning for trivial prompts ────────────────────────────
+# When reasoning mode is ON, this classifier decides per-prompt whether to
+# actually send think=True to Ollama. Simple greetings, single-word replies,
+# and casual chat skip thinking entirely — saving 10-30s of wasted compute.
+# Complex queries (multi-step, debugging, comparisons, analysis) keep it on.
+
+# Patterns that ALWAYS skip thinking (cheap chat)
+_TRIVIAL_PATTERNS = re.compile(
+    r"^("
+    # Greetings
+    r"h(ello|i|ey|owdy|iya|eya?)(\s+(there|kai|buddy|dude|bro|man|friend))?"
+    r"|yo\b"
+    r"|sup\b"
+    r"|what'?s?\s*up"
+    r"|good\s+(morning|afternoon|evening|night)"
+    r"|g'?(morning|night)"
+    r"|gm\b|gn\b"
+    # Farewells
+    r"|bye\b|goodbye|see\s*ya|later|night|cya|peace|ttyl"
+    # Acknowledgements
+    r"|ok(ay)?|k\b|sure|yep|yup|yeah|yes|no|nah|nope|mhm|hmm"
+    r"|thanks?(\s*(you|a?\s*lot|so\s+much|kai))?"
+    r"|ty\b|thx\b"
+    r"|got\s*it|understood|makes?\s*sense|fair\s*(enough)?"
+    r"|nice|cool|neat|sick|dope|bet|based|lol|lmao|haha|rofl"
+    r"|wow|whoa|damn|dang|huh|oh|ah|oof|rip"
+    # Simple identity / small talk
+    r"|how\s+are\s+you(\s+doing)?(\s+today)?"
+    r"|how'?s?\s*it\s+going"
+    r"|what\s+are\s+you(\s+up\s+to)?"
+    r"|who\s+are\s+you"
+    r"|what'?s?\s+your\s+name"
+    r"|tell\s+me\s+(about\s+)?yourself"
+    r"|you\s+there\??"
+    r"|are\s+you\s+(awake|alive|there|ready|up)"
+    r")[\s?!.,]*$",
+    re.IGNORECASE,
+)
+
+# Patterns that ALWAYS need thinking (complex reasoning)
+_COMPLEX_PATTERNS = re.compile(
+    r"("
+    r"explain.{0,30}(how|why|difference|between|vs|versus)"
+    r"|compare|contrast|analyze|evaluat"
+    r"|step.by.step|walk\s+me\s+through"
+    r"|pros?\s+and\s+cons?"
+    r"|debug|diagnos|troubleshoot"
+    r"|why\s+(is|does|did|would|should|can'?t|won'?t|isn'?t|doesn'?t|aren'?t)"
+    r"|how\s+(would|should|could|do)\s+(?:i|you|we).{10,}"
+    r"|what.{0,10}(best|optimal|right|correct)\s+(way|approach|method|strategy)"
+    r"|design|architect|implement|refactor|optimize"
+    r"|trade.?off|down.?side|caveat|implication"
+    r"|write\s+(?:a\s+)?(?:function|class|script|program|code|algorithm)"
+    r"|fix\s+(?:this|the|my)\s+(?:code|bug|error|issue|problem)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _query_needs_thinking(query: str) -> bool:
+    """Decide whether a query warrants chain-of-thought reasoning.
+
+    Returns False for trivial prompts (greetings, acks, small talk).
+    Returns True for complex prompts (analysis, debugging, comparisons).
+    For ambiguous prompts, uses word count as a heuristic — longer = more likely complex.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return False
+    # Fast path: trivial patterns never need thinking
+    if _TRIVIAL_PATTERNS.match(stripped):
+        return False
+    # Fast path: complex patterns always need thinking
+    if _COMPLEX_PATTERNS.search(stripped):
+        return True
+    # Heuristic: very short prompts (< 8 words) are usually casual
+    word_count = len(stripped.split())
+    if word_count < 8:
+        return False
+    return True
+
+
 def _query_needs_tools(query: str, history: list[dict] | None = None) -> bool:
     if _TOOL_SIGNALS.search(query):
         return True
@@ -516,6 +598,10 @@ class Brain:
         turn_start = time.monotonic()
         tools_used: list[str] = []
 
+        # Auto-think: when reasoning mode is ON, still skip it for trivial
+        # prompts like "hello" to avoid 30s of wasted chain-of-thought.
+        use_think = self._think and _query_needs_thinking(user_input)
+
         if on_status:
             on_status("Thinking...")
 
@@ -569,14 +655,14 @@ class Brain:
                 break  # no tools → skip to streaming final answer
 
             resp = self.ollama.chat(
-                messages, tools=tools_schema, model=self.model, think=self._think
+                messages, tools=tools_schema, model=self.model, think=use_think
             )
             msg = resp.get("message", {})
 
             # Emit tool-round thinking as a step to be shown inline before the
             # tool label in the activity log — not as a floating reasoning dropdown.
             tool_round_thinking = msg.get("thinking", "")
-            if tool_round_thinking and self._think:
+            if tool_round_thinking and use_think:
                 yield "", False, {"think_step": True, "text": tool_round_thinking}
 
             if DEBUG:
@@ -683,7 +769,7 @@ class Brain:
 
         _tokens: list[str] = []
         for token, done, meta in self.ollama.chat_stream(
-            messages, tools=None, model=self.model, think=self._think
+            messages, tools=None, model=self.model, think=use_think
         ):
             if done:
                 break

@@ -27,7 +27,7 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url>
+git clone <https://github.com/supasoulja/newb_agent>
 cd newb_agent
 
 # 2. Install dependencies
