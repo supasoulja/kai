@@ -207,7 +207,7 @@ def workspace_git_clone(url: str, folder_name: str = "") -> str:
         return (
             f"'{url}' is not on the allowlist.\n"
             f"Allowed repos:\n{allowed}\n"
-            "Ask Alex to add it to ALLOWED_GIT_REPOS in config.py."
+            "Add the URL to ALLOWED_GIT_REPOS in config.py to grant access."
         )
 
     # Derive folder name from the repo slug in the URL
@@ -307,7 +307,7 @@ def workspace_git_pull(folder_name: str) -> str:
 def workspace_git_list_allowed() -> str:
     repos = cfg.ALLOWED_GIT_REPOS
     if not repos:
-        return "No repos are currently allowed. Ask Alex to add URLs to ALLOWED_GIT_REPOS in config.py."
+        return "No repos are currently allowed. Add URLs to ALLOWED_GIT_REPOS in config.py to grant access."
     lines = ["Allowed Git repos:"]
     for url in repos:
         lines.append(f"  • {url}")

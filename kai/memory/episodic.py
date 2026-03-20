@@ -94,6 +94,7 @@ def _vector_search(
     if not knn_rows:
         return []
     # Step 2: fetch the actual entries by rowid, filtered by user_id.
+    # Preserve KNN distance ordering via the rowid list order.
     rowids = [r[0] for r in knn_rows]
     placeholders = ",".join("?" * len(rowids))
     rows = conn.execute(
@@ -103,7 +104,17 @@ def _vector_search(
         (*rowids, user_id, top_k)
     ).fetchall()
 
-    return _rows_to_entries(rows)
+    # Re-sort to match KNN distance order (IN clause returns arbitrary order)
+    entries = _rows_to_entries(rows)
+    row_id_by_entry_id = {}
+    for r in conn.execute(
+        f"SELECT id, rowid FROM episodic_entries WHERE rowid IN ({placeholders})",
+        rowids,
+    ).fetchall():
+        row_id_by_entry_id[r[0]] = r[1]
+    rowid_rank = {rid: i for i, rid in enumerate(rowids)}
+    entries.sort(key=lambda e: rowid_rank.get(row_id_by_entry_id.get(e.id, -1), 999))
+    return entries
 
 
 def _text_search(query: str, top_k: int, user_id: int = 0) -> list[EpisodicEntry]:
@@ -154,7 +165,18 @@ def search_non_turns(
             f"LIMIT ?",
             (*rowids, user_id, top_k)
         ).fetchall()
-        return _rows_to_entries(rows)
+
+        # Re-sort to match KNN distance order (IN clause returns arbitrary order)
+        entries = _rows_to_entries(rows)
+        row_id_by_entry_id = {}
+        for r in conn.execute(
+            f"SELECT id, rowid FROM episodic_entries WHERE rowid IN ({placeholders})",
+            rowids,
+        ).fetchall():
+            row_id_by_entry_id[r[0]] = r[1]
+        rowid_rank = {rid: i for i, rid in enumerate(rowids)}
+        entries.sort(key=lambda e: rowid_rank.get(row_id_by_entry_id.get(e.id, -1), 999))
+        return entries
 
     # Text fallback — exclude raw turns
     conn = get_conn()

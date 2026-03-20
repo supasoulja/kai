@@ -295,6 +295,20 @@ def get_recent_files(path: str = "", count: int = 15) -> str:
 _MAX_LINES  = 400   # max lines returned per read
 _MAX_CHARS  = 8000  # hard cap on total output chars
 
+# Filenames that should never be read — even if they have a text extension.
+# Prevents the model from being tricked into exfiltrating secrets.
+_BLOCKED_FILENAMES = {
+    ".env", ".env.local", ".env.production", ".env.development",
+    "credentials.json", "service_account.json",
+    "id_rsa", "id_ed25519", "id_ecdsa",
+    ".netrc", ".npmrc",
+}
+
+# Directories that should never be read from (resolved, lowercased on Windows).
+_BLOCKED_DIR_PARTS = {
+    ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
+}
+
 _TEXT_EXTENSIONS = {
     ".py", ".pyw", ".txt", ".md", ".rst", ".json", ".jsonl", ".yaml", ".yml",
     ".toml", ".ini", ".cfg", ".env", ".log", ".csv", ".tsv",
@@ -340,6 +354,13 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
             f"'{p.name}' doesn't look like a text file (extension: '{p.suffix}'). "
             "Only text/code/config files are supported."
         )
+    # Block sensitive files by name
+    if p.name.lower() in _BLOCKED_FILENAMES:
+        return f"Blocked: '{p.name}' may contain secrets and cannot be read."
+    # Block sensitive directories
+    path_lower = str(p).lower().replace("\\", "/")
+    if any(f"/{part}/" in path_lower or path_lower.endswith(f"/{part}") for part in _BLOCKED_DIR_PARTS):
+        return f"Blocked: files inside '{p.parent.name}' cannot be read for security reasons."
 
     start_line = max(1, int(start_line))
     end_line   = int(end_line)

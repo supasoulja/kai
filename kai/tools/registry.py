@@ -17,7 +17,7 @@ import difflib
 import math
 from datetime import datetime
 from typing import Any, Callable
-from kai.config import DEBUG
+import kai.config as cfg
 
 
 class ToolRegistry:
@@ -40,7 +40,7 @@ class ToolRegistry:
             for alias, target in rows:
                 self._aliases[alias] = target  # filter stale entries at use-time
         except Exception:
-            if DEBUG:
+            if cfg.DEBUG:
                 import traceback; traceback.print_exc()
 
     def _persist_alias(self, alias: str, target: str, similarity: float) -> None:
@@ -54,7 +54,7 @@ class ToolRegistry:
             """, (alias, target, similarity, datetime.now().isoformat()))
             conn.commit()
         except Exception:
-            if DEBUG:
+            if cfg.DEBUG:
                 import traceback; traceback.print_exc()
 
     # ── Alias learning ────────────────────────────────────────────────────────
@@ -91,12 +91,12 @@ class ToolRegistry:
         if best_name and best_score >= threshold:
             self._aliases[hallucinated_name] = best_name
             self._persist_alias(hallucinated_name, best_name, best_score)
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"[alias] learned: {hallucinated_name!r} → {best_name!r} "
                       f"(score={best_score:.2f})")
             return best_name
 
-        if DEBUG:
+        if cfg.DEBUG:
             print(f"[alias] no match for {hallucinated_name!r} "
                   f"(best={best_name!r}, score={best_score:.2f})")
         return None
@@ -198,7 +198,7 @@ class ToolRegistry:
         # fallback when a system tool returns an error code and the model needs to look it up.
         if "search.web" in self._tools:
             selected.add("search.web")
-        if DEBUG:
+        if cfg.DEBUG:
             chosen = [(c, f"{s:.2f}") for c, s in scores[:top_k]]
             print(f"[tool select] categories={chosen}  tools={len(selected)}")
         schemas = [t["schema"] for name, t in self._tools.items() if name in selected]

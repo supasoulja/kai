@@ -11,26 +11,31 @@ CHANGELOG_PATH  = ROOT_DIR / "kai" / "changelog.json"
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Models ─────────────────────────────────────────────────────────────────────
+# Sized for 8 GB VRAM.  Ollama swaps models so only one is loaded at a time.
+# The largest single model (CHAT_MODEL at ~6.3 GB total) must fit.
+# Set OLLAMA_KV_CACHE_TYPE=q8_0 in your environment to halve KV-cache VRAM.
 #
-# CHAT_MODEL      — all conversation, tool calling, and knowledge extraction
-#                   qwen3.5:9b: ~6.6GB, 256K context, multimodal, native tool calling
+# CHAT_MODEL      — conversation, tool calling, summarisation, knowledge extraction
+#                   qwen3.5:9b (Q4_K_M): ~5.7 GB weights, ~6.3 GB total at 8K context
+#                   Gated DeltaNet arch → only 8/32 layers use full KV cache,
+#                   so KV overhead is ~130 MB at 8K (vs ~1 GB for standard 9B)
 #
 # REASONING_MODEL — heavy tasks (:model heavy in CLI), think mode enabled
-#                   qwen3:14b: ~9GB, chain-of-thought reasoning
+#                   qwen3:8b (Q4_K_M): ~6.0 GB total at 8K context
 #
 # EMBED_MODEL     — dedicated embedding model for episodic vector search
-#                   qwen3-embedding:4b: ~4GB RAM, 2560-dim vectors, MTEB top-tier
+#                   qwen3-embedding:4b: ~2.5 GB, 2560-dim vectors, MTEB top-tier
 
 CHAT_MODEL      = "qwen3.5:9b"
-REASONING_MODEL = "qwen3:14b"
+REASONING_MODEL = "qwen3:8b"
 EMBED_MODEL     = "qwen3-embedding:4b"
-SUMMARY_MODEL   = "qwen3:14b"
+SUMMARY_MODEL   = "qwen3.5:9b"
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # explicit IPv4 — localhost resolves to IPv6 on Windows
 
 # ── Context window ─────────────────────────────────────────────────────────────
-# qwen3.5:9b supports 256k context. 8192 keeps KV-cache small so the model
-# stays fully in VRAM. Raise to 16384 if you need longer context (~1GB extra).
+# qwen3.5:9b supports 256K context. 8192 keeps KV-cache small (~130 MB) thanks
+# to Gated DeltaNet. Total VRAM stays under 6.5 GB on 8 GB cards.
 CONTEXT_WINDOW = 8192  # tokens; passed as num_ctx to Ollama
 
 # ── Generation ─────────────────────────────────────────────────────────────────

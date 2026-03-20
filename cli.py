@@ -81,8 +81,8 @@ Commands:
   :trace        show last 10 turn traces (timing, tools used)
   :tools        list registered tools
   :vector       show vector table stats (episodic + RAG embeddings)
-  :model heavy  switch to qwen3:14b (thinking ON) for this session
-  :model fast   switch back to qwen3:8b
+  :model heavy  switch to reasoning model (thinking ON) for this session
+  :model fast   switch back to chat model
   :debug        toggle debug mode
   :help         show this
   :quit / exit  exit
@@ -315,7 +315,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Kai — local AI agent")
     parser.add_argument("--debug",  action="store_true", help="Enable debug output")
     parser.add_argument("--model",  choices=["fast", "heavy"], default="fast",
-                        help="Model to use: fast (qwen3:8b) or heavy (qwen3:14b, thinking ON)")
+                        help=f"Model to use: fast ({cfg.CHAT_MODEL}) or heavy ({cfg.REASONING_MODEL}, thinking ON)")
     args = parser.parse_args()
 
     if args.debug:

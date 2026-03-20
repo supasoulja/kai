@@ -18,9 +18,10 @@ from collections.abc import Callable, Generator
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import kai.config as cfg
 from kai.config import (
     CHAT_MODEL, EMBED_MODEL, REASONING_MODEL,
-    OLLAMA_BASE_URL, CONTEXT_WINDOW, TEMPERATURE_TOOL, TEMPERATURE_FINAL, DEBUG,
+    OLLAMA_BASE_URL, CONTEXT_WINDOW, TEMPERATURE_TOOL, TEMPERATURE_FINAL,
     HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
 )
 from kai.memory.manager import MemoryManager
@@ -665,7 +666,7 @@ class Brain:
             if tool_round_thinking and use_think:
                 yield "", False, {"think_step": True, "text": tool_round_thinking}
 
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"\n[{trace_id}] tool round={round_num} "
                       f"tool_calls={bool(msg.get('tool_calls'))}")
 
@@ -718,7 +719,7 @@ class Brain:
                 if on_status:
                     on_status(_TOOL_LABELS.get(tool_name, tool_name))
                 result = self._execute_tool(tool_name, fn.get("arguments", {}), trace_id)
-                if DEBUG:
+                if cfg.DEBUG:
                     print(f"[{trace_id}] TOOL: {tool_name} → {result}")
                 messages.append({"role": "tool", "content": json.dumps(result)})
                 # Hard error: the tool itself crashed (Python exception or no registry)
@@ -809,7 +810,7 @@ class Brain:
             self._turn_order += 2
             return msg_id
         except Exception:
-            if DEBUG:
+            if cfg.DEBUG:
                 import traceback; traceback.print_exc()
             return None  # session persistence failure never breaks a conversation
 
@@ -834,7 +835,7 @@ class Brain:
                 response_len = len(response),
             ))
         except Exception:
-            if DEBUG:
+            if cfg.DEBUG:
                 import traceback; traceback.print_exc()
 
     def _ensure_tool_index(self) -> None:
@@ -847,10 +848,10 @@ class Brain:
             return
         try:
             self._tool_index = self.tool_registry.build_category_index(self.ollama.embed_batch)
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"[tool index] {len(self._tool_index)} categories indexed")
         except Exception as exc:
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"[tool index] build failed (will use full schema): {exc}")
         finally:
             self._tool_index_ready = True
@@ -865,10 +866,10 @@ class Brain:
             return
         try:
             self.memory.init_router(self.ollama.embed_batch)
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"[memory router] {len(self.memory._domain_index)} domains indexed")
         except Exception as exc:
-            if DEBUG:
+            if cfg.DEBUG:
                 print(f"[memory router] build failed (will inject everything): {exc}")
         finally:
             self._memory_router_ready = True
@@ -889,7 +890,7 @@ class Brain:
             try:
                 self._extract_knowledge(user_input, assistant_text)
             except Exception:
-                if DEBUG:
+                if cfg.DEBUG:
                     import traceback; traceback.print_exc()
 
     def _extract_knowledge(self, user_text: str, assistant_text: str) -> None:
@@ -933,7 +934,7 @@ class Brain:
                 )
                 saved += 1
 
-        if DEBUG and saved:
+        if cfg.DEBUG and saved:
             print(f"[learn] saved {saved} knowledge entries")
 
     def _execute_tool(self, name: str, args: dict, trace_id: str) -> dict:
@@ -949,7 +950,7 @@ class Brain:
             # Unknown tool name — try alias learning (model may have hallucinated a name)
             target = self.tool_registry.learn_alias(name)
             if target:
-                if DEBUG:
+                if cfg.DEBUG:
                     print(f"[brain] alias redirect: {name!r} → {target!r}")
                 try:
                     output = self.tool_registry.execute(target, args)
