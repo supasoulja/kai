@@ -9,12 +9,15 @@ Usage:
 import argparse
 import asyncio
 import json
+import logging
 import re
 import secrets
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 try:
     import uvicorn
@@ -66,6 +69,11 @@ class DmStartRequest(BaseModel):
 
 class LoadSessionRequest(BaseModel):
     pass  # no body needed — session_id is a path param
+
+class AddModelRequest(BaseModel):
+    name: str
+    ollama_id: str
+    think: bool = False
 
 # Maximum input length — prevents accidental context blowout
 _MAX_INPUT_CHARS = 8000
@@ -130,6 +138,33 @@ class _AuthGuard:
             scope.setdefault("state", {})
             scope["state"]["user"] = user_info
         return await self.app(scope, receive, send)
+
+
+class _SecurityHeaders:
+    """Raw ASGI middleware — injects security headers on every HTTP response."""
+
+    _HEADERS = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options",       b"DENY"),
+        (b"referrer-policy",       b"strict-origin-when-cross-origin"),
+        (b"permissions-policy",    b"camera=(), microphone=(), geolocation=()"),
+    ]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend(self._HEADERS)
+                message["headers"] = headers
+            await send(message)
+
+        return await self.app(scope, receive, send_with_headers)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -353,15 +388,17 @@ async def get_sessions(request: Request):
 
 
 @app.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
-    return _sessions.get_messages(session_id)
+async def get_session_messages(session_id: str, request: Request):
+    uid = _uid_for(request)
+    return _sessions.get_messages(session_id, user_id=uid)
 
 
 @app.post("/sessions/{session_id}/load")
 async def load_session(session_id: str, request: Request):
     """Restore a past session into the brain's in-memory history."""
     brain = _brain_for(request)
-    msgs = _sessions.get_messages(session_id)
+    uid = _uid_for(request)
+    msgs = _sessions.get_messages(session_id, user_id=uid)
     if not msgs:
         raise HTTPException(status_code=404, detail="Session not found or empty")
     loaded = brain.load_session(session_id, msgs)
@@ -440,6 +477,75 @@ async def set_think(request: Request):
     brain = _brain_for(request)
     brain._think = not brain._think
     return {"think": brain._think}
+
+
+# ── Model management ──────────────────────────────────────────────────────────
+
+@app.get("/settings/models")
+async def get_models(request: Request):
+    """List all configured models + which one is active."""
+    from kai import models as _models
+    brain = _brain_for(request)
+    all_models = _models.list_models()
+    # Mark which one is currently active
+    for m in all_models:
+        m["active"] = (m["ollama_id"] == brain.model and m["think"] == brain._think)
+    return {"models": all_models}
+
+
+@app.get("/settings/models/available")
+async def get_available_models():
+    """List models installed in Ollama (for the 'add model' dropdown)."""
+    try:
+        installed = _ollama.installed_models()
+        return {"models": installed}
+    except Exception:
+        return {"models": [], "error": "Could not reach Ollama"}
+
+
+@app.post("/settings/models")
+async def add_model(req: AddModelRequest, request: Request):
+    from kai import models as _models
+    name = req.name.strip()
+    ollama_id = req.ollama_id.strip()
+    if not name or not ollama_id:
+        raise HTTPException(status_code=400, detail="Name and model ID are required")
+    if len(name) > 30:
+        raise HTTPException(status_code=400, detail="Name must be 30 characters or fewer")
+    try:
+        entry = _models.add_model(name, ollama_id, req.think)
+        return {"ok": True, "model": entry}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.delete("/settings/models/{name}")
+async def delete_model(name: str, request: Request):
+    from kai import models as _models
+    try:
+        removed = _models.remove_model(name)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/settings/models/active")
+async def set_active_model(request: Request):
+    """Switch the brain to a different configured model."""
+    from kai import models as _models
+    body = await request.json()
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Model name is required")
+    entry = _models.get_model(name)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+    brain = _brain_for(request)
+    brain.model = entry["ollama_id"]
+    brain._think = entry.get("think", False)
+    return {"ok": True, "model": entry["ollama_id"], "think": entry["think"]}
 
 
 # ── User auth ──────────────────────────────────────────────────────────────────
@@ -628,9 +734,13 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):
 
         return {"ok": True, **meta}
     except ValueError as e:
+        # ValueError is raised intentionally by _extract_text for known-bad input;
+        # safe to surface the message (it's ours, not a library traceback).
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+    except Exception:
+        # Log the real error server-side; never expose library tracebacks to client
+        _log.exception("Document ingestion failed")
+        raise HTTPException(status_code=500, detail="Document ingestion failed. Check the server log for details.")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -692,8 +802,15 @@ async def chat(req: ChatRequest, request: Request):
                     event = {"type": "token", "text": token}
                 asyncio.run_coroutine_threadsafe(q.put(event), loop)
         except Exception as exc:
+            # Log real error server-side; send generic message to client
+            _log.exception("Chat stream error")
+            # Only surface connection errors (user-actionable); hide everything else
+            if "connect" in str(exc).lower():
+                safe_msg = "Could not reach Ollama. Is it running?"
+            else:
+                safe_msg = "Something went wrong. Check the server log for details."
             asyncio.run_coroutine_threadsafe(
-                q.put({"type": "error", "text": str(exc)}), loop
+                q.put({"type": "error", "text": safe_msg}), loop
             )
             asyncio.run_coroutine_threadsafe(q.put({"type": "done"}), loop)
         finally:
@@ -820,6 +937,7 @@ def main() -> None:
     # ── Security middleware ────────────────────────────────────────────────
     # Order matters: last-added = outermost.  CORS must wrap AuthGuard so
     # that preflight OPTIONS requests are answered before the auth check.
+    # _SecurityHeaders is outermost so every response gets the headers.
     app.add_middleware(_AuthGuard)
     app.add_middleware(
         CORSMiddleware,
@@ -828,9 +946,10 @@ def main() -> None:
             f"http://127.0.0.1:{args.port}",
         ],
         allow_credentials=True,   # allow cookies to be sent
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
     )
+    app.add_middleware(_SecurityHeaders)
 
     # Serve CSS / JS from kai/static/
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

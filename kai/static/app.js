@@ -376,8 +376,12 @@ function appendText(content, token) {
   scrollEnd();
 }
 
+function safeMarkdown(text) {
+  return DOMPurify.sanitize(marked.parse(text));
+}
+
 function renderMarkdown(content, text) {
-  content.innerHTML = marked.parse(text);
+  content.innerHTML = safeMarkdown(text);
   scrollEnd();
 }
 
@@ -403,11 +407,15 @@ async function sendMessage() {
   let statusLog     = [];
   let pendingReason = null;
 
+  const controller = new AbortController();
+  const streamTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min ceiling
+
   try {
     const resp = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text }),
+      signal: controller.signal,
     });
 
     const reader  = resp.body.getReader();
@@ -472,18 +480,22 @@ async function sendMessage() {
           faceOnDone(false);
           if (statusLog.length > 0) addActivityLog(content, statusLog);
           if (ev.message_id && fullText) addFeedbackBar(content.closest('.bubble'), ev.message_id, fullText);
+          clearTimeout(streamTimeout);
           break;
 
         } else if (ev.type === 'error') {
           hideStatus(si);
           content.textContent = '\u26A0 ' + ev.text;
+          clearTimeout(streamTimeout);
           faceOnDone(true);
         }
       }
     }
   } catch (err) {
+    clearTimeout(streamTimeout);
     hideStatus(si);
-    content.textContent = '\u26A0 Connection error: ' + err.message;
+    const msg = err.name === 'AbortError' ? 'Response timed out (5 min). Try again or simplify your question.' : err.message;
+    content.textContent = '\u26A0 ' + msg;
     faceOnDone(true);
   }
 
@@ -548,7 +560,9 @@ async function submitFeedback(messageId, value, fullText) {
 // ── Suggestion chips ─────────────────────────────────────────────────────────
 
 function useSuggestion(el) {
-  if (inputEl) inputEl.value = el.textContent;
+  // Grab text from the label span (skips icon text in new Stitch layout)
+  const label = el.querySelector('.font-headline') || el;
+  if (inputEl) inputEl.value = label.textContent.trim();
   switchTab('chat');
   sendMessage();
 }
@@ -691,6 +705,128 @@ async function toggleThink() {
     _applyThink(d.think);
   } catch { /* ignore */ }
 }
+
+// ── 8b. Model Manager ────────────────────────────────────────────────────────
+
+let _models = [];
+
+async function loadModels() {
+  try {
+    const d = await fetch('/settings/models').then(r => r.json());
+    _models = d.models || [];
+    renderModelList();
+  } catch { /* ignore */ }
+}
+
+function renderModelList() {
+  const el = $('model-list');
+  if (!el) return;
+  if (!_models.length) { el.innerHTML = '<div class="empty-hint">No models configured</div>'; return; }
+
+  el.innerHTML = _models.map(m => {
+    const active  = m.active ? ' model-active' : '';
+    const builtin = m.builtin ? ' model-builtin' : '';
+    const think   = m.think ? '<span class="model-tag">think</span>' : '';
+    const badge   = m.active ? '<span class="model-tag model-tag-active">active</span>' : '';
+    const del     = m.builtin ? '' : `<button class="model-del" data-name="${esc(m.name)}">&times;</button>`;
+    return `<div class="model-row${active}${builtin}" data-name="${esc(m.name)}">
+      <div class="model-row-main">
+        <span class="model-name">${esc(m.name)}</span>
+        <span class="model-id">${esc(m.ollama_id)}</span>
+        ${think}${badge}
+      </div>
+      <div class="model-row-actions">${del}</div>
+    </div>`;
+  }).join('');
+
+  // Click row to activate
+  el.querySelectorAll('.model-row').forEach(row => {
+    row.addEventListener('click', async (e) => {
+      if (e.target.closest('.model-del')) return;
+      const name = row.dataset.name;
+      try {
+        await fetch('/settings/models/active', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        await loadModels();
+        loadInfo();
+      } catch { /* ignore */ }
+    });
+  });
+
+  // Delete buttons
+  el.querySelectorAll('.model-del').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const name = btn.dataset.name;
+      if (!confirm(`Remove model "${name}"?`)) return;
+      try {
+        await fetch(`/settings/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        await loadModels();
+      } catch { /* ignore */ }
+    });
+  });
+}
+
+// Add-model form
+(function initModelForm() {
+  const addBtn    = $('model-add-btn');
+  const form      = $('model-add-form');
+  const cancelBtn = $('model-cancel-btn');
+  const saveBtn   = $('model-save-btn');
+  const selectEl  = $('model-add-ollama');
+
+  if (!addBtn || !form) return;
+
+  addBtn.addEventListener('click', async () => {
+    form.style.display = form.style.display === 'none' ? '' : 'none';
+    if (form.style.display !== 'none' && selectEl) {
+      // Populate dropdown with installed Ollama models
+      try {
+        const d = await fetch('/settings/models/available').then(r => r.json());
+        const models = d.models || [];
+        selectEl.innerHTML = '<option value="">Select an Ollama model...</option>' +
+          models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+      } catch {
+        selectEl.innerHTML = '<option value="">Could not load models</option>';
+      }
+    }
+  });
+
+  if (cancelBtn) cancelBtn.addEventListener('click', () => {
+    form.style.display = 'none';
+    $('model-add-name').value = '';
+    $('model-add-think').checked = false;
+  });
+
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const ollama_id = selectEl ? selectEl.value : '';
+    const name      = ($('model-add-name') || {}).value?.trim() || '';
+    const think     = ($('model-add-think') || {}).checked || false;
+
+    if (!ollama_id) { alert('Pick a model from the dropdown'); return; }
+    if (!name)      { alert('Give it a friendly name'); return; }
+
+    try {
+      const resp = await fetch('/settings/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ollama_id, think }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.detail || 'Failed to add model');
+        return;
+      }
+      form.style.display = 'none';
+      $('model-add-name').value = '';
+      $('model-add-think').checked = false;
+      await loadModels();
+    } catch { alert('Failed to save model'); }
+  });
+})();
 
 // ── 9. Memory Browser ────────────────────────────────────────────────────────
 
@@ -1010,7 +1146,7 @@ async function loadSessionIntoChat(sessionId) {
         wrap.className = 'msg-wrap ai';
         wrap.innerHTML = `
           <div class="avatar">${COMPACT_FACES.done}</div>
-          <div class="bubble"><div class="content">${marked.parse(m.content || '')}</div></div>
+          <div class="bubble"><div class="content">${safeMarkdown(m.content || '')}</div></div>
         `;
         messagesEl.appendChild(wrap);
       }
@@ -1300,6 +1436,7 @@ if (settingsUserName) settingsUserName.textContent = _currentUser.name;
 loadInfo();
 loadMode();
 loadThink();
+loadModels();
 loadSessions();
 loadDmStatus();
 loadDocs();

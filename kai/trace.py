@@ -19,34 +19,49 @@ class TraceEntry:
     tool_calls:  list[str]     # tool names called
     elapsed_ms:  int           # wall time for the full turn
     response_len: int          # characters in final response
+    user_id:     int = 0
 
 
 def record(entry: TraceEntry) -> None:
     conn = get_conn()
-    conn.execute(
-        "INSERT OR REPLACE INTO trace_log VALUES (?,?,?,?,?,?,?,?)",
-        (
-            entry.trace_id,
-            entry.timestamp,
-            entry.user_input[:200],
-            entry.model,
-            entry.context_len,
-            json.dumps(entry.tool_calls),
-            entry.elapsed_ms,
-            entry.response_len,
-        ),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO trace_log "
+            "(trace_id, user_id, timestamp, user_input, model, context_len, tool_calls, elapsed_ms, response_len) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                entry.trace_id,
+                entry.user_id,
+                entry.timestamp,
+                entry.user_input[:200],
+                entry.model,
+                entry.context_len,
+                json.dumps(entry.tool_calls),
+                entry.elapsed_ms,
+                entry.response_len,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        pass  # trace failure never breaks a conversation
 
 
-def recent(limit: int = 10) -> list[TraceEntry]:
+def recent(limit: int = 10, user_id: int | None = None) -> list[TraceEntry]:
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT trace_id, timestamp, user_input, model, context_len, "
-        "tool_calls, elapsed_ms, response_len "
-        "FROM trace_log ORDER BY timestamp DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    if user_id is not None:
+        rows = conn.execute(
+            "SELECT trace_id, timestamp, user_input, model, context_len, "
+            "tool_calls, elapsed_ms, response_len, user_id "
+            "FROM trace_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT trace_id, timestamp, user_input, model, context_len, "
+            "tool_calls, elapsed_ms, response_len, user_id "
+            "FROM trace_log ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     return [
         TraceEntry(
             trace_id    = r[0],
@@ -57,6 +72,7 @@ def recent(limit: int = 10) -> list[TraceEntry]:
             tool_calls  = json.loads(r[5]),
             elapsed_ms  = r[6],
             response_len = r[7],
+            user_id     = r[8],
         )
         for r in rows
     ]

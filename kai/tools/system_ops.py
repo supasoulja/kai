@@ -25,6 +25,15 @@ def _ps(cmd: str, timeout: int = 30) -> tuple[str, str]:
         return "", str(exc)
 
 
+def _ps_escape(value: str) -> str:
+    """Escape a string for safe interpolation into a PowerShell single-quoted literal.
+    Single quotes are the only character that need escaping inside PS '' strings —
+    they are doubled ('') to produce a literal quote."""
+    import re
+    # Strip anything that isn't alphanumeric, space, dot, dash, underscore, or parentheses
+    return re.sub(r"[^a-zA-Z0-9 .\-_()]", "", value)[:120]
+
+
 @registry.tool(
     name="system.create_restore_point",
     description=(
@@ -40,7 +49,7 @@ def _ps(cmd: str, timeout: int = 30) -> tuple[str, str]:
     },
 )
 def create_restore_point(description: str = "Kai checkpoint") -> str:
-    label = description.replace("'", "").replace('"', "")[:80]
+    label = _ps_escape(description)[:80]
     cmd = (
         f"Checkpoint-Computer -Description '{label}' "
         f"-RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop"
@@ -106,7 +115,7 @@ $mb = [math]::Round($freed / 1MB, 1)
 )
 def disable_startup_program(program_name: str) -> str:
     # Use WMIC or Registry to disable — safest is to use the registry key approach
-    name = program_name.replace("'", "").replace('"', "")
+    name = _ps_escape(program_name)
     cmd = (
         f"$regPaths = @("
         f"  'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',"
@@ -191,7 +200,7 @@ def repair_files() -> str:
     },
 )
 def kill_process(process_name: str) -> str:
-    name = process_name.strip().replace('"', '').replace("'", "")
+    name = _ps_escape(process_name.strip())
     # Check if it's running first
     check_cmd = f"Get-Process -Name '{name.replace('.exe','')}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
     pids, _ = _ps(check_cmd, timeout=8)

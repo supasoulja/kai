@@ -83,6 +83,8 @@ Commands:
   :vector       show vector table stats (episodic + RAG embeddings)
   :model heavy  switch to reasoning model (thinking ON) for this session
   :model fast   switch back to chat model
+  :model <name> switch to a user-added model (see :models)
+  :models       list all configured models
   :debug        toggle debug mode
   :help         show this
   :quit / exit  exit
@@ -126,18 +128,38 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         for ep in episodes:
             print(f"\n  [{ep.timestamp.strftime('%b %d %H:%M')}] {ep.content[:120]}...")
 
+    elif command == ":models":
+        from kai import models as _models
+        all_models = _models.list_models()
+        active_id = brain.model
+        print("  Configured models:")
+        for m in all_models:
+            marker = " *" if m["ollama_id"] == active_id else "  "
+            think  = " (think)" if m["think"] else ""
+            tag    = " [built-in]" if m.get("builtin") else ""
+            print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
+        print(f"\n  Switch with :model <name>")
+
     elif command == ":model":
+        from kai import models as _models
         model = arg.strip().lower()
         if model == "heavy":
             brain.model = cfg.REASONING_MODEL
-            brain._think = True   # enable chain-of-thought for reasoning model
+            brain._think = True
             print(f"  Switched to: {cfg.REASONING_MODEL} (thinking ON)")
         elif model in ("fast", "default"):
             brain.model = cfg.CHAT_MODEL
-            brain._think = False  # fast mode, no chain-of-thought
+            brain._think = False
             print(f"  Switched to: {cfg.CHAT_MODEL} (thinking OFF)")
         else:
-            print(f"  Unknown model alias '{model}'. Use 'heavy' or 'fast'.")
+            entry = _models.get_model(arg.strip())
+            if entry:
+                brain.model = entry["ollama_id"]
+                brain._think = entry.get("think", False)
+                think_str = "ON" if brain._think else "OFF"
+                print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
+            else:
+                print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
 
     elif command == ":trace":
         entries = trace_log.recent(limit=10)

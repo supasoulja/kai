@@ -4,7 +4,10 @@ Stored in kai.db alongside sessions.
 
 Auth layers:
   1. Name       — identifies the account (case-insensitive).
-  2. PIN        — 4-8 digits, stored only as SHA-256 hash. Never in plain text.
+  2. PIN        — 4-8 digits, hashed with PBKDF2-HMAC-SHA256 (600 000 rounds,
+                   random 16-byte salt). Stored as ``salt_hex$hash_hex``.
+                   Legacy SHA-256-only hashes (no ``$``) are auto-upgraded on
+                   next successful login.
   3. Machine key — 30-byte random value generated once per Kai installation
                    (see kai/device.py). Its SHA-256 hash is stored per user at
                    registration time. Login is rejected if the machine key on
@@ -15,14 +18,42 @@ Kai's brain only ever receives the user's name. PINs and machine keys never
 reach the AI layer.
 """
 import hashlib
+import hmac
+import os
 import sqlite3
 from datetime import datetime
 
 from kai.db import get_conn
 
+_PBKDF2_ROUNDS = 600_000  # OWASP 2023 recommendation for PBKDF2-HMAC-SHA256
+
 
 def _hash(value: str) -> str:
-    return hashlib.sha256(value.strip().encode()).hexdigest()
+    """Hash *value* with PBKDF2-HMAC-SHA256 and a random 16-byte salt.
+
+    Returns ``salt_hex$hash_hex``.
+    """
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", value.strip().encode(), salt, _PBKDF2_ROUNDS)
+    return f"{salt.hex()}${dk.hex()}"
+
+
+def _verify(value: str, stored: str) -> bool:
+    """Verify *value* against a stored hash.
+
+    Supports both new ``salt$hash`` format and legacy bare SHA-256 hashes.
+    Uses constant-time comparison to prevent timing attacks.
+    """
+    if "$" in stored:
+        # New PBKDF2 format: salt_hex$hash_hex
+        salt_hex, hash_hex = stored.split("$", 1)
+        salt = bytes.fromhex(salt_hex)
+        dk = hashlib.pbkdf2_hmac("sha256", value.strip().encode(), salt, _PBKDF2_ROUNDS)
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    else:
+        # Legacy: bare SHA-256 (no salt) — accept but will be upgraded on success
+        legacy = hashlib.sha256(value.strip().encode()).hexdigest()
+        return hmac.compare_digest(legacy, stored)
 
 
 _table_ensured = False
@@ -104,14 +135,21 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
         return None
     user_id, stored_name, pin_hash, machine_hash = row
     # Both factors must pass — check both before returning to avoid timing leaks
-    pin_ok     = (pin_hash     == _hash(pin))
+    pin_ok     = _verify(pin, pin_hash)
     machine_ok = (machine_hash == machine_key_hash)
     if not (pin_ok and machine_ok):
         return None
     now = datetime.now().isoformat()
-    conn.execute(
-        "UPDATE users SET last_seen = ? WHERE name = ?", (now, stored_name)
-    )
+    # Auto-upgrade legacy SHA-256 hashes to salted PBKDF2 on successful login
+    if "$" not in pin_hash:
+        conn.execute(
+            "UPDATE users SET pin_hash = ?, last_seen = ? WHERE name = ?",
+            (_hash(pin), now, stored_name),
+        )
+    else:
+        conn.execute(
+            "UPDATE users SET last_seen = ? WHERE name = ?", (now, stored_name)
+        )
     conn.commit()
     return {"name": stored_name, "id": user_id, "last_seen": now}
 

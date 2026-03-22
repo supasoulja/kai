@@ -83,14 +83,21 @@ def list_sessions(limit: int = 50, user_id: int = 0) -> list[dict]:
     ]
 
 
-def get_messages(session_id: str) -> list[dict]:
-    """Return all messages for a session in turn order."""
+def get_messages(session_id: str, user_id: int = 0) -> list[dict]:
+    """Return all messages for a session in turn order.
+
+    Only returns results when the session belongs to *user_id*, preventing
+    one user from reading another user's conversation history.
+    """
     conn = get_conn()
+    # Verify session ownership via JOIN — returns nothing if user_id doesn't match
     rows = conn.execute(
-        "SELECT role, content, timestamp "
-        "FROM session_messages WHERE session_id = ? "
-        "ORDER BY turn_order, id",
-        (session_id,),
+        "SELECT sm.role, sm.content, sm.timestamp "
+        "FROM session_messages sm "
+        "JOIN sessions s ON sm.session_id = s.id "
+        "WHERE sm.session_id = ? AND s.user_id = ? "
+        "ORDER BY sm.turn_order, sm.id",
+        (session_id, user_id),
     ).fetchall()
     return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
 

@@ -15,6 +15,7 @@ import time
 import uuid
 import urllib.request
 from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -546,6 +547,7 @@ class Brain:
         self._memory_router_ready: bool = False       # memory domain index built lazily
         self._compressing: bool = False               # prevents concurrent history compressions
         self._turn_count: int = 0                     # monotonic counter for learn-rate gating
+        self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
 
     def clear_history(self) -> None:
         """Clear in-memory conversation history (call on /clear)."""
@@ -697,11 +699,7 @@ class Brain:
                 yield final, False, {}
                 yield "", True, {}
                 # commit (embed round-trip) runs off the hot path
-                threading.Thread(
-                    target=self.memory.commit_turn,
-                    args=(user_input, final),
-                    daemon=True,
-                ).start()
+                self._bg_pool.submit(self.memory.commit_turn, user_input, final)
                 return
 
             # Execute tool calls
@@ -720,7 +718,12 @@ class Brain:
                     on_status(_TOOL_LABELS.get(tool_name, tool_name))
                 result = self._execute_tool(tool_name, fn.get("arguments", {}), trace_id)
                 if cfg.DEBUG:
-                    print(f"[{trace_id}] TOOL: {tool_name} → {result}")
+                    # Truncate tool output in debug logs to avoid leaking large
+                    # data blobs (file contents, search results) to the terminal
+                    _dbg = str(result)
+                    if len(_dbg) > 300:
+                        _dbg = _dbg[:300] + "… [truncated]"
+                    print(f"[{trace_id}] TOOL: {tool_name} → {_dbg}")
                 messages.append({"role": "tool", "content": json.dumps(result)})
                 # Hard error: the tool itself crashed (Python exception or no registry)
                 if not result.get("success", True):
@@ -794,11 +797,7 @@ class Brain:
         msg_id = self._persist_turn(user_input, clean_text)
         yield "", True, {"message_id": msg_id} if msg_id else {}
         # commit + learn: runs off the hot path so the user isn't waiting
-        threading.Thread(
-            target=self._post_turn,
-            args=(user_input, clean_text),
-            daemon=True,
-        ).start()
+        self._bg_pool.submit(self._post_turn, user_input, clean_text)
 
     def _persist_turn(self, user_input: str, response: str) -> int | None:
         """Persist user+assistant messages to the sessions DB. Returns assistant message id."""
@@ -833,6 +832,7 @@ class Brain:
                 tool_calls   = tools_used,
                 elapsed_ms   = int((time.monotonic() - start_time) * 1000),
                 response_len = len(response),
+                user_id      = self.user_id,
             ))
         except Exception:
             if cfg.DEBUG:
@@ -1042,11 +1042,7 @@ class Brain:
                 })
 
             # Archive to episodic DB off the hot path — nothing is lost.
-            threading.Thread(
-                target=self.memory.archive_history,
-                args=(summary,),
-                daemon=True,
-            ).start()
+            self._bg_pool.submit(self.memory.archive_history, summary)
         finally:
             with self._history_lock:
                 self._compressing = False
