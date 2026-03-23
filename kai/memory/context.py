@@ -45,7 +45,7 @@ def build(
     data from relevant memory stores. When missing, falls back to injecting
     everything (same as pre-router behavior).
     """
-    identity_text = build_identity_block()
+    identity_text = build_identity_block(user_id=user_id)
     proc_rules    = procedural.list_rules(user_id=user_id)
     all_facts     = semantic.list_facts(user_id=user_id)
     doc_inv       = _fetch_doc_inventory(user_id=user_id)
@@ -99,11 +99,18 @@ def build(
     # Use a larger budget in DM mode — campaigns need more context
     budget = DM_CONTEXT_CHARS if dm_mode else MAX_CONTEXT_CHARS
 
-    # Trim if over budget — drop oldest episodic first, then RAG chunks
-    while block.episodic and len(block.render()) > budget:
-        block.episodic.pop(0)
-    while block.rag_chunks and len(block.render()) > budget:
-        block.rag_chunks.pop()
+    # Trim if over budget — drop oldest episodic first, then RAG chunks.
+    # Compute rendered length once and estimate savings to avoid O(n^2) re-renders.
+    rendered_len = len(block.render())
+    while block.episodic and rendered_len > budget:
+        removed = block.episodic.pop(0)
+        # Estimate char savings (entry text + formatting overhead)
+        rendered_len -= len(str(removed)) + 20
+    if rendered_len > budget:
+        rendered_len = len(block.render())  # re-sync after episodic trimming
+    while block.rag_chunks and rendered_len > budget:
+        removed = block.rag_chunks.pop()
+        rendered_len -= len(str(removed)) + 20
 
     return block
 

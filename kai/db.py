@@ -63,7 +63,7 @@ def get_conn() -> sqlite3.Connection:
     if conn is not None:
         return conn
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if DB is locked
 
@@ -87,6 +87,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         if _schema_initialized:
             return
         _maybe_migrate_fresh(conn)
+        _maybe_migrate_embed_dim(conn)
         _create_all_tables(conn)
         _schema_initialized = True
 
@@ -124,6 +125,59 @@ def _maybe_migrate_fresh(conn: sqlite3.Connection) -> None:
     for table in tables_to_drop:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.commit()
+
+
+def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
+    """
+    Detect old 2560-dim / 768-dim vector tables and drop them so they can
+    be recreated at the new FAST_EMBED_DIM (384).
+
+    Text data (episodic_entries, rag_chunks, campaign_*) is preserved —
+    only the vec0 virtual tables (which store vectors + rowids) are dropped.
+    New 384-dim vectors are created on-demand as content is accessed.
+    """
+    if not _check_sqlite_vec():
+        return
+
+    # Quick check: if episodic_vec exists and is already the right dimension,
+    # skip. We detect old dim by trying to insert a FAST_EMBED_DIM zero vector.
+    from kai.config import FAST_EMBED_DIM
+    try:
+        # If the table doesn't exist, nothing to migrate
+        conn.execute("SELECT rowid FROM episodic_vec LIMIT 0")
+    except Exception:
+        return  # table doesn't exist yet — first run
+
+    import sqlite_vec
+    test_vec = [0.0] * FAST_EMBED_DIM
+    try:
+        # Try inserting a 384-dim vector inside a savepoint so nothing is
+        # permanently written — even if the process crashes mid-probe.
+        conn.execute("SAVEPOINT dim_check")
+        conn.execute(
+            "INSERT INTO episodic_vec (rowid, embedding) VALUES (-999, ?)",
+            (sqlite_vec.serialize_float32(test_vec),),
+        )
+        # Success — dimension matches.  Roll back the test row.
+        conn.execute("ROLLBACK TO dim_check")
+        conn.execute("RELEASE dim_check")
+        return  # already correct dimension
+    except Exception:
+        try:
+            conn.execute("ROLLBACK TO dim_check")
+            conn.execute("RELEASE dim_check")
+        except Exception:
+            conn.rollback()
+
+    # Old dimension detected — drop all vec tables so they'll be recreated
+    print("[~] Migrating vector tables to 384-dim (CPU fast embed)...")
+    for vt in ["episodic_vec", "rag_chunks_vec", "campaign_npc_vec", "campaign_event_vec"]:
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {vt}")
+        except Exception:
+            pass
+    conn.commit()
+    print("[+] Old vector tables dropped — new ones will be created at 384-dim")
 
 
 def _create_all_tables(conn: sqlite3.Connection) -> None:
@@ -317,26 +371,32 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
         CREATE INDEX IF NOT EXISTS idx_rag_docs_user ON rag_documents(user_id);
+        CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc ON rag_chunks(doc_id);
+        CREATE INDEX IF NOT EXISTS idx_transcripts_archive ON episodic_transcripts(archive_id);
         CREATE INDEX IF NOT EXISTS idx_campaigns_owner ON campaigns(owner_id);
     """)
 
     # Vector tables (require sqlite-vec extension)
+    # Live tables use FAST_EMBED_DIM (384) for CPU-based fastembed.
+    # HQ shadow tables at HQ_EMBED_DIM (2560) are created by shutdown_reembed().
     if _check_sqlite_vec():
-        conn.execute("""
+        from kai.config import FAST_EMBED_DIM
+        dim = FAST_EMBED_DIM
+        conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS episodic_vec
-            USING vec0(embedding float[2560])
+            USING vec0(embedding float[{dim}])
         """)
-        conn.execute("""
+        conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_vec
-            USING vec0(embedding float[2560])
+            USING vec0(embedding float[{dim}])
         """)
-        conn.execute("""
+        conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS campaign_npc_vec
-            USING vec0(embedding float[768])
+            USING vec0(embedding float[{dim}])
         """)
-        conn.execute("""
+        conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS campaign_event_vec
-            USING vec0(embedding float[768])
+            USING vec0(embedding float[{dim}])
         """)
 
     conn.commit()

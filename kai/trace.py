@@ -43,7 +43,10 @@ def record(entry: TraceEntry) -> None:
         )
         conn.commit()
     except Exception:
-        pass  # trace failure never breaks a conversation
+        # Trace failure never breaks a conversation, but log in debug mode
+        from kai.config import DEBUG
+        if DEBUG:
+            import traceback; traceback.print_exc()
 
 
 def recent(limit: int = 10, user_id: int | None = None) -> list[TraceEntry]:

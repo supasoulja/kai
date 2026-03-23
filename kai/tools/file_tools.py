@@ -33,7 +33,7 @@ def _ps(cmd: str, timeout: int = 45) -> str | None:
 
 def _safe_path(path: str) -> str:
     """Strip quotes and normalize path to prevent PS string injection."""
-    return path.strip().strip("'\"").replace("'", "")
+    return path.strip().strip("'\"").replace("'", "").replace("`", "")
 
 
 def _default_home() -> str:

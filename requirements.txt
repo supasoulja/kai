@@ -4,3 +4,7 @@ psutil
 fastapi
 uvicorn[standard]
 pytest
+onnxruntime>=1.20
+tokenizers
+numpy
+huggingface_hub

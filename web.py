@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import kai.config as cfg
-from kai.brain import Brain, OllamaClient, COMPRESS_PROMPT, _strip_thinking, _build_compress_messages
+from kai.brain import Brain, OllamaClient, _strip_thinking, _build_compress_messages
 from kai.memory.manager import MemoryManager
 from kai.memory.procedural import seed_defaults
 from kai.memory import semantic as _semantic
@@ -67,9 +67,6 @@ class ModeRequest(BaseModel):
 class DmStartRequest(BaseModel):
     campaign_name: str = ""   # empty = resume active, non-empty = create new
 
-class LoadSessionRequest(BaseModel):
-    pass  # no body needed — session_id is a path param
-
 class AddModelRequest(BaseModel):
     name: str
     ollama_id: str
@@ -95,12 +92,12 @@ class _AuthGuard:
 
     # Routes that never require auth (no cookie parsing needed)
     _PUBLIC = frozenset({
-        "/login", "/users", "/users/login", "/users/register", "/users/logout",
+        "/login", "/users", "/users/login", "/users/register",
     })
     _PUBLIC_PREFIXES = ("/static/",)
 
     # Routes that parse the cookie but don't reject if missing
-    _OPTIONAL_AUTH = frozenset({"/", "/dashboard/stats"})
+    _OPTIONAL_AUTH = frozenset({"/", "/dashboard/stats", "/users/logout"})
 
     def __init__(self, app):
         self.app = app
@@ -201,7 +198,8 @@ def _get_or_create_brain(user_id: int) -> Brain:
         brain = _user_brains.get(user_id)
         if brain is not None:
             return brain
-        memory = MemoryManager(embed_fn=_ollama.embed, user_id=user_id)
+        from kai.embed import embed as _fast_embed
+        memory = MemoryManager(embed_fn=_fast_embed, user_id=user_id)
         # Copy shared indexes so we don't re-embed per user
         memory._domain_index = dict(_shared_domain_index)
         seed_defaults(user_id=user_id)
@@ -237,20 +235,27 @@ def _uid_for(request: Request) -> int:
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
+# Cache static HTML at import time — these files don't change at runtime.
+from functools import lru_cache
+
+@lru_cache(maxsize=4)
+def _read_html(name: str) -> str:
+    return (_STATIC_DIR / name).read_text(encoding="utf-8")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main app page (or redirect to login if not authenticated)."""
     user = _get_user(request)
     if not user:
-        # Not authenticated — serve login page
-        return HTMLResponse(content=(_STATIC_DIR / "login.html").read_text(encoding="utf-8"))
-    return HTMLResponse(content=(_STATIC_DIR / "app.html").read_text(encoding="utf-8"))
+        return HTMLResponse(content=_read_html("login.html"))
+    return HTMLResponse(content=_read_html("app.html"))
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page():
     """Serve the standalone login page."""
-    return HTMLResponse(content=(_STATIC_DIR / "login.html").read_text(encoding="utf-8"))
+    return HTMLResponse(content=_read_html("login.html"))
 
 
 _HIGHLIGHT_KEYS = {"user_name", "user_role", "location", "gaming"}
@@ -496,6 +501,8 @@ async def get_models(request: Request):
 @app.get("/settings/models/available")
 async def get_available_models():
     """List models installed in Ollama (for the 'add model' dropdown)."""
+    if not _ollama:
+        return {"models": [], "error": "Not initialized"}
     try:
         installed = _ollama.installed_models()
         return {"models": installed}
@@ -820,7 +827,12 @@ async def chat(req: ChatRequest, request: Request):
 
     async def stream():
         while True:
-            event = await q.get()
+            try:
+                event = await asyncio.wait_for(q.get(), timeout=300)
+            except asyncio.TimeoutError:
+                yield f'data: {json.dumps({"type":"error","text":"Response timed out."})}\n\n'
+                yield f'data: {json.dumps({"type":"done"})}\n\n'
+                break
             yield f"data: {json.dumps(event)}\n\n"
             if event["type"] == "done":
                 break
@@ -861,8 +873,9 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
     pending = _episodic.get_pending_turns_text(user_id=0)
     if not pending:
         return
-    # Use a temporary MemoryManager for archiving
-    memory = MemoryManager(embed_fn=ollama.embed, user_id=0)
+    # Use a temporary MemoryManager for archiving (fast CPU embed)
+    from kai.embed import embed as _fast_embed
+    memory = MemoryManager(embed_fn=_fast_embed, user_id=0)
     try:
         resp = ollama.chat(
             messages=_build_compress_messages(pending[:4000]),
@@ -887,16 +900,20 @@ def _init() -> None:
         print("[!] Ollama is not running. Start it with: ollama serve")
         sys.exit(1)
 
+    # Only check chat model at startup — embed model is CPU-based now
     installed = _ollama.installed_models()
-    for m in [cfg.CHAT_MODEL, cfg.EMBED_MODEL]:
-        base = m.split(":")[0]
-        if m not in installed and base not in {x.split(":")[0] for x in installed}:
-            print(f"[!] Model not found: {m}")
-            print(f"    ollama pull {m}")
-            sys.exit(1)
+    base = cfg.CHAT_MODEL.split(":")[0]
+    if cfg.CHAT_MODEL not in installed and base not in {x.split(":")[0] for x in installed}:
+        print(f"[!] Model not found: {cfg.CHAT_MODEL}")
+        print(f"    ollama pull {cfg.CHAT_MODEL}")
+        sys.exit(1)
+
+    # ── Fast CPU embedding — no VRAM, no model swaps ─────────────────────
+    from kai.embed import embed as fast_embed, embed_batch as fast_embed_batch, warm_up as _warm_embed
+    _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
 
     # Shared embed function for campaign tools
-    _set_embed_fn(lambda text: _ollama.embed(text))
+    _set_embed_fn(fast_embed)
 
     # Run system-level migrations and seeding (user_id=0)
     _semantic.migrate()
@@ -907,25 +924,36 @@ def _init() -> None:
     # Memory router (7 domain embeddings) + tool index (10 category embeddings)
     from kai.memory import router as _router
     try:
-        _shared_domain_index = _router.build_domain_index(_ollama.embed_batch)
+        _shared_domain_index = _router.build_domain_index(fast_embed_batch)
     except Exception:
         _shared_domain_index = {}
 
     try:
-        _shared_tool_index = tool_registry.build_category_index(_ollama.embed_batch)
+        _shared_tool_index = tool_registry.build_category_index(fast_embed_batch)
     except Exception:
         _shared_tool_index = {}
 
-    print(f"[✓] Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
+    print(f"[+] Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
 
     # Upgrade awareness — detect version changes and write an episodic memory entry
     from kai.upgrade import check_for_upgrade
-    upgrade_msg = check_for_upgrade(embed_fn=_ollama.embed)
+    upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
-        print(f"[✓] Upgrade detected: {upgrade_msg[:80]}...")
+        print(f"[+] Upgrade detected: {upgrade_msg[:80]}...")
 
     # Archive any raw turns left from the previous session so they're searchable
     threading.Thread(target=_archive_pending_turns, args=(_ollama,), daemon=True).start()
+
+    # Register shutdown hook: HQ re-embed with Qwen when server stops
+    import atexit
+    def _on_shutdown():
+        print("[~] Shutdown: running HQ re-embed with Qwen...")
+        try:
+            from kai.embed import shutdown_reembed
+            shutdown_reembed()
+        except Exception as exc:
+            print(f"[!] HQ re-embed failed: {exc}")
+    atexit.register(_on_shutdown)
 
 
 def main() -> None:

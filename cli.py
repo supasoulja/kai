@@ -344,7 +344,8 @@ def main() -> None:
         cfg.DEBUG = True
 
     active_model = cfg.REASONING_MODEL if args.model == "heavy" else cfg.CHAT_MODEL
-    required_models = [active_model, cfg.EMBED_MODEL]
+    # Embed model is CPU-based now — only need the chat model in Ollama
+    required_models = [active_model]
 
     # ── Startup checks ─────────────────────────────────────────────────────────
     ollama = OllamaClient()
@@ -356,9 +357,12 @@ def main() -> None:
         print("\n[!] Pull missing models then restart.")
         sys.exit(1)
 
+    # ── Fast CPU embedding ────────────────────────────────────────────────────
+    from kai.embed import embed as fast_embed, warm_up as _warm_embed
+    _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
+
     # ── Initialize memory + identity ───────────────────────────────────────────
-    embed_fn = ollama.embed  # real embeddings from qwen3-embedding:4b
-    memory   = MemoryManager(embed_fn=embed_fn)
+    memory   = MemoryManager(embed_fn=fast_embed)
     _semantic.migrate()    # remove stale volatile sys_* keys from previous sessions
 
     seed_defaults()        # set procedural rules if first run
@@ -374,9 +378,20 @@ def main() -> None:
 
     # ── Upgrade awareness ──────────────────────────────────────────────────────
     from kai.upgrade import check_for_upgrade
-    upgrade_msg = check_for_upgrade(embed_fn=ollama.embed)
+    upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
         print(f"\n  [upgrade] {upgrade_msg[:100]}")
+
+    # Register shutdown hook: HQ re-embed with Qwen when CLI exits
+    import atexit
+    def _on_shutdown():
+        print("\n[~] Running HQ re-embed with Qwen...")
+        try:
+            from kai.embed import shutdown_reembed
+            shutdown_reembed()
+        except Exception as exc:
+            print(f"[!] HQ re-embed failed: {exc}")
+    atexit.register(_on_shutdown)
 
     # ── Startup report ─────────────────────────────────────────────────────────
     print()

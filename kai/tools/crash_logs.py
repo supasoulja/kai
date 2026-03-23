@@ -75,7 +75,8 @@ if ($events) {{
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
         )
         if not result.stdout.strip():
             return []

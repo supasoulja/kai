@@ -16,28 +16,30 @@ def _load_persona() -> str:
     return "You are Kai, a local AI assistant."
 
 
-def _recent_relationship_entries(limit: int = 3) -> list[str]:
+def _recent_relationship_entries(limit: int = 3, user_id: int = 0) -> list[str]:
     conn = get_conn()
     rows = conn.execute(
         "SELECT timestamp, entry_type, content FROM relationship_log "
-        "ORDER BY timestamp DESC LIMIT ?",
-        (limit,)
+        "WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+        (user_id, limit)
     ).fetchall()
     return [f"[{row[0][:10]} / {row[1]}] {row[2]}" for row in reversed(rows)]
 
 
-def log_relationship_entry(entry_id: str, entry_type: str, content: str) -> None:
+def log_relationship_entry(
+    entry_id: str, entry_type: str, content: str, user_id: int = 0
+) -> None:
     """Record a milestone, tone shift, or significant moment."""
     conn = get_conn()
     conn.execute(
-        "INSERT OR IGNORE INTO relationship_log (id, timestamp, entry_type, content) "
-        "VALUES (?, ?, ?, ?)",
-        (entry_id, datetime.now().isoformat(), entry_type, content)
+        "INSERT OR IGNORE INTO relationship_log (id, user_id, timestamp, entry_type, content) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (entry_id, user_id, datetime.now().isoformat(), entry_type, content)
     )
     conn.commit()
 
 
-def build_identity_block() -> str:
+def build_identity_block(user_id: int = 0) -> str:
     """
     Returns the COMPACT identity string injected into every system prompt.
     Kept short (~100-150 tokens) so it doesn't slow down inference.
@@ -50,20 +52,20 @@ def build_identity_block() -> str:
     compact = _extract_compact(persona)
 
     # Append most recent relationship note if any (one line max)
-    recent = _recent_relationship_entries(limit=1)
+    recent = _recent_relationship_entries(limit=1, user_id=user_id)
     if recent:
         compact += f"\nContext: {recent[0]}"
 
     return compact
 
 
-def build_full_identity_block() -> str:
+def build_full_identity_block(user_id: int = 0) -> str:
     """
     Returns the full persona.md + relationship log.
     Use this for inspection (:memory command), NOT for the system prompt.
     """
     persona = _load_persona()
-    recent = _recent_relationship_entries()
+    recent = _recent_relationship_entries(user_id=user_id)
     if recent:
         return persona + "\n\n---\n## Recent Relationship Log\n" + "\n".join(recent)
     return persona

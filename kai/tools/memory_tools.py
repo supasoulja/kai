@@ -29,11 +29,14 @@ from kai.config import REFLECTIONS_PATH
     }
 )
 def get_detail(archive_id: str) -> str:
-    user_id = get_current_user_id()
-    transcript = episodic.get_transcript(archive_id, user_id=user_id)
-    if not transcript:
-        return f"No full transcript found for archive ID: {archive_id}"
-    return transcript
+    try:
+        user_id = get_current_user_id()
+        transcript = episodic.get_transcript(archive_id, user_id=user_id)
+        if not transcript:
+            return f"No full transcript found for archive ID: {archive_id}"
+        return transcript
+    except Exception as e:
+        return f"Error retrieving transcript: {e}"
 
 
 @registry.tool(
@@ -60,21 +63,24 @@ def get_detail(archive_id: str) -> str:
     },
 )
 def search_history(query: str, limit: int = 10) -> str:
-    limit = min(max(1, int(limit)), 20)
-    user_id = get_current_user_id()
-    results = _sessions.search_messages(query, limit=limit, user_id=user_id)
-    if not results:
-        return f"No past messages found matching '{query}'."
-    lines = [f"Found {len(results)} message(s) matching '{query}':\n"]
-    for r in results:
-        date = r["timestamp"][:16].replace("T", " ")
-        role = r["role"].capitalize()
-        # Truncate long messages to keep tool output manageable
-        content = r["content"][:500]
-        if len(r["content"]) > 500:
-            content += "..."
-        lines.append(f"[{date}] Session: {r['session']}\n  {role}: {content}\n")
-    return "\n".join(lines)
+    try:
+        limit = min(max(1, int(limit)), 20)
+        user_id = get_current_user_id()
+        results = _sessions.search_messages(query, limit=limit, user_id=user_id)
+        if not results:
+            return f"No past messages found matching '{query}'."
+        lines = [f"Found {len(results)} message(s) matching '{query}':\n"]
+        for r in results:
+            date = r["timestamp"][:16].replace("T", " ")
+            role = r["role"].capitalize()
+            # Truncate long messages to keep tool output manageable
+            content = r["content"][:500]
+            if len(r["content"]) > 500:
+                content += "..."
+            lines.append(f"[{date}] Session: {r['session']}\n  {role}: {content}\n")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching history: {e}"
 
 
 # ── Self-reflection journal ───────────────────────────────────────────────────

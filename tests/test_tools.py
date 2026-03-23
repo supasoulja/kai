@@ -136,16 +136,13 @@ def test_notes_list_returns_recent():
 
 
 def test_notes_list_empty_when_no_notes():
-    # Patch the module-level DB_PATH so the fresh DB is used directly
-    import kai.tools.notes as notes_mod
-    tmp2 = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp2.close()
-    with patch.object(notes_mod, "DB_PATH", Path(tmp2.name)):
-        result = list_notes()
+    # Use a user_id that has no notes to get the empty-state response
+    from kai._app_state import set_current_user_id
+    set_current_user_id(99999)  # unused user — guaranteed no notes
     try:
-        os.unlink(tmp2.name)
-    except PermissionError:
-        pass  # Windows keeps SQLite file locked briefly; not worth failing test over
+        result = list_notes()
+    finally:
+        set_current_user_id(0)
     assert result == "No notes saved yet."
 
 

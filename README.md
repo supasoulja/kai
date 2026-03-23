@@ -33,10 +33,14 @@ cd newb_agent
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Pull required models
-ollama pull qwen3.5:9b            # primary model — chat, tools, summarization (~6.6GB)
-ollama pull qwen3:14b              # reasoning model — heavy tasks / :model heavy (~9GB)
-ollama pull qwen3-embedding:4b     # embeddings — episodic + document vector search (~4GB)
+# 3. Pull required models (only the chat model is needed at runtime)
+ollama pull qwen3.5:9b            # primary model — chat, tools, summarization (~6.3 GB)
+
+# Optional: reasoning model for heavy tasks
+ollama pull qwen3:8b              # :model heavy in CLI (~6.0 GB, thinking ON)
+
+# Optional: HQ embedding model (runs automatically at shutdown if available)
+ollama pull qwen3-embedding:4b    # high-quality re-embed at exit (~2.5 GB)
 
 # 4. Run (web UI)
 python web.py
@@ -49,16 +53,38 @@ The web UI opens automatically at `http://localhost:7860`.
 
 First run creates a machine certificate and prompts you to register an account (name + PIN).
 
+The first launch also downloads a small (~25 MB) ONNX embedding model from HuggingFace — this is cached at `~/.cache/kai/` and reused on subsequent runs.
+
+---
+
+## Models
+
+Sized for 8 GB VRAM. Ollama swaps models so only one is loaded at a time.
+
+| Model | Role | VRAM |
+|-------|------|------|
+| `qwen3.5:9b` | Chat, tools, summarization | ~6.3 GB (Gated DeltaNet = tiny KV cache) |
+| `qwen3:8b` | Reasoning / heavy tasks (`:model heavy`) | ~6.0 GB |
+| `Xenova/bge-small-en-v1.5` | Live embedding (CPU, ONNX) | 0 — runs on CPU |
+| `qwen3-embedding:4b` | HQ re-embed at shutdown | ~2.5 GB (optional) |
+
+**Dual embedding strategy:**
+
+- **Live ops** use a fast 33M-parameter ONNX model on CPU (384-dim vectors, ~5 ms per query). Zero VRAM. No model swapping. No latency spikes.
+- **At shutdown**, when the chat model is unloaded, Kai optionally re-embeds everything with the heavy `qwen3-embedding:4b` model (2560-dim vectors) into shadow tables for future use.
+
+Set `OLLAMA_KV_CACHE_TYPE=q8_0` in your environment to halve KV-cache VRAM usage.
+
 ---
 
 ## AMD GPU Note
 
 If Ollama is running on CPU instead of GPU, the context window may be too large.
-The config sets `CONTEXT_WINDOW = 8192` to fit in 16GB VRAM. Verify with `ollama ps`:
+The config sets `CONTEXT_WINDOW = 8192` to fit in 8 GB VRAM. Verify with `ollama ps`:
 
 ```
 NAME           SIZE    PROCESSOR    CONTEXT
-qwen3.5:9b    6.6 GB  100% GPU     8192
+qwen3.5:9b    6.3 GB  100% GPU     8192
 ```
 
 If it still shows CPU, verify your ROCm or AMDGPU-PRO drivers are installed.
@@ -97,8 +123,11 @@ python cli.py [--debug] [--model heavy]
 | `:history` | Show last 10 episodic entries |
 | `:trace` | Show last 10 turn traces with timing |
 | `:tools` | List registered tools |
-| `:model heavy` | Switch to qwen3:14b (thinking ON) |
+| `:vector` | Show vector table stats (episodic + RAG embeddings) |
+| `:model heavy` | Switch to qwen3:8b (thinking ON) |
 | `:model fast` | Switch back to qwen3.5:9b |
+| `:model <name>` | Switch to a user-added model (see `:models`) |
+| `:models` | List all configured models |
 | `:debug` | Toggle debug output |
 | `exit` | Quit |
 
@@ -174,6 +203,11 @@ Four tiers — all SQLite, all local:
 - On startup, any stale volatile facts from old sessions are automatically purged
 - **Per-user isolation** — every memory table is scoped by `user_id`; users never see each other's data
 
+**Embedding:**
+- Live vector search uses CPU-only ONNX embedding (384-dim, ~5 ms per query, zero VRAM)
+- At shutdown, all entries are re-embedded with `qwen3-embedding:4b` (2560-dim) into shadow HQ tables
+- The ONNX model (`Xenova/bge-small-en-v1.5`) is downloaded automatically on first run (~25 MB)
+
 **Document RAG:**
 - Upload PDFs and text files via the web UI
 - Documents are chunked and embedded for vector search
@@ -191,6 +225,19 @@ Kai uses a three-factor local auth system:
 3. **Machine certificate** — a 30-byte random key generated once per installation (`kai/device.py`). Its hash is stored per user at registration. A copied database is useless on another machine.
 
 Session cookies (httpOnly, strict SameSite) keep you logged in for 7 days.
+
+---
+
+## Adding Models
+
+Add custom models without touching code. In the CLI:
+
+```
+:models          # list all configured models
+:model <name>    # switch to a model
+```
+
+Or edit `kai/models.py` to register new Ollama models with optional thinking mode.
 
 ---
 
@@ -216,6 +263,8 @@ newb_agent/
 │   ├── brain.py              <- Ollama HTTP client + ReAct tool-call loop
 │   ├── identity.py           <- builds system prompt from persona.md
 │   ├── config.py             <- all settings (models, paths, thresholds)
+│   ├── embed.py              <- CPU embedding (ONNX) + shutdown HQ re-embed
+│   ├── models.py             <- model registry (add custom models here)
 │   ├── schema.py             <- shared data types
 │   ├── trace.py              <- turn timing and observability
 │   ├── sessions.py           <- persist and browse conversation history
@@ -253,8 +302,8 @@ newb_agent/
 │   │   └── time_tool.py      <- current datetime
 │   └── static/
 │       ├── login.html        <- login/register page
-│       ├── app.html          <- main app shell (Dashboard | Chat | Settings)
-│       ├── style.css         <- shared CSS (dark theme)
+│       ├── app.html          <- main app (Tailwind + Material Design)
+│       ├── style.css         <- CSS for dynamically generated elements
 │       └── app.js            <- tab switching, SSE streaming, all UI logic
 └── tests/
     ├── test_memory.py
@@ -282,12 +331,37 @@ python -m pytest tests/test_integration.py -v -s
 All settings are in `kai/config.py`:
 
 ```python
-CHAT_MODEL            = "qwen3.5:9b"          # chat + tools
-REASONING_MODEL       = "qwen3:14b"           # heavy tasks (:model heavy)
-EMBED_MODEL           = "qwen3-embedding:4b"  # episodic + document vector search
-SUMMARY_MODEL         = "qwen3:14b"           # background summarization
-CONTEXT_WINDOW        = 8192                   # tokens passed to Ollama
-HISTORY_CHAR_LIMIT    = 12000                  # compress history when exceeded (~3k tokens)
-HISTORY_COMPRESS_KEEP = 4                      # keep last N exchanges verbatim after compression
-EPISODIC_TOP_K        = 5                      # archive entries injected per prompt
+CHAT_MODEL            = "qwen3.5:9b"              # chat + tools + summarization
+REASONING_MODEL       = "qwen3:8b"                # heavy tasks (:model heavy)
+SUMMARY_MODEL         = "qwen3.5:9b"              # reuses chat model
+
+# CPU embedding — live ops (no VRAM, no Ollama)
+FAST_EMBED_MODEL      = "Xenova/bge-small-en-v1.5" # 33M params, ONNX quantized
+FAST_EMBED_DIM        = 384                         # vector dimensions
+
+# GPU embedding — shutdown re-embed to shadow tables
+HQ_EMBED_MODEL        = "qwen3-embedding:4b"       # 2560-dim, MTEB top-tier
+HQ_EMBED_DIM          = 2560
+
+CONTEXT_WINDOW        = 8192                       # tokens passed to Ollama
+HISTORY_CHAR_LIMIT    = 12000                      # compress history when exceeded (~3k tokens)
+HISTORY_COMPRESS_KEEP = 4                          # keep last N exchanges verbatim
+EPISODIC_TOP_K        = 5                          # archive entries injected per prompt
+```
+
+---
+
+## Dependencies
+
+```
+pydantic>=2.0       # data validation
+sqlite-vec          # vector search in SQLite
+psutil              # system monitoring
+fastapi             # web server
+uvicorn[standard]   # ASGI runner
+pytest              # testing
+onnxruntime>=1.20   # CPU embedding inference
+tokenizers          # fast tokenization (Rust-backed)
+numpy               # array operations
+huggingface_hub     # model download + caching
 ```

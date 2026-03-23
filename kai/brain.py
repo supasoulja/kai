@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import kai.config as cfg
 from kai.config import (
-    CHAT_MODEL, EMBED_MODEL, REASONING_MODEL,
+    CHAT_MODEL, EMBED_MODEL,
     OLLAMA_BASE_URL, CONTEXT_WINDOW, TEMPERATURE_TOOL, TEMPERATURE_FINAL,
     HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
 )
@@ -500,9 +500,12 @@ class OllamaClient:
             return False
 
     def installed_models(self) -> list[str]:
-        with urllib.request.urlopen(f"{self.base_url}/api/tags", timeout=5) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        return [m["name"] for m in result.get("models", [])]
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/tags", timeout=5) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            return [m["name"] for m in result.get("models", [])]
+        except Exception:
+            return []
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -611,14 +614,14 @@ class Brain:
         self._maybe_compress_history(on_status=on_status)
 
         # ── Embed query once — shared by memory router + tool router ──────────
-        # One Ollama embed call (~30ms) replaces separate calls scattered across
-        # memory and tool routing. Memory router uses it to classify which memory
-        # stores to activate; tool router uses it to pick relevant tool categories.
+        # One fast CPU embed call (~5ms) replaces the old Ollama GPU call that
+        # caused model swaps and 5-15s latency on 8 GB cards.
         self._ensure_memory_router()
         self._ensure_tool_index()
         query_emb: list[float] | None = None
         try:
-            query_emb = self.ollama.embed(user_input)
+            from kai.embed import embed as _fast_embed
+            query_emb = _fast_embed(user_input)
         except Exception:
             pass  # fallback: both routers inject everything when embedding is None
 
@@ -698,8 +701,8 @@ class Brain:
                 self._persist_turn(user_input, final)
                 yield final, False, {}
                 yield "", True, {}
-                # commit (embed round-trip) runs off the hot path
-                self._bg_pool.submit(self.memory.commit_turn, user_input, final)
+                # commit + knowledge extraction runs off the hot path
+                self._bg_pool.submit(self._post_turn, user_input, final)
                 return
 
             # Execute tool calls
@@ -841,13 +844,14 @@ class Brain:
     def _ensure_tool_index(self) -> None:
         """
         Build the category-level embedding index in one batch call. No-op after first run.
-        Embeds the 10 category descriptions (not all 43 tool schemas) — fast and coherent.
+        Embeds category descriptions (not individual tool schemas) — fast and coherent.
         Failures leave _tool_index empty — brain falls back to the full schema.
         """
         if self._tool_index_ready or not self.tool_registry:
             return
         try:
-            self._tool_index = self.tool_registry.build_category_index(self.ollama.embed_batch)
+            from kai.embed import embed_batch as _fast_embed_batch
+            self._tool_index = self.tool_registry.build_category_index(_fast_embed_batch)
             if cfg.DEBUG:
                 print(f"[tool index] {len(self._tool_index)} categories indexed")
         except Exception as exc:
@@ -865,7 +869,8 @@ class Brain:
         if self._memory_router_ready:
             return
         try:
-            self.memory.init_router(self.ollama.embed_batch)
+            from kai.embed import embed_batch as _fast_embed_batch
+            self.memory.init_router(_fast_embed_batch)
             if cfg.DEBUG:
                 print(f"[memory router] {len(self.memory._domain_index)} domains indexed")
         except Exception as exc:
@@ -962,7 +967,8 @@ class Brain:
             return {"success": False, "error": str(e)}
 
     def get_embed_fn(self):
-        return lambda text: self.ollama.embed(text)
+        from kai.embed import embed as _fast_embed
+        return _fast_embed
 
     def _maybe_compress_history(
         self, on_status: "Callable[[str], None] | None" = None
@@ -1058,13 +1064,17 @@ class Brain:
         raw = "\n\n".join(
             f"[{m['role']}]: {m.get('content', '')[:800]}" for m in messages
         )
-        resp = self.ollama.chat(
-            messages=_build_compress_messages(raw),
-            model=self.model,
-            think=False,
-            temperature=TEMPERATURE_TOOL,
-        )
-        summary = resp.get("message", {}).get("content", "").strip()
-        _, summary = _strip_thinking(summary)
-        if summary:
-            self.memory.archive_history(summary)
+        try:
+            resp = self.ollama.chat(
+                messages=_build_compress_messages(raw),
+                model=self.model,
+                think=False,
+                temperature=TEMPERATURE_TOOL,
+            )
+            summary = resp.get("message", {}).get("content", "").strip()
+            _, summary = _strip_thinking(summary)
+            if summary:
+                self.memory.archive_history(summary)
+        except Exception:
+            if cfg.DEBUG:
+                import traceback; traceback.print_exc()

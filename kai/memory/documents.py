@@ -3,7 +3,9 @@ Document RAG — ingest, chunk, embed, and search uploaded documents.
 
 Supported formats: .txt .md .pdf .docx .csv .py .json
 Chunks are 800 chars with 100-char overlap. Each chunk is embedded with
-qwen3-embedding:4b (2560-dim) and stored in a sqlite-vec vec0 table.
+the fast CPU ONNX model (384-dim) and stored in a sqlite-vec vec0 table.
+At shutdown, chunks are re-embedded with qwen3-embedding:4b (2560-dim)
+into a shadow HQ table.
 
 At query time, context.py auto-injects the top-K most relevant chunks.
 The docs.search tool lets the model do targeted retrieval.
@@ -138,12 +140,10 @@ def ingest(
                 (doc_id,),
             ).fetchall()
 
-            # Embed in one batch call for speed
+            # Embed in one batch call for speed (CPU, no VRAM)
             texts = list(chunks)
-            from kai.brain import OllamaClient
-            from kai.config import EMBED_MODEL, OLLAMA_BASE_URL
-            client = OllamaClient(OLLAMA_BASE_URL)
-            embeddings = client.embed_batch(texts, model=EMBED_MODEL)
+            from kai.embed import embed_batch as _fast_embed_batch
+            embeddings = _fast_embed_batch(texts)
 
             for (rowid, _chunk_id), emb in zip(rows, embeddings):
                 conn.execute(

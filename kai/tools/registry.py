@@ -294,9 +294,14 @@ _TOOL_CATEGORIES: dict[str, dict] = {
         "description": (
             "Save, find, and read personal notes and reminders. "
             "Look up things I asked Kai to remember across sessions. "
-            "Read full transcripts of past conversations."
+            "Read full transcripts of past conversations. "
+            "Search past conversation history. Self-reflection journal."
         ),
-        "tools": ["notes.save", "notes.search", "notes.list", "memory.get_detail"],
+        "tools": [
+            "notes.save", "notes.search", "notes.list",
+            "memory.get_detail", "memory.search_history",
+            "memory.reflect", "memory.read_reflections",
+        ],
     },
     "workspace_and_code": {
         "description": (
@@ -330,6 +335,12 @@ _TOOL_CATEGORIES: dict[str, dict] = {
 
 def _build_schema(name: str, description: str, parameters: dict) -> dict:
     """Build an Ollama-compatible tool schema."""
+    # Build clean properties — strip the non-standard "required" key from each
+    # property dict so the emitted JSON Schema is valid.
+    clean_props = {}
+    for k, v in parameters.items():
+        prop = {pk: pv for pk, pv in v.items() if pk != "required"}
+        clean_props[k] = prop
     return {
         "type": "function",
         "function": {
@@ -337,7 +348,7 @@ def _build_schema(name: str, description: str, parameters: dict) -> dict:
             "description": description,
             "parameters": {
                 "type": "object",
-                "properties": parameters,
+                "properties": clean_props,
                 "required": [k for k, v in parameters.items()
                              if v.get("required", False)],
             },

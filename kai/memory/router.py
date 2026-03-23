@@ -187,12 +187,12 @@ def filter_facts(
     for fact in facts:
         key = fact.key
         # Check if this fact belongs to an active domain
-        if any(key == prefix or key.startswith(prefix + "_") or key.startswith(prefix)
+        if any(key == prefix or key.startswith(prefix + "_")
                for prefix in active_prefixes):
             result.append(fact)
         # Also include facts that don't belong to ANY known domain
         # (orphan facts — unknown keys shouldn't be silently dropped)
-        elif not any(key == prefix or key.startswith(prefix + "_") or key.startswith(prefix)
+        elif not any(key == prefix or key.startswith(prefix + "_")
                      for prefix in all_prefixes):
             result.append(fact)
 
@@ -226,7 +226,7 @@ def build_directory(
             continue
         matching = [
             f.key for f in semantic_facts
-            if any(f.key == p or f.key.startswith(p + "_") or f.key.startswith(p)
+            if any(f.key == p or f.key.startswith(p + "_")
                    for p in prefixes)
         ]
         if matching:

@@ -25,11 +25,26 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 #
 # EMBED_MODEL     — dedicated embedding model for episodic vector search
 #                   qwen3-embedding:4b: ~2.5 GB, 2560-dim vectors, MTEB top-tier
+#
+# FAST_EMBED      — lightweight CPU-only embedding (ONNX, no VRAM) for live ops.
+#                   bge-small-en-v1.5: 33M params, 384-dim, ~50 MB download.
+#                   Used for query routing, memory routing, and real-time search.
+# HQ_EMBED        — heavy Ollama model run at shutdown to re-embed into
+#                   high-quality shadow tables (no VRAM contention at shutdown).
 
 CHAT_MODEL      = "qwen3.5:9b"
 REASONING_MODEL = "qwen3:8b"
-EMBED_MODEL     = "qwen3-embedding:4b"
+EMBED_MODEL     = "qwen3-embedding:4b"   # shutdown re-embed (alias for HQ_EMBED_MODEL)
 SUMMARY_MODEL   = "qwen3.5:9b"
+
+# CPU embedding — live ops (no Ollama, no VRAM)
+# Uses the Xenova ONNX-optimized version of bge-small-en-v1.5
+FAST_EMBED_MODEL = "Xenova/bge-small-en-v1.5"
+FAST_EMBED_DIM   = 384
+
+# GPU embedding — shutdown re-embed to shadow tables
+HQ_EMBED_MODEL   = "qwen3-embedding:4b"
+HQ_EMBED_DIM     = 2560
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # explicit IPv4 — localhost resolves to IPv6 on Windows
 
