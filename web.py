@@ -198,7 +198,20 @@ class _SecurityHeaders:
         (b"x-frame-options",       b"DENY"),
         (b"referrer-policy",       b"strict-origin-when-cross-origin"),
         (b"permissions-policy",    b"camera=(), microphone=(), geolocation=()"),
-        (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"),
+        # CSP: 'unsafe-inline' is required for scripts because app.html uses an
+        # inline <script> for tailwind.config and index.html has ~1300 lines of
+        # inline JS.  CDN sources are explicitly allowlisted.  login.html was
+        # extracted to login.js so it works even without 'unsafe-inline'.
+        (b"content-security-policy",
+         b"default-src 'self'; "
+         b"script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+         b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+         b"img-src 'self' data:; "
+         b"connect-src 'self'; "
+         b"font-src 'self' https://fonts.gstatic.com; "
+         b"object-src 'none'; "
+         b"base-uri 'self'; "
+         b"form-action 'self'"),
     ]
 
     def __init__(self, app):
