@@ -54,10 +54,18 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # explicit IPv4 — localhost resolv
 CONTEXT_WINDOW = 8192  # tokens; passed as num_ctx to Ollama
 
 # ── Generation ─────────────────────────────────────────────────────────────────
+# Tiered temperatures — each task type gets the minimum randomness it needs.
+# Lower = more deterministic = less hallucination.  Higher = more personality.
+#
+#   TOOL   (0.0)  — tool selection: greedy decoding, zero creativity needed
+#   REASON (0.1)  — factual extraction, compression, knowledge learning
+#   FINAL  (0.35) — user-facing answer: preserves Kai's voice and personality
+#
 # Research: 0.1-0.3 for tool-calling agents; 0.8 (Ollama default) causes
-# hallucination drift. Use slightly higher for the final answer to preserve voice.
-TEMPERATURE_TOOL  = 0.15  # tool-call rounds (non-streaming)
-TEMPERATURE_FINAL = 0.35  # final streaming answer
+# hallucination drift on small models.
+TEMPERATURE_TOOL   = 0.0   # tool-call rounds: greedy (no creativity needed)
+TEMPERATURE_REASON = 0.10  # fact extraction, compression, learning
+TEMPERATURE_FINAL  = 0.35  # final streaming answer: preserves voice
 
 # ── Memory ─────────────────────────────────────────────────────────────────────
 EPISODIC_TOP_K     = 5     # how many episodic results to inject into context

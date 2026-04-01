@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 import kai.config as cfg
 from kai.config import (
     CHAT_MODEL, EMBED_MODEL,
-    OLLAMA_BASE_URL, CONTEXT_WINDOW, TEMPERATURE_TOOL, TEMPERATURE_FINAL,
+    OLLAMA_BASE_URL, CONTEXT_WINDOW,
+    TEMPERATURE_TOOL, TEMPERATURE_REASON, TEMPERATURE_FINAL,
     HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
 )
 from kai.memory.manager import MemoryManager
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 
 MAX_TOOL_ROUNDS   = 8   # increased to support multi-step tasks (scan → restore point → fix)
 _HISTORY_HARD_CAP = 60  # safety ceiling — compression normally keeps history much smaller
+_FACT_EXTRACT_THRESHOLD = 2  # two-phase fact extraction fires when ≥ this many tools were called
 
 # ── Tool signal detection ─────────────────────────────────────────────────────
 # Categorized keyword lists composed into one regex at module load.
@@ -56,6 +58,8 @@ _TOOL_KEYWORDS_SINGLE = [
     "crash", "crashes", "log", "logs", "error", "errors",
     # Notes / search
     "note", "notes", "remind", "search", "find", "web", "internet",
+    # Skills
+    "skill", "skills", "health check", "cleanup",
     # Steam / games
     "steam", "benchmark", "benchmarks", "fps",
     # Hardware parts
@@ -533,6 +537,7 @@ class Brain:
         ollama: OllamaClient | None = None,
         think: bool = False,
         user_id: int = 0,
+        skill_registry: "Any | None" = None,
     ):
         self.memory = memory
         self.tool_registry = tool_registry
@@ -540,6 +545,7 @@ class Brain:
         self.ollama = ollama or OllamaClient()
         self._think = think
         self.user_id = user_id
+        self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
         self._session_history: list[dict] = []  # rolling conversation turns for this session
         self._history_lock = threading.Lock()    # protects _session_history mutations
         self.session_id: str | None = None       # current persisted session UUID
@@ -551,6 +557,49 @@ class Brain:
         self._compressing: bool = False               # prevents concurrent history compressions
         self._turn_count: int = 0                     # monotonic counter for learn-rate gating
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
+
+    def shutdown(self) -> None:
+        """Shut down the background thread pool. Called at server exit."""
+        self._bg_pool.shutdown(wait=False, cancel_futures=True)
+
+    def _skill_schemas(self) -> list[dict]:
+        """Build Ollama-compatible tool schemas for registered skills."""
+        if not self.skill_registry:
+            return []
+        schemas = []
+        for info in self.skill_registry.list_skills():
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": f"skill.{info['name']}",
+                    "description": info["description"],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            })
+        return schemas
+
+    def run_skill(self, name: str, args: dict | None = None) -> dict:
+        """
+        Execute a skill by name. Returns a tool-result-shaped dict
+        so it can slot into tool-call rounds seamlessly.
+        """
+        if not self.skill_registry:
+            return {"success": False, "error": "No skill registry configured"}
+        try:
+            result = self.skill_registry.run(name, args or {})
+            return {
+                "success": result.success,
+                "output": result.output,
+                "tool_calls": result.tool_calls,
+            }
+        except KeyError:
+            return {"success": False, "error": f"Unknown skill: {name!r}"}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
 
     def clear_history(self) -> None:
         """Clear in-memory conversation history (call on /clear)."""
@@ -628,6 +677,15 @@ class Brain:
         context = self.memory.render_context(
             query=user_input, dm_mode=self.dm_mode, query_embedding=query_emb
         )
+        # Always-present grounding calibration — reinforces persona.md rules
+        # at the actual decision boundary where the model generates.
+        context += (
+            "\n\n[CRITICAL GROUNDING RULE]\n"
+            "Before stating ANY fact about this system, ask: did a tool result "
+            "or [SEMANTIC] entry provide this data in THIS conversation? "
+            "If not — call a tool first, or say \"I'd need to check that.\" "
+            "Never fabricate numbers, outputs, or success messages."
+        )
         with self._history_lock:
             history = list(self._session_history[-_HISTORY_HARD_CAP:])
         messages: list[dict] = [
@@ -653,6 +711,10 @@ class Brain:
                         tools_schema = self.tool_registry.get_schema()
                 else:
                     tools_schema = self.tool_registry.get_schema()
+
+        # Inject skill schemas so the model can call skills as tools (skill.name)
+        if tools_schema and self.skill_registry:
+            tools_schema = list(tools_schema) + self._skill_schemas()
 
         # ── Tool-call rounds (non-streaming) ──────────────────────────────────
         _escalated = False  # True after first tool error → full schema injected
@@ -770,6 +832,56 @@ class Brain:
                     ),
                 })
 
+        # ── Ground the response in tool evidence ─────────────────────────────
+        if tools_used:
+            evidence_lines = []
+            for m in messages:
+                if m["role"] == "tool":
+                    try:
+                        data = json.loads(m["content"])
+                        if data.get("success"):
+                            out = str(data.get("output", ""))[:500]
+                            if out:
+                                evidence_lines.append(out)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            if evidence_lines:
+                evidence_text = "\n---\n".join(evidence_lines)
+
+                if len(set(tools_used)) >= _FACT_EXTRACT_THRESHOLD:
+                    # Two-phase: extract facts first, then write response.
+                    # Separates reasoning (what did tools return?) from
+                    # reporting (how to tell the user) — reduces confabulation.
+                    if on_status:
+                        on_status("Analyzing results...")
+                    messages.append({"role": "system", "content": (
+                        "Summarize the factual findings from the tool results above. "
+                        "One bullet per finding. Only include data the tools returned. "
+                        "No interpretation, no speculation, no training-data fill-in."
+                    )})
+                    fact_resp = self.ollama.chat(
+                        messages, model=self.model, think=False,
+                        temperature=TEMPERATURE_REASON,
+                    )
+                    facts = fact_resp.get("message", {}).get("content", "").strip()
+                    _, facts = _strip_thinking(facts)
+                    if facts:
+                        messages.append({"role": "assistant", "content": facts})
+                        messages.append({"role": "system", "content": (
+                            "Good. Now write your response to the user based ONLY on "
+                            "the verified facts above. Use your natural voice. "
+                            "Do not add data beyond what was extracted. "
+                            "If the user needs information you don't have, say so."
+                        )})
+                else:
+                    # Light grounding: citation fence + evidence summary
+                    messages.append({"role": "system", "content": (
+                        "GROUNDING: Respond using ONLY data from tool results above. "
+                        "Quote exact values. If you lack data the user needs, say so.\n\n"
+                        "KEY EVIDENCE:\n" + evidence_text
+                    )})
+
         # ── Stream the final answer ───────────────────────────────────────────
         if on_status and tools_used:
             on_status("Responding...")
@@ -791,7 +903,7 @@ class Brain:
         # Strip any leaked <think> tags before persisting (matches non-streaming path).
         # Trace keeps the raw text for debugging; everything else gets the clean version.
         _, clean_text = _strip_thinking(full_text)
-        clean_text = clean_text or full_text  # fallback if strip removed everything
+        clean_text = clean_text or "[no response]"  # don't fall back to think-tagged text
 
         self._record_trace(trace_id, user_input, context, tools_used, full_text, turn_start)
         with self._history_lock:
@@ -813,7 +925,8 @@ class Brain:
             return msg_id
         except Exception:
             if cfg.DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+                traceback.print_exc()
             return None  # session persistence failure never breaks a conversation
 
     def _record_trace(
@@ -839,7 +952,8 @@ class Brain:
             ))
         except Exception:
             if cfg.DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+                traceback.print_exc()
 
     def _ensure_tool_index(self) -> None:
         """
@@ -887,16 +1001,19 @@ class Brain:
         Runs in a daemon thread — never blocks the user.
         """
         self.memory.commit_turn(user_input, assistant_text)
-        self._turn_count += 1
+        with self._history_lock:
+            self._turn_count += 1
+            count = self._turn_count
         # Rate-limit: only extract knowledge every 3rd turn to reduce Ollama
         # queue pressure. The background LLM call delays the next turn's embed
         # + chat because Ollama serializes GPU work.
-        if LEARN_FROM_CONVERSATION and self._turn_count % 3 == 0:
+        if LEARN_FROM_CONVERSATION and count % 3 == 0:
             try:
                 self._extract_knowledge(user_input, assistant_text)
             except Exception:
                 if cfg.DEBUG:
-                    import traceback; traceback.print_exc()
+                    import traceback
+                    traceback.print_exc()
 
     def _extract_knowledge(self, user_text: str, assistant_text: str) -> None:
         """
@@ -918,7 +1035,7 @@ class Brain:
                 messages=[{"role": "user", "content": f"{LEARN_PROMPT}\n\n{exchange}"}],
                 model=self.model,
                 think=False,
-                temperature=TEMPERATURE_TOOL,
+                temperature=TEMPERATURE_REASON,
             )
         except Exception:
             return  # Ollama down or model unloaded — skip silently
@@ -943,6 +1060,16 @@ class Brain:
             print(f"[learn] saved {saved} knowledge entries")
 
     def _execute_tool(self, name: str, args: dict, trace_id: str) -> dict:
+        # Skill delegation — tool names starting with "skill." route to the skill registry
+        if name.startswith("skill.") and self.skill_registry:
+            skill_name = name.removeprefix("skill.")
+            # Validate skill name — reject anything that isn't a safe identifier
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", skill_name):
+                return {"success": False, "error": f"Invalid skill name: {skill_name!r}"}
+            if cfg.DEBUG:
+                print(f"[brain] skill delegation: {name!r} → skill {skill_name!r}")
+            return self.run_skill(skill_name, args)
+
         if not self.tool_registry:
             return {"success": False, "error": f"No tool registry — cannot run '{name}'"}
         # Set thread-local user_id so tools can scope DB queries per-user
@@ -1026,7 +1153,7 @@ class Brain:
                 messages=_build_compress_messages(raw),
                 model=self.model,
                 think=False,
-                temperature=TEMPERATURE_TOOL,
+                temperature=TEMPERATURE_REASON,
             )
             summary = resp.get("message", {}).get("content", "").strip()
             _, summary = _strip_thinking(summary)
@@ -1069,7 +1196,7 @@ class Brain:
                 messages=_build_compress_messages(raw),
                 model=self.model,
                 think=False,
-                temperature=TEMPERATURE_TOOL,
+                temperature=TEMPERATURE_REASON,
             )
             summary = resp.get("message", {}).get("content", "").strip()
             _, summary = _strip_thinking(summary)
@@ -1077,4 +1204,5 @@ class Brain:
                 self.memory.archive_history(summary)
         except Exception:
             if cfg.DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+                traceback.print_exc()

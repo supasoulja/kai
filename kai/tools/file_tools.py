@@ -32,8 +32,13 @@ def _ps(cmd: str, timeout: int = 45) -> str | None:
 
 
 def _safe_path(path: str) -> str:
-    """Strip quotes and normalize path to prevent PS string injection."""
-    return path.strip().strip("'\"").replace("'", "").replace("`", "")
+    """Escape a path for safe interpolation inside a PowerShell single-quoted string.
+    Single quotes are doubled ('') — the only escape needed in PS literal strings.
+    Backticks are removed (PS escape/expansion character)."""
+    p = path.strip().strip('"')   # remove surrounding double-quotes only
+    p = p.replace("`", "")        # remove PS backtick (escape/expansion char)
+    p = p.replace("'", "''")      # PS literal single-quote escape
+    return p
 
 
 def _default_home() -> str:

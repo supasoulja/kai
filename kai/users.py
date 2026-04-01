@@ -136,7 +136,7 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
     user_id, stored_name, pin_hash, machine_hash = row
     # Both factors must pass — check both before returning to avoid timing leaks
     pin_ok     = _verify(pin, pin_hash)
-    machine_ok = (machine_hash == machine_key_hash)
+    machine_ok = hmac.compare_digest(machine_hash or "", machine_key_hash or "")
     if not (pin_ok and machine_ok):
         return None
     now = datetime.now().isoformat()

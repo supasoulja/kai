@@ -1,8 +1,10 @@
 """
 notes.save / notes.search / notes.list — persistent note storage in SQLite.
 """
-import uuid
+import secrets
 from datetime import datetime
+
+_MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
 
 from kai.db import get_conn
 from kai._app_state import get_current_user_id
@@ -11,7 +13,7 @@ from kai.tools.registry import registry
 
 @registry.tool(
     name="notes.save",
-    description="Save a note. Use this when Alex asks you to remember something specific, jot something down, or save information for later.",
+    description="Save a note. Use this when the user asks you to remember something specific, jot something down, or save information for later.",
     parameters={
         "content": {
             "type": "string",
@@ -25,8 +27,10 @@ from kai.tools.registry import registry
     },
 )
 def save_note(content: str, title: str = "") -> str:
+    if len(content) > _MAX_NOTE_CHARS:
+        return f"Note too long ({len(content):,} chars). Maximum is {_MAX_NOTE_CHARS:,}."
     try:
-        note_id = str(uuid.uuid4())[:8]
+        note_id = secrets.token_hex(4)
         ts = datetime.now().isoformat()
         user_id = get_current_user_id()
         conn = get_conn()

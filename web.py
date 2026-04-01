@@ -13,6 +13,7 @@ import logging
 import re
 import secrets
 import sys
+import time as _time
 import threading
 import webbrowser
 from pathlib import Path
@@ -77,9 +78,61 @@ _MAX_INPUT_CHARS = 8000
 
 
 # ── Session auth ──────────────────────────────────────────────────────────────
-# In-memory token store. Tokens survive until server restart or explicit logout.
+# In-memory token store with server-side expiry.
 
-_session_tokens: dict[str, dict] = {}   # token → {"name": str, "user_id": int}
+_SESSION_TTL = 86400 * 7  # 7 days — matches cookie max_age
+_session_tokens: dict[str, dict] = {}   # token → {"name": str, "user_id": int, "created_at": float}
+_session_tokens_lock = threading.Lock()
+
+
+def _issue_token(user_info: dict) -> str:
+    """Create, store, and return a new session token.
+    Prunes expired tokens as a side effect to prevent unbounded growth."""
+    token = secrets.token_urlsafe(32)
+    now = _time.monotonic()
+    with _session_tokens_lock:
+        expired = [t for t, v in _session_tokens.items()
+                   if now - v["created_at"] > _SESSION_TTL]
+        for t in expired:
+            del _session_tokens[t]
+        _session_tokens[token] = {**user_info, "created_at": now}
+    return token
+
+
+def _get_session(token: str) -> dict | None:
+    """Look up a session token; returns user dict or None if absent or expired."""
+    now = _time.monotonic()
+    with _session_tokens_lock:
+        info = _session_tokens.get(token)
+        if info is None:
+            return None
+        if now - info["created_at"] > _SESSION_TTL:
+            del _session_tokens[token]
+            return None
+        return {"name": info["name"], "user_id": info["user_id"]}
+
+# ── Login rate limiting ──────────────────────────────────────────────────────
+# Limits login attempts per IP to prevent brute-forcing the 4-digit PIN.
+# Window = 15 minutes, max 5 attempts. Resets after the window expires.
+
+_LOGIN_WINDOW    = 900   # 15 minutes in seconds
+_LOGIN_MAX_TRIES = 5
+_login_attempts: dict[str, list[float]] = {}   # IP → list of timestamps
+_login_lock = threading.Lock()
+
+
+def _check_login_rate(ip: str) -> bool:
+    """Return True if this IP is allowed to attempt login, False if rate-limited."""
+    now = _time.monotonic()
+    with _login_lock:
+        attempts = _login_attempts.get(ip, [])
+        # Prune old attempts outside the window
+        attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
+        _login_attempts[ip] = attempts
+        if len(attempts) >= _LOGIN_MAX_TRIES:
+            return False
+        attempts.append(now)
+        return True
 
 
 class _AuthGuard:
@@ -121,7 +174,7 @@ class _AuthGuard:
                         break
                 break
 
-        user_info = _session_tokens.get(token) if token else None
+        user_info = _get_session(token) if token else None
 
         if not user_info and path not in self._OPTIONAL_AUTH:
             resp = JSONResponse(
@@ -145,6 +198,7 @@ class _SecurityHeaders:
         (b"x-frame-options",       b"DENY"),
         (b"referrer-policy",       b"strict-origin-when-cross-origin"),
         (b"permissions-policy",    b"camera=(), microphone=(), geolocation=()"),
+        (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"),
     ]
 
     def __init__(self, app):
@@ -296,7 +350,8 @@ async def info(request: Request):
 async def dashboard_stats(request: Request):
     """Aggregated counts for the dashboard stat cards."""
     uid = _uid_for(request)
-    brain = _brain_for(request)
+    # Use _get_or_create_brain (never raises 503) — stats only needs DB, not Ollama.
+    brain = _get_or_create_brain(uid)
     memory = brain.memory
     from kai.db import get_conn
     conn = get_conn()
@@ -566,12 +621,15 @@ async def get_users():
 
 
 @app.post("/users/login")
-async def login_user(req: LoginRequest, response: Response):
+async def login_user(req: LoginRequest, response: Response, request: Request = None):
     """
     Name + PIN login. Machine key is checked invisibly server-side.
     Same error message for wrong PIN vs wrong machine — don't leak which failed.
-    Sets an httpOnly session cookie on success.
+    Sets an httpOnly session cookie on success. Rate-limited per IP.
     """
+    client_ip = request.client.host if request and request.client else "unknown"
+    if not _check_login_rate(client_ip):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 15 minutes.")
     from kai import users as _users
     from kai.device import key_hash
     user = _users.authenticate(req.name.strip(), req.pin.strip(), key_hash())
@@ -579,15 +637,14 @@ async def login_user(req: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail="Invalid name or PIN")
 
     # Issue session token
-    token = secrets.token_urlsafe(32)
-    _session_tokens[token] = {"name": user["name"], "user_id": user["id"]}
+    token = _issue_token({"name": user["name"], "user_id": user["id"]})
     response.set_cookie(
         key="kai_session",
         value=token,
         httponly=True,      # JS can't read it — XSS-safe
         samesite="strict",  # never sent cross-site — CSRF-safe
-        secure=False,       # localhost is HTTP, not HTTPS
-        max_age=86400 * 7,  # 7 days
+        secure=False,       # HTTP-only server; set True if TLS is added
+        max_age=86400 * 7,  # 7 days (matches _SESSION_TTL)
     )
 
     # Eagerly create the user's Brain so it's warm when they start chatting
@@ -615,15 +672,14 @@ async def register_user(req: LoginRequest, response: Response):
         raise HTTPException(status_code=409, detail="That name is already taken")
 
     # Issue session token (auto-login)
-    token = secrets.token_urlsafe(32)
-    _session_tokens[token] = {"name": name, "user_id": user["id"]}
+    token = _issue_token({"name": name, "user_id": user["id"]})
     response.set_cookie(
         key="kai_session",
         value=token,
         httponly=True,
         samesite="strict",
-        secure=False,
-        max_age=86400 * 7,
+        secure=False,       # HTTP-only server; set True if TLS is added
+        max_age=86400 * 7,  # 7 days (matches _SESSION_TTL)
     )
 
     # Eagerly create the user's Brain
@@ -637,7 +693,8 @@ async def logout_user(request: Request, response: Response):
     """Destroy the session cookie and invalidate the server-side token."""
     token = request.cookies.get("kai_session")
     if token:
-        _session_tokens.pop(token, None)
+        with _session_tokens_lock:
+            _session_tokens.pop(token, None)
     response.delete_cookie("kai_session")
     return {"ok": True}
 
@@ -702,12 +759,24 @@ async def dm_activate_campaign(campaign_id: str, request: Request):
 
 # ── Document RAG ─────────────────────────────────────────────────────────────
 
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB max upload size
+
+
 @app.post("/docs/upload")
 async def upload_doc(file: UploadFile = File(...), request: Request = None):
     """Ingest an uploaded document: extract text, chunk, embed, store."""
     import shutil, tempfile
     from pathlib import Path
     from kai.memory import documents as _docs
+
+    # Content-Length is untrusted (client-controlled) — use as a fast early-reject only.
+    # The read loop below is the actual enforcement and cannot be bypassed.
+    content_length = request.headers.get("content-length") if request else None
+    if content_length and int(content_length) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+        )
 
     uid = _uid_for(request)
     brain = _brain_for(request)
@@ -719,9 +788,22 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):
             detail=f"Unsupported type '{suffix}'. Allowed: {', '.join(sorted(_docs.ALLOWED_TYPES))}",
         )
 
-    # Save stream to a temp file; pass original_name so ingest uses the right suffix
+    # Save stream to a temp file with size enforcement
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        shutil.copyfileobj(file.file, tmp)
+        bytes_written = 0
+        while True:
+            chunk = file.file.read(65536)
+            if not chunk:
+                break
+            bytes_written += len(chunk)
+            if bytes_written > _MAX_UPLOAD_BYTES:
+                tmp_path = Path(tmp.name)
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+                )
+            tmp.write(chunk)
         tmp_path = Path(tmp.name)
 
     try:
@@ -869,27 +951,35 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
     _first_reply_done.wait(timeout=600)
 
     from kai.memory import episodic as _episodic
-    # Archive turns for user_id=0 (legacy/default user)
-    pending = _episodic.get_pending_turns_text(user_id=0)
-    if not pending:
-        return
-    # Use a temporary MemoryManager for archiving (fast CPU embed)
     from kai.embed import embed as _fast_embed
-    memory = MemoryManager(embed_fn=_fast_embed, user_id=0)
-    try:
-        resp = ollama.chat(
-            messages=_build_compress_messages(pending[:4000]),
-            model=cfg.CHAT_MODEL,
-            think=False,
-            temperature=cfg.TEMPERATURE_TOOL,
-        )
-        summary = resp.get("message", {}).get("content", "").strip()
-        _, summary = _strip_thinking(summary)
-        if summary:
-            memory.archive_history(summary)
-            print(f"[✓] Archived {len(pending.splitlines())} lines from previous session")
-    except Exception as exc:
-        print(f"[!] Startup archive failed (non-critical): {exc}")
+    from kai.db import get_conn
+
+    # Collect all user IDs that have pending (uncompressed) turns
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT user_id FROM episodic_entries WHERE entry_type = 'turn'"
+    ).fetchall()
+    user_ids = [r[0] for r in rows] if rows else [0]
+
+    for uid in user_ids:
+        pending = _episodic.get_pending_turns_text(user_id=uid)
+        if not pending:
+            continue
+        memory = MemoryManager(embed_fn=_fast_embed, user_id=uid)
+        try:
+            resp = ollama.chat(
+                messages=_build_compress_messages(pending[:4000]),
+                model=cfg.CHAT_MODEL,
+                think=False,
+                temperature=cfg.TEMPERATURE_TOOL,
+            )
+            summary = resp.get("message", {}).get("content", "").strip()
+            _, summary = _strip_thinking(summary)
+            if summary:
+                memory.archive_history(summary)
+                print(f"[✓] Archived {len(pending.splitlines())} lines for user {uid}")
+        except Exception as exc:
+            print(f"[!] Startup archive failed for user {uid} (non-critical): {exc}")
 
 
 def _init() -> None:
@@ -944,9 +1034,12 @@ def _init() -> None:
     # Archive any raw turns left from the previous session so they're searchable
     threading.Thread(target=_archive_pending_turns, args=(_ollama,), daemon=True).start()
 
-    # Register shutdown hook: HQ re-embed with Qwen when server stops
+    # Register shutdown hook: shut down Brain thread pools + HQ re-embed
     import atexit
     def _on_shutdown():
+        with _user_brains_lock:
+            for brain in _user_brains.values():
+                brain.shutdown()
         print("[~] Shutdown: running HQ re-embed with Qwen...")
         try:
             from kai.embed import shutdown_reembed
