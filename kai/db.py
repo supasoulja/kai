@@ -336,6 +336,15 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             updated_at      TEXT NOT NULL
         );
 
+        -- Auth session tokens (survive server restarts)
+        CREATE TABLE IF NOT EXISTS session_tokens (
+            token       TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL,
+            user_name   TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL
+        );
+
         -- Notes (per-user)
         CREATE TABLE IF NOT EXISTS notes (
             id          TEXT PRIMARY KEY,
@@ -372,6 +381,7 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
         CREATE INDEX IF NOT EXISTS idx_rag_docs_user ON rag_documents(user_id);
         CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc ON rag_chunks(doc_id);
+        CREATE INDEX IF NOT EXISTS idx_session_tokens_expires ON session_tokens(expires_at);
         CREATE INDEX IF NOT EXISTS idx_transcripts_archive ON episodic_transcripts(archive_id);
         CREATE INDEX IF NOT EXISTS idx_campaigns_owner ON campaigns(owner_id);
     """)

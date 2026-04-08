@@ -13,7 +13,9 @@ from kai.tools.registry import registry
     name="weather.current",
     description=(
         "Get the current weather conditions. Returns temperature, description, "
-        "humidity, wind speed, and feels-like temp. No location needed — uses your IP."
+        "humidity, wind speed, and feels-like temp. "
+        "PRIVACY: this sends the user's IP to wttr.in for geolocation. "
+        "Always tell the user you're checking an external weather service before calling."
     ),
 )
 def get_weather() -> str:

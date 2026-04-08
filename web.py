@@ -16,6 +16,7 @@ import sys
 import time as _time
 import threading
 import webbrowser
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -78,38 +79,53 @@ _MAX_INPUT_CHARS = 8000
 
 
 # ── Session auth ──────────────────────────────────────────────────────────────
-# In-memory token store with server-side expiry.
+# DB-backed session tokens — survive server restarts.
 
 _SESSION_TTL = 86400 * 7  # 7 days — matches cookie max_age
-_session_tokens: dict[str, dict] = {}   # token → {"name": str, "user_id": int, "created_at": float}
-_session_tokens_lock = threading.Lock()
+
+# Set by main() before server starts. Controls cookie `secure` flag.
+_tls_active = False
 
 
 def _issue_token(user_info: dict) -> str:
-    """Create, store, and return a new session token.
-    Prunes expired tokens as a side effect to prevent unbounded growth."""
+    """Create, persist, and return a new session token.
+    Prunes expired tokens as a side effect to prevent unbounded table growth."""
+    from kai.db import get_conn
     token = secrets.token_urlsafe(32)
-    now = _time.monotonic()
-    with _session_tokens_lock:
-        expired = [t for t, v in _session_tokens.items()
-                   if now - v["created_at"] > _SESSION_TTL]
-        for t in expired:
-            del _session_tokens[t]
-        _session_tokens[token] = {**user_info, "created_at": now}
+    now = datetime.now().isoformat()
+    expires = (datetime.now() + timedelta(seconds=_SESSION_TTL)).isoformat()
+    conn = get_conn()
+    conn.execute("DELETE FROM session_tokens WHERE expires_at < ?", (now,))
+    conn.execute(
+        "INSERT INTO session_tokens (token, user_id, user_name, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (token, user_info["user_id"], user_info["name"], now, expires),
+    )
+    conn.commit()
     return token
 
 
 def _get_session(token: str) -> dict | None:
-    """Look up a session token; returns user dict or None if absent or expired."""
-    now = _time.monotonic()
-    with _session_tokens_lock:
-        info = _session_tokens.get(token)
-        if info is None:
-            return None
-        if now - info["created_at"] > _SESSION_TTL:
-            del _session_tokens[token]
-            return None
-        return {"name": info["name"], "user_id": info["user_id"]}
+    """Look up a session token from the DB; returns user dict or None if absent/expired."""
+    from kai.db import get_conn
+    now = datetime.now().isoformat()
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT user_id, user_name FROM session_tokens "
+        "WHERE token = ? AND expires_at > ?",
+        (token, now),
+    ).fetchone()
+    if not row:
+        return None
+    return {"user_id": row[0], "name": row[1]}
+
+
+def _revoke_token(token: str) -> None:
+    """Delete a session token from the DB."""
+    from kai.db import get_conn
+    conn = get_conn()
+    conn.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
+    conn.commit()
 
 # ── Login rate limiting ──────────────────────────────────────────────────────
 # Limits login attempts per IP to prevent brute-forcing the 4-digit PIN.
@@ -150,7 +166,8 @@ class _AuthGuard:
     _PUBLIC_PREFIXES = ("/static/",)
 
     # Routes that parse the cookie but don't reject if missing
-    _OPTIONAL_AUTH = frozenset({"/", "/dashboard/stats", "/users/logout"})
+    # /dashboard/stats is NOT here — it requires auth to prevent user_id=0 data leaks.
+    _OPTIONAL_AUTH = frozenset({"/", "/users/logout"})
 
     def __init__(self, app):
         self.app = app
@@ -654,10 +671,10 @@ async def login_user(req: LoginRequest, response: Response, request: Request = N
     response.set_cookie(
         key="kai_session",
         value=token,
-        httponly=True,      # JS can't read it — XSS-safe
-        samesite="strict",  # never sent cross-site — CSRF-safe
-        secure=False,       # HTTP-only server; set True if TLS is added
-        max_age=86400 * 7,  # 7 days (matches _SESSION_TTL)
+        httponly=True,
+        samesite="strict",
+        secure=_tls_active,
+        max_age=86400 * 7,
     )
 
     # Eagerly create the user's Brain so it's warm when they start chatting
@@ -691,8 +708,8 @@ async def register_user(req: LoginRequest, response: Response):
         value=token,
         httponly=True,
         samesite="strict",
-        secure=False,       # HTTP-only server; set True if TLS is added
-        max_age=86400 * 7,  # 7 days (matches _SESSION_TTL)
+        secure=_tls_active,
+        max_age=86400 * 7,
     )
 
     # Eagerly create the user's Brain
@@ -706,10 +723,40 @@ async def logout_user(request: Request, response: Response):
     """Destroy the session cookie and invalidate the server-side token."""
     token = request.cookies.get("kai_session")
     if token:
-        with _session_tokens_lock:
-            _session_tokens.pop(token, None)
+        _revoke_token(token)
     response.delete_cookie("kai_session")
     return {"ok": True}
+
+
+@app.delete("/users/account")
+async def delete_account(request: Request, response: Response):
+    """
+    Permanently delete the authenticated user's account and ALL their data.
+    Conversations, memories, notes, documents, campaigns — everything is wiped.
+    This cannot be undone.
+    """
+    user = _get_user(request)
+    if not user or user.get("user_id", 0) == 0:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    uid = user["user_id"]
+
+    # Tear down the in-memory Brain if one exists
+    with _user_brains_lock:
+        brain = _user_brains.pop(uid, None)
+        if brain:
+            brain.shutdown()
+
+    from kai import users as _users
+    deleted = _users.delete_user(uid)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    # Clear the session cookie
+    token = request.cookies.get("kai_session")
+    if token:
+        _revoke_token(token)
+    response.delete_cookie("kai_session")
+    return {"ok": True, "deleted": True}
 
 
 # ── DM mode ────────────────────────────────────────────────────────────────────
@@ -1062,24 +1109,98 @@ def _init() -> None:
     atexit.register(_on_shutdown)
 
 
+def _generate_self_signed_cert(cert_dir: Path) -> tuple[str, str]:
+    """Generate a self-signed TLS cert + key. Returns (cert_path, key_path)."""
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+    except ImportError:
+        print("[!] TLS requires the 'cryptography' package.")
+        print(f"    Fix: {sys.executable} -m pip install cryptography")
+        sys.exit(1)
+
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert_path = cert_dir / "kai.crt"
+    key_path = cert_dir / "kai.key"
+
+    if cert_path.exists() and key_path.exists():
+        return str(cert_path), str(key_path)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Kai Local")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now())
+        .not_valid_after(datetime.now() + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("localhost"),
+                x509.IPAddress(__import__("ipaddress").ip_address("127.0.0.1")),
+            ]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ))
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    print(f"[+] Generated self-signed TLS cert: {cert_path}")
+    return str(cert_path), str(key_path)
+
+
 def main() -> None:
+    global _tls_active
+
     parser = argparse.ArgumentParser(description="Kai web UI")
     parser.add_argument("--port",       type=int, default=7860)
+    parser.add_argument("--host",       default="127.0.0.1",
+                        help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--tls",        action="store_true",
+                        help="Enable HTTPS with an auto-generated self-signed cert")
+    parser.add_argument("--cert",       help="Path to TLS certificate file")
+    parser.add_argument("--key",        help="Path to TLS private key file")
     args = parser.parse_args()
 
+    # ── TLS setup ─────────────────────────────────────────────────────────
+    ssl_certfile = None
+    ssl_keyfile = None
+    if args.cert and args.key:
+        ssl_certfile, ssl_keyfile = args.cert, args.key
+        _tls_active = True
+    elif args.tls:
+        cert_dir = Path(__file__).parent / "kai" / "memory" / "kai's memory" / "tls"
+        ssl_certfile, ssl_keyfile = _generate_self_signed_cert(cert_dir)
+        _tls_active = True
+
+    # ── Host binding safety ───────────────────────────────────────────────
+    is_local = args.host in ("127.0.0.1", "localhost", "::1")
+    if not is_local and not _tls_active:
+        print("[!] DANGER: binding to a non-localhost address without TLS.")
+        print("    Session cookies will be sent in plaintext over the network.")
+        print("    Add --tls to auto-generate a self-signed cert, or use --cert/--key.")
+        sys.exit(1)
+
+    scheme = "https" if _tls_active else "http"
+
     # ── Security middleware ────────────────────────────────────────────────
-    # Order matters: last-added = outermost.  CORS must wrap AuthGuard so
-    # that preflight OPTIONS requests are answered before the auth check.
-    # _SecurityHeaders is outermost so every response gets the headers.
     app.add_middleware(_AuthGuard)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            f"http://localhost:{args.port}",
-            f"http://127.0.0.1:{args.port}",
+            f"{scheme}://localhost:{args.port}",
+            f"{scheme}://127.0.0.1:{args.port}",
         ],
-        allow_credentials=True,   # allow cookies to be sent
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
     )
@@ -1090,14 +1211,22 @@ def main() -> None:
 
     _init()
 
-    url = f"http://localhost:{args.port}"
+    url = f"{scheme}://localhost:{args.port}"
     print(f"[✓] Serving at  {url}")
-    print(f"[✓] CORS locked to {url}  •  Auth: session cookie")
+    tls_label = "TLS" if _tls_active else "HTTP"
+    print(f"[✓] CORS locked to {url}  •  Auth: session cookie ({tls_label})")
 
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
 
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+    )
 
 
 if __name__ == "__main__":

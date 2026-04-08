@@ -162,3 +162,93 @@ def get_user_id(name: str) -> int | None:
         "SELECT id FROM users WHERE name = ? COLLATE NOCASE", (name.strip(),)
     ).fetchone()
     return row[0] if row else None
+
+
+def delete_user(user_id: int) -> bool:
+    """
+    Permanently delete a user and ALL their data across every table.
+    Returns True if the user existed and was deleted.
+
+    This is the nuclear option — everything is gone. The user's conversations,
+    memories, notes, documents, campaigns, session tokens, and account are wiped.
+    """
+    if user_id <= 0:
+        return False  # never delete the system user
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        return False
+
+    # Order matters: delete referencing rows before parent rows.
+    # Campaigns need special handling — delete child tables first.
+    campaign_ids = [
+        r[0] for r in conn.execute(
+            "SELECT id FROM campaigns WHERE owner_id = ?", (user_id,)
+        ).fetchall()
+    ]
+    if campaign_ids:
+        ph = ",".join("?" * len(campaign_ids))
+        conn.execute(f"DELETE FROM campaign_npcs WHERE campaign_id IN ({ph})", campaign_ids)
+        conn.execute(f"DELETE FROM campaign_events WHERE campaign_id IN ({ph})", campaign_ids)
+        conn.execute(f"DELETE FROM campaign_quests WHERE campaign_id IN ({ph})", campaign_ids)
+        conn.execute(f"DELETE FROM campaign_characters WHERE campaign_id IN ({ph})", campaign_ids)
+        conn.execute(f"DELETE FROM campaign_access WHERE campaign_id IN ({ph})", campaign_ids)
+        conn.execute(f"DELETE FROM campaigns WHERE owner_id = ?", (user_id,))
+
+    conn.execute("DELETE FROM user_active_campaigns WHERE user_id = ?", (user_id,))
+
+    # Episodic: delete vectors first (they reference rowids in episodic_entries)
+    try:
+        entry_rowids = [
+            r[0] for r in conn.execute(
+                "SELECT rowid FROM episodic_entries WHERE user_id = ?", (user_id,)
+            ).fetchall()
+        ]
+        if entry_rowids:
+            ph = ",".join("?" * len(entry_rowids))
+            conn.execute(f"DELETE FROM episodic_vec WHERE rowid IN ({ph})", entry_rowids)
+    except Exception:
+        pass  # episodic_vec may not exist if sqlite-vec isn't available
+
+    # RAG: delete vectors for user's document chunks
+    try:
+        chunk_rowids = [
+            r[0] for r in conn.execute(
+                "SELECT c.rowid FROM rag_chunks c "
+                "JOIN rag_documents d ON c.doc_id = d.doc_id "
+                "WHERE d.user_id = ?", (user_id,)
+            ).fetchall()
+        ]
+        if chunk_rowids:
+            ph = ",".join("?" * len(chunk_rowids))
+            conn.execute(f"DELETE FROM rag_chunks_vec WHERE rowid IN ({ph})", chunk_rowids)
+    except Exception:
+        pass
+
+    # Delete from every user-scoped table
+    conn.execute("DELETE FROM episodic_transcripts WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM episodic_entries WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM semantic_facts WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM procedural_rules WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM session_messages WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM notes WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM trace_log WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM relationship_log WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM session_tokens WHERE user_id = ?", (user_id,))
+
+    # RAG documents and chunks
+    doc_ids = [
+        r[0] for r in conn.execute(
+            "SELECT doc_id FROM rag_documents WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    ]
+    if doc_ids:
+        ph = ",".join("?" * len(doc_ids))
+        conn.execute(f"DELETE FROM rag_chunks WHERE doc_id IN ({ph})", doc_ids)
+    conn.execute("DELETE FROM rag_documents WHERE user_id = ?", (user_id,))
+
+    # Finally, delete the user account itself
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    return True

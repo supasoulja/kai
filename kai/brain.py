@@ -186,6 +186,47 @@ _KAI_RETRY_SIGNALS = re.compile(
     re.IGNORECASE,
 )
 
+# ── Broken tool-call recovery ────────────────────────────────────────────────
+# Small/quantized models sometimes emit tool calls as plain text instead of
+# structured JSON that Ollama can parse.  Detect patterns like:
+#   {"name": "weather.current", "arguments": {"city": "NYC"}}
+#   tool_call: weather.current(city="NYC")
+#   <tool_call>weather.current</tool_call>
+# and try to salvage the call rather than losing the round.
+_BROKEN_TOOL_CALL_RE = re.compile(
+    r'"name"\s*:\s*"([a-z][a-z0-9_.]+)".*?"arguments"\s*:\s*(\{[^}]*\})',
+    re.DOTALL,
+)
+
+
+def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
+    """
+    Attempt to extract a tool call from plain-text content the model emitted
+    when Ollama failed to parse it as a structured tool_call.
+
+    Returns a synthetic tool_call dict matching Ollama's format, or None.
+    """
+    m = _BROKEN_TOOL_CALL_RE.search(content)
+    if not m:
+        return None
+    name = m.group(1)
+    if name not in known_tools:
+        return None
+    try:
+        args = json.loads(m.group(2))
+    except json.JSONDecodeError:
+        # Try repair: strip trailing commas, fix single quotes
+        raw = m.group(2).replace("'", '"')
+        raw = re.sub(r",\s*}", "}", raw)
+        try:
+            args = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    return {
+        "function": {"name": name, "arguments": args},
+    }
+
+
 # Shared compression prompt — used by _maybe_compress_history, flush_history_snapshot,
 # and web.py _archive_pending_turns. Defined once to avoid drift.
 COMPRESS_PROMPT = (
@@ -739,33 +780,52 @@ class Brain:
 
             if not msg.get("tool_calls"):
                 content = msg.get("content", "")
-                _, clean = _strip_thinking(content)
-                final = clean or "[no response]"
 
-                # Search raw content (includes <think> blocks) so retry signals
-                # inside thinking are still detected.
-                if tools_used and _KAI_RETRY_SIGNALS.search(content):
-                    messages.append({"role": "assistant", "content": final})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "Go ahead — use a different tool or call search.web "
-                            "to find the information another way."
-                        ),
-                    })
-                    continue
+                # ── JSON repair: recover broken tool calls from plain text ────
+                # Small models sometimes emit tool calls as text instead of
+                # structured JSON.  Try to salvage before giving up on the round.
+                if self.tool_registry and content:
+                    known = set(self.tool_registry.list_tools())
+                    recovered = _try_recover_tool_call(content, known)
+                    if recovered:
+                        if cfg.DEBUG:
+                            print(f"[{trace_id}] recovered broken tool call: "
+                                  f"{recovered['function']['name']}")
+                        msg["tool_calls"] = [recovered]
+                        # Fall through to normal tool execution below
+                    else:
+                        # Recovery failed — continue with normal no-tool path
+                        pass
 
-                # Model chose not to use tools — return its response directly
-                self._record_trace(trace_id, user_input, context, tools_used, final, turn_start)
-                with self._history_lock:
-                    self._session_history.append({"role": "user",      "content": user_input})
-                    self._session_history.append({"role": "assistant", "content": final})
-                self._persist_turn(user_input, final)
-                yield final, False, {}
-                yield "", True, {}
-                # commit + knowledge extraction runs off the hot path
-                self._bg_pool.submit(self._post_turn, user_input, final)
-                return
+                # If recovery injected tool_calls, fall through to tool execution
+                if not msg.get("tool_calls"):
+                    _, clean = _strip_thinking(content)
+                    final = clean or "[no response]"
+
+                    # Search raw content (includes <think> blocks) so retry signals
+                    # inside thinking are still detected.
+                    if tools_used and _KAI_RETRY_SIGNALS.search(content):
+                        messages.append({"role": "assistant", "content": final})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Go ahead — use a different tool or call search.web "
+                                "to find the information another way."
+                            ),
+                        })
+                        continue
+
+                    # Model chose not to use tools — return its response directly
+                    self._record_trace(trace_id, user_input, context, tools_used, final, turn_start)
+                    with self._history_lock:
+                        self._session_history.append({"role": "user",      "content": user_input})
+                        self._session_history.append({"role": "assistant", "content": final})
+                    self._persist_turn(user_input, final)
+                    yield final, False, {}
+                    yield "", True, {}
+                    # commit + knowledge extraction runs off the hot path
+                    self._bg_pool.submit(self._post_turn, user_input, final)
+                    return
 
             # Execute tool calls
             messages.append({

@@ -17,12 +17,16 @@ Memory tiers:
   - RAG chunks: ROUTED — only searched when "documents" domain is active
   - Campaign: only injected when DM mode + "campaign" domain active
 """
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from kai.config import MAX_CONTEXT_CHARS, DM_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD
 from kai.identity import build_identity_block
 from kai.memory import semantic, procedural, episodic
 from kai.memory import router
 from kai.schema import ContextBlock
 from typing import Callable
+
+# Shared pool for parallel retrieval — 3 workers covers episodic + RAG + campaign.
+_retrieval_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-retrieve")
 
 
 def build(
@@ -63,16 +67,36 @@ def build(
     # ── Semantic facts: filtered by active domains ────────────────────────────
     sem_facts = router.filter_facts(all_facts, active)
 
-    # ── Episodic: only search when "history" domain is active ─────────────────
-    episodes = _fetch_episodic(query, embed_fn, query_embedding, user_id) if "history" in active else []
+    # ── Parallel retrieval: episodic + RAG + campaign run concurrently ────────
+    episodes: list = []
+    rag_chunks: list[dict] = []
+    campaign_text: str = ""
 
-    # ── RAG chunks: only search when "documents" domain is active ─────────────
-    rag_chunks = _fetch_rag_chunks(query, embed_fn, query_embedding, user_id) if "documents" in active else []
-
-    # ── Campaign: only when dm_mode AND domain active ─────────────────────────
-    campaign_text = ""
+    futures: dict = {}
+    if "history" in active:
+        futures["episodic"] = _retrieval_pool.submit(
+            _fetch_episodic, query, embed_fn, query_embedding, user_id,
+        )
+    if "documents" in active:
+        futures["rag"] = _retrieval_pool.submit(
+            _fetch_rag_chunks, query, embed_fn, query_embedding, user_id,
+        )
     if dm_mode and "campaign" in active:
-        campaign_text = _fetch_campaign(query, embed_fn, user_id)
+        futures["campaign"] = _retrieval_pool.submit(
+            _fetch_campaign, query, embed_fn, user_id,
+        )
+
+    for key, fut in futures.items():
+        try:
+            result = fut.result(timeout=10)
+            if key == "episodic":
+                episodes = result
+            elif key == "rag":
+                rag_chunks = result
+            elif key == "campaign":
+                campaign_text = result
+        except Exception:
+            pass  # graceful degradation — missing context is better than a crash
 
     # ── Memory directory: always built, always injected ───────────────────────
     directory = router.build_directory(

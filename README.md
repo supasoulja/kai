@@ -102,9 +102,10 @@ Multi-user web interface with:
 - **Dashboard** — memory stats, recent sessions, quick actions
 - **Chat** — streamed responses with status indicator, markdown rendering, animated ASCII face
 - **Settings** — response mode, reasoning toggle, memory browser, document upload, DM mode
-- **D&D DM mode** — full campaign management with NPCs, quests, and event logs
 
 Each user gets isolated memory, sessions, and campaigns.
+
+> **Note:** DM mode is a work in progress. The idea is to provide an AI-hosted D&D experience for you and your friends, with campaign management, NPCs, quests, and event logs, but this functionality is not finished yet.
 
 ---
 
@@ -179,6 +180,8 @@ Kai picks the right tool automatically. You never have to ask her to use one.
 | `campaign.quest_update` | Update a quest (DM mode) |
 | `campaign.recall` | Search campaign memory (DM mode) |
 | `campaign.status` | Get active campaign status (DM mode) |
+
+> **Note:** These campaign tools are included in the repo, but DM mode is not completed. The goal is to let Kai host D&D for you and your friends, yet the feature is still under development.
 
 ---
 

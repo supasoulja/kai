@@ -69,6 +69,7 @@ def _default_home() -> str:
     },
 )
 def get_disk_usage(path: str = "", top_n: int = 12) -> str:
+    top_n = max(1, min(int(top_n), 100))
     path = _safe_path(path) or _default_home()
     cmd = (
         f"Get-ChildItem -Path '{path}' -Directory -ErrorAction SilentlyContinue | "
@@ -128,8 +129,10 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
     },
 )
 def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> str:
+    top_n = max(1, min(int(top_n), 100))
+    min_size_mb = max(0, min(int(min_size_mb), 1_000_000))
     path = _safe_path(path) or _default_home()
-    min_bytes = int(min_size_mb) * 1024 * 1024
+    min_bytes = min_size_mb * 1024 * 1024
 
     # When scanning a drive root, exclude slow/protected system directories
     p_lower = path.lower().rstrip("\\")
@@ -223,8 +226,11 @@ def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> s
 def find_old_files(
     path: str = "", days: int = 365, min_size_mb: int = 50, top_n: int = 20
 ) -> str:
+    days = max(1, min(int(days), 3650))
+    min_size_mb = max(0, min(int(min_size_mb), 1_000_000))
+    top_n = max(1, min(int(top_n), 100))
     path = _safe_path(path) or _default_home()
-    min_bytes = int(min_size_mb) * 1024 * 1024
+    min_bytes = min_size_mb * 1024 * 1024
     cmd = (
         f"$cutoff = (Get-Date).AddDays(-{int(days)}); "
         f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "
@@ -270,6 +276,7 @@ def find_old_files(
     },
 )
 def get_recent_files(path: str = "", count: int = 15) -> str:
+    count = max(1, min(int(count), 100))
     path = _safe_path(path) or _default_home()
     cmd = (
         f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "

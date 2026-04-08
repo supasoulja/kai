@@ -5,6 +5,7 @@ These tools change the PC. Each one is labeled clearly and creates a
 restore point first where appropriate. Always tell the user what you
 are about to do before calling any tool in this file.
 """
+import re
 import subprocess
 import datetime
 from kai.tools.registry import registry
@@ -26,12 +27,11 @@ def _ps(cmd: str, timeout: int = 30) -> tuple[str, str]:
 
 
 def _ps_escape(value: str) -> str:
-    """Escape a string for safe interpolation into a PowerShell single-quoted literal.
-    Single quotes are the only character that need escaping inside PS '' strings —
-    they are doubled ('') to produce a literal quote."""
-    import re
-    # Strip anything that isn't alphanumeric, space, dot, dash, underscore, or parentheses
-    return re.sub(r"[^a-zA-Z0-9 .\-_()]", "", value)[:120]
+    """Sanitize a label/name for safe interpolation into a PowerShell single-quoted string.
+    Whitelists only characters that legitimately appear in process names, program labels,
+    and restore-point descriptions. Parentheses are excluded — they serve no purpose
+    in these strings and reduce the PS injection surface."""
+    return re.sub(r"[^a-zA-Z0-9 .\-_]", "", value)[:120]
 
 
 @registry.tool(

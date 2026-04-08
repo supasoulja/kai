@@ -19,6 +19,7 @@ from kai.tools.registry import registry
         "current events, recent game releases, latest software versions, prices, "
         "news, trending topics, sports scores, or anything from the past year. "
         "When in doubt about whether information is current, search rather than guess. "
+        "PRIVACY: this sends the search query to DuckDuckGo (external service, no tracking). "
         "After retrieving results: synthesize the findings into a clear answer — "
         "do not just repeat the snippets. Note where sources agree or conflict. "
         "End your response with a Sources list: one line per result used, "
