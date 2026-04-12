@@ -29,6 +29,7 @@ from kai.config import (
 from kai.memory.manager import MemoryManager
 from kai import trace as trace_log
 from kai import sessions
+from kai import events
 
 if TYPE_CHECKING:
     from kai.tools.registry import ToolRegistry
@@ -700,6 +701,8 @@ class Brain:
 
         if on_status:
             on_status("Thinking...")
+        if self.session_id:
+            events.emit(events.EVENT_STATUS, self.session_id, label="Thinking...")
 
         self._maybe_compress_history(on_status=on_status)
 
@@ -772,6 +775,9 @@ class Brain:
             # tool label in the activity log — not as a floating reasoning dropdown.
             tool_round_thinking = msg.get("thinking", "")
             if tool_round_thinking and use_think:
+                if self.session_id:
+                    events.emit(events.EVENT_THINK, self.session_id,
+                                text=tool_round_thinking, round=round_num)
                 yield "", False, {"think_step": True, "text": tool_round_thinking}
 
             if cfg.DEBUG:
@@ -821,6 +827,10 @@ class Brain:
                         self._session_history.append({"role": "user",      "content": user_input})
                         self._session_history.append({"role": "assistant", "content": final})
                     self._persist_turn(user_input, final)
+                    if self.session_id:
+                        events.emit(events.EVENT_STREAM_END, self.session_id,
+                                    tools_used=tools_used,
+                                    duration=round(time.monotonic() - turn_start, 3))
                     yield final, False, {}
                     yield "", True, {}
                     # commit + knowledge extraction runs off the hot path
@@ -838,10 +848,25 @@ class Brain:
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
                 tool_name = fn.get("name") or ""
+                tool_args = fn.get("arguments", {})
                 tools_used.append(tool_name)
                 if on_status:
                     on_status(_TOOL_LABELS.get(tool_name, tool_name))
-                result = self._execute_tool(tool_name, fn.get("arguments", {}), trace_id)
+                if self.session_id:
+                    events.emit(events.EVENT_TOOL_START, self.session_id,
+                                name=tool_name, args=tool_args)
+                _tool_t0 = time.monotonic()
+                result = self._execute_tool(tool_name, tool_args, trace_id)
+                _tool_dur = round(time.monotonic() - _tool_t0, 3)
+                if self.session_id:
+                    # Truncate output for the event bus (keeps SQLite lean)
+                    _evt_output = str(result.get("output", ""))[:2000]
+                    events.emit(events.EVENT_TOOL_END, self.session_id,
+                                name=tool_name, duration=_tool_dur,
+                                success=result.get("success", False),
+                                error=result.get("error"),
+                                output=_evt_output,
+                                args=tool_args)
                 if cfg.DEBUG:
                     # Truncate tool output in debug logs to avoid leaking large
                     # data blobs (file contents, search results) to the terminal
@@ -945,6 +970,8 @@ class Brain:
         # ── Stream the final answer ───────────────────────────────────────────
         if on_status and tools_used:
             on_status("Responding...")
+        if self.session_id and tools_used:
+            events.emit(events.EVENT_STATUS, self.session_id, label="Responding...")
 
         _tokens: list[str] = []
         for token, done, meta in self.ollama.chat_stream(
@@ -954,9 +981,14 @@ class Brain:
                 break
             # Think block — pass to UI as a separate event, don't add to response text
             if meta.get("think_block") is not None:
+                if self.session_id:
+                    events.emit(events.EVENT_THINK, self.session_id,
+                                text=meta["think_block"])
                 yield "", False, {"think": True, "text": meta["think_block"]}
                 continue
             _tokens.append(token)
+            if self.session_id:
+                events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=token)
             yield token, False, {}
         full_text = "".join(_tokens)
 
@@ -970,6 +1002,10 @@ class Brain:
             self._session_history.append({"role": "user",      "content": user_input})
             self._session_history.append({"role": "assistant", "content": clean_text})
         msg_id = self._persist_turn(user_input, clean_text)
+        if self.session_id:
+            events.emit(events.EVENT_STREAM_END, self.session_id,
+                        tools_used=tools_used,
+                        duration=round(time.monotonic() - turn_start, 3))
         yield "", True, {"message_id": msg_id} if msg_id else {}
         # commit + learn: runs off the hot path so the user isn't waiting
         self._bg_pool.submit(self._post_turn, user_input, clean_text)
@@ -1116,6 +1152,9 @@ class Brain:
                 )
                 saved += 1
 
+        if saved and self.session_id:
+            events.emit(events.EVENT_MEMORY_WRITE, self.session_id,
+                        entries=saved, source="knowledge_extraction")
         if cfg.DEBUG and saved:
             print(f"[learn] saved {saved} knowledge entries")
 

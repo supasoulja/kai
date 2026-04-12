@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Kai's Computer</title>
+<link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Kai's Computer — Simulated Ubuntu/GNOME Desktop
+   Pure frontend facade. All data comes via WebSocket from the event bus.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Ubuntu-esque palette — evokes GNOME without copying */
+  --gnome-bg:       #1a1025;
+  --gnome-surface:  #241730;
+  --gnome-surface2: #2d1f3b;
+  --gnome-border:   #3d2d50;
+  --gnome-text:     #e8e0f0;
+  --gnome-muted:    #9080a8;
+  --gnome-accent:   #e95420;  /* Ubuntu orange */
+  --gnome-accent2:  #77216f;  /* Ubuntu aubergine */
+  --gnome-titlebar: #2c2036;
+  --gnome-dock:     rgba(30, 18, 42, 0.92);
+  --gnome-topbar:   rgba(20, 12, 30, 0.95);
+  --gnome-shadow:   0 8px 32px rgba(0,0,0,0.5);
+  --font-ui:        'Ubuntu', system-ui, sans-serif;
+  --font-mono:      'Ubuntu Mono', 'Consolas', monospace;
+  --win-radius:     12px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  background: #000;
+  color: var(--gnome-text);
+  user-select: none;
+}
+
+/* ── Boot Sequence Layers ─────────────────────────────────────────────── */
+#boot-layer {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: #000;
+  transition: opacity 0.5s;
+}
+#boot-layer.fade-out { opacity: 0; pointer-events: none; }
+
+/* BIOS flash */
+.bios-text {
+  font-family: var(--font-mono);
+  color: #aaa;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+/* Ubuntu splash */
+#splash-layer {
+  position: fixed; inset: 0; z-index: 9998;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column; gap: 24px;
+  background: var(--gnome-accent2);
+}
+#splash-layer.active { display: flex; }
+.splash-logo {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: var(--gnome-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 42px; font-weight: 700; color: #fff;
+}
+.splash-dots {
+  display: flex; gap: 10px;
+}
+.splash-dots span {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: rgba(255,255,255,0.3);
+  animation: splash-pulse 1.2s ease-in-out infinite;
+}
+.splash-dots span:nth-child(2) { animation-delay: 0.2s; }
+.splash-dots span:nth-child(3) { animation-delay: 0.4s; }
+.splash-dots span:nth-child(4) { animation-delay: 0.6s; }
+.splash-dots span:nth-child(5) { animation-delay: 0.8s; }
+@keyframes splash-pulse {
+  0%, 100% { background: rgba(255,255,255,0.3); }
+  50% { background: rgba(255,255,255,0.9); }
+}
+
+/* Login screen */
+#login-layer {
+  position: fixed; inset: 0; z-index: 9997;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px;
+  background: var(--gnome-bg);
+  background-image: radial-gradient(ellipse at 50% 80%, rgba(119,33,111,0.3) 0%, transparent 60%);
+}
+#login-layer.active { display: flex; }
+.login-avatar {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  background: #3d2d50;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 8px;
+}
+/* Generic user silhouette — SVG inline, no external assets */
+.login-avatar svg { width: 56px; height: 56px; fill: #6a5880; }
+.login-name {
+  font-size: 20px; font-weight: 500; color: var(--gnome-text);
+}
+.login-password {
+  background: var(--gnome-surface2);
+  border: 1px solid var(--gnome-border);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--gnome-text);
+  letter-spacing: 4px;
+  width: 200px;
+  text-align: center;
+}
+.login-time {
+  position: absolute; top: 32px;
+  font-size: 48px; font-weight: 300; color: var(--gnome-text);
+}
+.login-date {
+  position: absolute; top: 88px;
+  font-size: 14px; color: var(--gnome-muted);
+}
+
+/* ── Desktop ──────────────────────────────────────────────────────────── */
+#desktop {
+  position: fixed; inset: 0;
+  display: none;
+  flex-direction: column;
+  background: var(--gnome-bg);
+  background-image:
+    radial-gradient(ellipse at 30% 20%, rgba(119,33,111,0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(233,84,32,0.08) 0%, transparent 50%);
+}
+#desktop.active { display: flex; }
+
+/* Top bar */
+.topbar {
+  height: 28px;
+  background: var(--gnome-topbar);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 500;
+  z-index: 100;
+  flex-shrink: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: 16px; }
+.topbar-center { font-weight: 400; color: var(--gnome-muted); }
+.topbar-right { display: flex; align-items: center; gap: 12px; color: var(--gnome-muted); }
+.topbar-activities {
+  color: var(--gnome-text);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.topbar-activities:hover { background: rgba(255,255,255,0.1); }
+
+/* Window area */
+.window-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Dock */
+.dock {
+  height: 52px;
+  background: var(--gnome-dock);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  backdrop-filter: blur(12px);
+}
+.dock-item {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  background: var(--gnome-surface2);
+  border: 1px solid transparent;
+}
+.dock-item:hover {
+  transform: scale(1.15);
+  border-color: var(--gnome-border);
+  background: var(--gnome-surface);
+}
+.dock-item.has-window::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  width: 6px; height: 3px;
+  border-radius: 2px;
+  background: var(--gnome-accent);
+}
+.dock-tooltip {
+  position: absolute;
+  bottom: 52px;
+  background: var(--gnome-surface);
+  color: var(--gnome-text);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  border: 1px solid var(--gnome-border);
+}
+.dock-item:hover .dock-tooltip { opacity: 1; }
+
+/* ── Window Chrome ────────────────────────────────────────────────────── */
+.gnome-window {
+  position: absolute;
+  min-width: 320px;
+  min-height: 200px;
+  border-radius: var(--win-radius);
+  box-shadow: var(--gnome-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.gnome-window.focused {
+  box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+  border-color: rgba(255,255,255,0.1);
+}
+.gnome-window .titlebar {
+  height: 36px;
+  background: var(--gnome-titlebar);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  cursor: grab;
+  flex-shrink: 0;
+  gap: 10px;
+}
+.gnome-window .titlebar:active { cursor: grabbing; }
+.gnome-window .titlebar .win-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--gnome-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gnome-window .titlebar .win-icon {
+  font-size: 14px;
+  opacity: 0.7;
+}
+.win-controls {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+}
+.win-ctrl {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.win-ctrl:hover { filter: brightness(1.3); }
+.win-ctrl.close   { background: #e95420; }
+.win-ctrl.minimize { background: #f4a523; }
+.win-ctrl.maximize { background: #3eb34f; }
+.gnome-window .body {
+  flex: 1;
+  background: #1e1226;
+  overflow: auto;
+  position: relative;
+}
+
+/* Resize handle */
+.gnome-window .resize-handle {
+  position: absolute;
+  bottom: 0; right: 0;
+  width: 16px; height: 16px;
+  cursor: nwse-resize;
+}
+
+/* Window spawn animation */
+@keyframes win-open {
+  0%   { opacity: 0; transform: scale(0.92) translateY(12px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.gnome-window.opening { animation: win-open 0.25s ease-out; }
+
+/* Window minimize animation */
+@keyframes win-minimize {
+  to { opacity: 0; transform: scale(0.5) translateY(80px); }
+}
+.gnome-window.minimizing {
+  animation: win-minimize 0.2s ease-in forwards;
+  pointer-events: none;
+}
+
+/* ── Terminal Content ─────────────────────────────────────────────────── */
+.terminal-body {
+  background: #0e0816;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c8c0d4;
+  overflow-y: auto;
+  height: 100%;
+}
+.term-prompt { color: #3eb34f; }
+.term-cmd    { color: var(--gnome-text); }
+.term-output { color: var(--gnome-muted); }
+.term-error  { color: #e95420; }
+.term-cursor {
+  display: inline-block;
+  width: 8px; height: 15px;
+  background: #c8c0d4;
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Browser Content ──────────────────────────────────────────────────── */
+.browser-toolbar {
+  height: 36px;
+  background: var(--gnome-surface);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--gnome-border);
+  flex-shrink: 0;
+}
+.browser-url {
+  flex: 1;
+  background: var(--gnome-surface2);
+  border: 1px solid var(--gnome-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--gnome-muted);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-body {
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-y: auto;
+  height: 100%;
+}
+.search-result {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--gnome-border);
+}
+.search-result:last-child { border-bottom: none; }
+.search-result .sr-title {
+  color: #7b9fdb;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+.search-result .sr-url { color: #3eb34f; font-size: 11px; margin-bottom: 4px; }
+.search-result .sr-snippet { color: var(--gnome-muted); font-size: 12px; }
+
+/* ── File Manager Content ─────────────────────────────────────────────── */
+.filemanager-sidebar {
+  width: 160px;
+  background: var(--gnome-surface);
+  border-right: 1px solid var(--gnome-border);
+  padding: 10px 0;
+  font-size: 12px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.fm-nav-item {
+  padding: 6px 14px;
+  color: var(--gnome-muted);
+  cursor: pointer;
+  transition: all 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fm-nav-item:hover { background: var(--gnome-surface2); color: var(--gnome-text); }
+.fm-nav-item.active { color: var(--gnome-accent); background: rgba(233,84,32,0.1); }
+.filemanager-content {
+  flex: 1;
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  overflow-y: auto;
+}
+.fm-file {
+  width: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: default;
+  transition: background 0.1s;
+}
+.fm-file:hover { background: var(--gnome-surface2); }
+.fm-file.highlight { background: rgba(233,84,32,0.15); border: 1px solid var(--gnome-accent); }
+.fm-file-icon { font-size: 28px; }
+.fm-file-name {
+  font-size: 10px;
+  text-align: center;
+  word-break: break-all;
+  color: var(--gnome-text);
+  line-height: 1.2;
+}
+
+/* ── Text Editor Content ──────────────────────────────────────────────── */
+.editor-toolbar {
+  height: 32px;
+  background: var(--gnome-surface);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--gnome-muted);
+  border-bottom: 1px solid var(--gnome-border);
+  flex-shrink: 0;
+}
+.editor-filename {
+  font-weight: 500;
+  color: var(--gnome-text);
+}
+.editor-body {
+  flex: 1;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: #c8c0d4;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.editor-linenum {
+  color: var(--gnome-muted);
+  opacity: 0.4;
+  margin-right: 12px;
+  display: inline-block;
+  width: 28px;
+  text-align: right;
+  user-select: none;
+}
+
+/* ── Notification toast ───────────────────────────────────────────────── */
+.notification-area {
+  position: absolute;
+  top: 36px; right: 12px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+.gnome-notification {
+  background: var(--gnome-surface);
+  border: 1px solid var(--gnome-border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 12px;
+  box-shadow: var(--gnome-shadow);
+  animation: notif-in 0.3s ease-out;
+  pointer-events: auto;
+}
+.gnome-notification .notif-title { font-weight: 600; margin-bottom: 4px; }
+.gnome-notification .notif-body { color: var(--gnome-muted); }
+@keyframes notif-in {
+  0%   { opacity: 0; transform: translateY(-12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Connection status badge ──────────────────────────────────────────── */
+.conn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--gnome-muted);
+}
+.conn-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #666;
+}
+.conn-dot.connected { background: #3eb34f; }
+.conn-dot.connecting { background: #f4a523; animation: blink 1s step-end infinite; }
+
+</style>
+</head>
+<body>
+
+<!-- ═══════ BOOT LAYER: BIOS ═══════ -->
+<div id="boot-layer">
+  <div class="bios-text" id="bios-text"></div>
+</div>
+
+<!-- ═══════ SPLASH LAYER ═══════ -->
+<div id="splash-layer">
+  <div class="splash-logo">K</div>
+  <div class="splash-dots">
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+</div>
+
+<!-- ═══════ LOGIN LAYER ═══════ -->
+<div id="login-layer">
+  <div class="login-time" id="login-time"></div>
+  <div class="login-date" id="login-date"></div>
+  <div class="login-avatar">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6 0-8 3-8 5v1h16v-1c0-2-2-5-8-5z"/></svg>
+  </div>
+  <div class="login-name">kai</div>
+  <div class="login-password" id="login-pw"></div>
+</div>
+
+<!-- ═══════ DESKTOP ═══════ -->
+<div id="desktop">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-activities">Activities</span>
+      <span style="color:var(--gnome-muted)" id="topbar-app-name">Desktop</span>
+    </div>
+    <div class="topbar-center" id="topbar-clock"></div>
+    <div class="topbar-right">
+      <span class="conn-badge"><span class="conn-dot" id="conn-dot"></span> <span id="conn-label">offline</span></span>
+      <span>&#x1F50A;</span>
+      <span>&#x26A1;</span>
+    </div>
+  </div>
+
+  <!-- Window area -->
+  <div class="window-area" id="window-area">
+    <div class="notification-area" id="notification-area"></div>
+  </div>
+
+  <!-- Dock -->
+  <div class="dock" id="dock">
+    <div class="dock-item" data-type="terminal" title="Terminal">
+      <span>&#x2588;</span>
+      <div class="dock-tooltip">Terminal</div>
+    </div>
+    <div class="dock-item" data-type="browser" title="Web Browser">
+      <span>&#x1F310;</span>
+      <div class="dock-tooltip">Web Browser</div>
+    </div>
+    <div class="dock-item" data-type="files" title="Files">
+      <span>&#x1F4C1;</span>
+      <div class="dock-tooltip">Files</div>
+    </div>
+    <div class="dock-item" data-type="editor" title="Text Editor">
+      <span>&#x1F4DD;</span>
+      <div class="dock-tooltip">Text Editor</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════════
+// Kai's Computer — Desktop Controller
+// ═════════════════════════════════════════════════════════════════════════════
+
+const $ = id => document.getElementById(id);
+
+// ── Config ───────────────────────────────────────────────────────────────────
+const SESSION_ID = new URLSearchParams(window.location.search).get('session') || '';
+const BOOT_MODE  = new URLSearchParams(window.location.search).get('boot') || 'cold';
+const WS_URL     = `ws://${location.host}/ws/activity/${encodeURIComponent(SESSION_ID)}`;
+const EVENTS_URL = `/api/events/${encodeURIComponent(SESSION_ID)}`;
+
+// ── State ────────────────────────────────────────────────────────────────────
+let windows     = {};       // id → { el, type, data }
+let windowOrder = [];       // z-index stack
+let nextWinId   = 1;
+let ws          = null;
+let dragState   = null;     // { winId, startX, startY, origLeft, origTop }
+let resizeState = null;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 1. BOOT SEQUENCE
+// ══════════════════════════════════════════════════════════════════════════════
+
+const BIOS_LINES = [
+  'KaiOS BIOS v2.1.0',
+  'Detecting hardware...',
+  'CPU: Neural Processing Unit (8B params)',
+  'GPU: VRAM 8192 MB',
+  'Memory: OK',
+  'Storage: SQLite + Vector DB',
+  '',
+  'Booting from local disk...',
+];
+
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function bootSequence() {
+  const biosEl = $('bios-text');
+  const bootLayer = $('boot-layer');
+  const splashLayer = $('splash-layer');
+  const loginLayer = $('login-layer');
+  const desktop = $('desktop');
+
+  if (BOOT_MODE === 'warm') {
+    // Warm boot: skip BIOS + splash, go straight to login
+    bootLayer.style.display = 'none';
+    splashLayer.style.display = 'none';
+    await runLogin(loginLayer, desktop);
+    return;
+  }
+
+  // ── Phase 1: BIOS ──
+  for (const line of BIOS_LINES) {
+    biosEl.textContent += line + '\n';
+    await sleep(80 + Math.random() * 60);
+  }
+  await sleep(300);
+
+  // ── Phase 2: Splash ──
+  bootLayer.classList.add('fade-out');
+  splashLayer.classList.add('active');
+  await sleep(1800);
+
+  // ── Phase 3: Login ──
+  splashLayer.style.transition = 'opacity 0.4s';
+  splashLayer.style.opacity = '0';
+  await sleep(400);
+  splashLayer.style.display = 'none';
+  bootLayer.style.display = 'none';
+
+  await runLogin(loginLayer, desktop);
+}
+
+async function runLogin(loginLayer, desktop) {
+  loginLayer.classList.add('active');
+
+  // Set clock
+  const now = new Date();
+  $('login-time').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('login-date').textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+
+  await sleep(600);
+
+  // Type password
+  const pw = $('login-pw');
+  const dots = '●●●●●●●●';
+  for (let i = 0; i < dots.length; i++) {
+    pw.textContent += dots[i];
+    await sleep(60 + Math.random() * 40);
+  }
+  await sleep(400);
+
+  // Transition to desktop
+  loginLayer.style.transition = 'opacity 0.3s';
+  loginLayer.style.opacity = '0';
+  await sleep(300);
+  loginLayer.style.display = 'none';
+  desktop.classList.add('active');
+
+  // Start everything
+  startClock();
+  connectWebSocket();
+  loadExistingEvents();
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 2. CLOCK
+// ══════════════════════════════════════════════════════════════════════════════
+
+function startClock() {
+  function update() {
+    const now = new Date();
+    $('topbar-clock').textContent = now.toLocaleDateString([], {
+      weekday: 'short', month: 'short', day: 'numeric'
+    }) + '  ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  update();
+  setInterval(update, 30000);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 3. WINDOW MANAGER
+// ══════════════════════════════════════════════════════════════════════════════
+
+function createWindow(type, title, opts = {}) {
+  const id = 'win-' + nextWinId++;
+  const area = $('window-area');
+  const rect = area.getBoundingClientRect();
+
+  // Cascade positioning
+  const count = Object.keys(windows).length;
+  const left = 40 + (count % 6) * 30;
+  const top  = 20 + (count % 6) * 30;
+  const w = opts.width  || Math.min(640, rect.width - 80);
+  const h = opts.height || Math.min(420, rect.height - 60);
+
+  const win = document.createElement('div');
+  win.className = 'gnome-window opening focused';
+  win.id = id;
+  win.style.cssText = `left:${left}px;top:${top}px;width:${w}px;height:${h}px;z-index:${10 + count};`;
+
+  // Icon per type
+  const icons = { terminal: '\u2588', browser: '\u{1F310}', files: '\u{1F4C1}', editor: '\u{1F4DD}' };
+  const icon = icons[type] || '\u{1F4BB}';
+
+  win.innerHTML = `
+    <div class="titlebar" data-win="${id}">
+      <span class="win-icon">${icon}</span>
+      <span class="win-title">${esc(title)}</span>
+      <div class="win-controls">
+        <button class="win-ctrl minimize" data-win="${id}" title="Minimize"></button>
+        <button class="win-ctrl maximize" data-win="${id}" title="Maximize"></button>
+        <button class="win-ctrl close" data-win="${id}" title="Close"></button>
+      </div>
+    </div>
+    <div class="body" id="${id}-body"></div>
+    <div class="resize-handle" data-win="${id}"></div>
+  `;
+
+  area.appendChild(win);
+
+  // Remove opening animation class after it plays
+  setTimeout(() => win.classList.remove('opening'), 300);
+
+  windows[id] = { el: win, type, title, data: opts.data || {} };
+  focusWindow(id);
+
+  // Update dock indicator
+  updateDockIndicators();
+
+  // Update topbar app name
+  $('topbar-app-name').textContent = title;
+
+  return id;
+}
+
+function focusWindow(id) {
+  windowOrder = windowOrder.filter(w => w !== id);
+  windowOrder.push(id);
+  Object.keys(windows).forEach((wid, _) => {
+    const z = windowOrder.indexOf(wid);
+    const el = windows[wid].el;
+    el.style.zIndex = 10 + z;
+    el.classList.toggle('focused', wid === id);
+  });
+  if (windows[id]) {
+    $('topbar-app-name').textContent = windows[id].title;
+  }
+}
+
+function closeWindow(id) {
+  const win = windows[id];
+  if (!win) return;
+  win.el.remove();
+  delete windows[id];
+  windowOrder = windowOrder.filter(w => w !== id);
+  updateDockIndicators();
+  // Focus next top window
+  if (windowOrder.length) {
+    focusWindow(windowOrder[windowOrder.length - 1]);
+  } else {
+    $('topbar-app-name').textContent = 'Desktop';
+  }
+}
+
+function minimizeWindow(id) {
+  const win = windows[id];
+  if (!win) return;
+  win.el.classList.add('minimizing');
+  setTimeout(() => {
+    win.el.style.display = 'none';
+    win.el.classList.remove('minimizing');
+    windowOrder = windowOrder.filter(w => w !== id);
+    if (windowOrder.length) {
+      focusWindow(windowOrder[windowOrder.length - 1]);
+    } else {
+      $('topbar-app-name').textContent = 'Desktop';
+    }
+  }, 200);
+}
+
+function restoreWindow(id) {
+  const win = windows[id];
+  if (!win) return;
+  win.el.style.display = 'flex';
+  win.el.classList.add('opening');
+  setTimeout(() => win.el.classList.remove('opening'), 300);
+  focusWindow(id);
+}
+
+function toggleMaximize(id) {
+  const win = windows[id];
+  if (!win) return;
+  const el = win.el;
+  if (win._maximized) {
+    el.style.left   = win._prevRect.left + 'px';
+    el.style.top    = win._prevRect.top + 'px';
+    el.style.width  = win._prevRect.width + 'px';
+    el.style.height = win._prevRect.height + 'px';
+    el.style.borderRadius = 'var(--win-radius)';
+    win._maximized = false;
+  } else {
+    const area = $('window-area').getBoundingClientRect();
+    win._prevRect = { left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight };
+    el.style.left = '0'; el.style.top = '0';
+    el.style.width = area.width + 'px';
+    el.style.height = area.height + 'px';
+    el.style.borderRadius = '0';
+    win._maximized = true;
+  }
+}
+
+function updateDockIndicators() {
+  const types = new Set(Object.values(windows).map(w => w.type));
+  document.querySelectorAll('.dock-item').forEach(d => {
+    d.classList.toggle('has-window', types.has(d.dataset.type));
+  });
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Drag & Resize ────────────────────────────────────────────────────────────
+
+document.addEventListener('mousedown', e => {
+  // Titlebar drag
+  const titlebar = e.target.closest('.titlebar');
+  if (titlebar && !e.target.closest('.win-ctrl')) {
+    const id = titlebar.dataset.win;
+    if (windows[id] && windows[id]._maximized) return;
+    const el = windows[id]?.el;
+    if (!el) return;
+    focusWindow(id);
+    dragState = {
+      winId: id,
+      startX: e.clientX, startY: e.clientY,
+      origLeft: el.offsetLeft, origTop: el.offsetTop,
+    };
+    e.preventDefault();
+    return;
+  }
+
+  // Resize handle
+  const handle = e.target.closest('.resize-handle');
+  if (handle) {
+    const id = handle.dataset.win;
+    const el = windows[id]?.el;
+    if (!el) return;
+    focusWindow(id);
+    resizeState = {
+      winId: id,
+      startX: e.clientX, startY: e.clientY,
+      origW: el.offsetWidth, origH: el.offsetHeight,
+    };
+    e.preventDefault();
+    return;
+  }
+
+  // Focus on click
+  const winEl = e.target.closest('.gnome-window');
+  if (winEl) focusWindow(winEl.id);
+});
+
+document.addEventListener('mousemove', e => {
+  if (dragState) {
+    const el = windows[dragState.winId]?.el;
+    if (!el) { dragState = null; return; }
+    el.style.left = (dragState.origLeft + e.clientX - dragState.startX) + 'px';
+    el.style.top  = (dragState.origTop  + e.clientY - dragState.startY) + 'px';
+  }
+  if (resizeState) {
+    const el = windows[resizeState.winId]?.el;
+    if (!el) { resizeState = null; return; }
+    el.style.width  = Math.max(320, resizeState.origW + e.clientX - resizeState.startX) + 'px';
+    el.style.height = Math.max(200, resizeState.origH + e.clientY - resizeState.startY) + 'px';
+  }
+});
+
+document.addEventListener('mouseup', () => { dragState = null; resizeState = null; });
+
+// Window control buttons
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.win-ctrl');
+  if (!btn) return;
+  const id = btn.dataset.win;
+  if (btn.classList.contains('close'))    closeWindow(id);
+  if (btn.classList.contains('minimize')) minimizeWindow(id);
+  if (btn.classList.contains('maximize')) toggleMaximize(id);
+});
+
+// Dock clicks
+document.querySelectorAll('.dock-item').forEach(d => {
+  d.addEventListener('click', () => {
+    const type = d.dataset.type;
+    // If a window of this type exists, focus or restore it
+    const existing = Object.entries(windows).find(([_, w]) => w.type === type);
+    if (existing) {
+      const [id, w] = existing;
+      if (w.el.style.display === 'none') {
+        restoreWindow(id);
+      } else {
+        focusWindow(id);
+      }
+    }
+    // Don't create empty windows from dock — they're spawned by events
+  });
+});
+
+// Double-click titlebar to maximize
+document.addEventListener('dblclick', e => {
+  const titlebar = e.target.closest('.titlebar');
+  if (titlebar && !e.target.closest('.win-ctrl')) {
+    toggleMaximize(titlebar.dataset.win);
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 4. WINDOW CONTENT BUILDERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function buildTerminalContent(bodyEl, command, output) {
+  const prompt = 'kai@localhost:~$ ';
+  let html = '';
+  if (command) {
+    html += `<div><span class="term-prompt">${esc(prompt)}</span><span class="term-cmd">${esc(command)}</span></div>`;
+  }
+  if (output) {
+    html += `<div class="term-output">${esc(output)}</div>`;
+  }
+  bodyEl.innerHTML += html;
+  bodyEl.scrollTop = bodyEl.scrollHeight;
+}
+
+function appendTerminalLine(winId, text, cls = 'term-output') {
+  const body = $(winId + '-body');
+  if (!body) return;
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = text;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+
+function appendTerminalCommand(winId, cmd) {
+  const body = $(winId + '-body');
+  if (!body) return;
+  const div = document.createElement('div');
+  div.innerHTML = `<span class="term-prompt">kai@localhost:~$ </span><span class="term-cmd">${esc(cmd)}</span>`;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+
+function initTerminalWindow(title) {
+  const id = createWindow('terminal', title || 'Terminal', { width: 580, height: 360 });
+  const body = $(id + '-body');
+  body.className = 'body terminal-body';
+  body.innerHTML = `<div><span class="term-prompt">kai@localhost:~$ </span><span class="term-cursor"></span></div>`;
+  return id;
+}
+
+function initBrowserWindow(title, url) {
+  const id = createWindow('browser', title || 'Web Browser', { width: 600, height: 440 });
+  const body = $(id + '-body');
+  body.innerHTML = `
+    <div class="browser-toolbar">
+      <span style="font-size:14px">&#x25C0;</span>
+      <span style="font-size:14px">&#x25B6;</span>
+      <span style="font-size:14px">&#x21BB;</span>
+      <div class="browser-url" id="${id}-url">${esc(url || 'about:blank')}</div>
+    </div>
+    <div class="browser-body" id="${id}-content"></div>
+  `;
+  return id;
+}
+
+function initFileManagerWindow(title, path) {
+  const id = createWindow('files', title || 'Files', { width: 580, height: 380 });
+  const body = $(id + '-body');
+  body.style.display = 'flex';
+  body.innerHTML = `
+    <div class="filemanager-sidebar">
+      <div class="fm-nav-item active">\u{1F4C1} Home</div>
+      <div class="fm-nav-item">\u{1F4C4} Documents</div>
+      <div class="fm-nav-item">\u{1F3B5} Music</div>
+      <div class="fm-nav-item">\u{1F5BC} Pictures</div>
+      <div class="fm-nav-item">\u{2B07} Downloads</div>
+      <div class="fm-nav-item">\u{1F5D1} Trash</div>
+    </div>
+    <div class="filemanager-content" id="${id}-files">
+      <div class="fm-file">
+        <div class="fm-file-icon">\u{1F4C1}</div>
+        <div class="fm-file-name">KaiFiles</div>
+      </div>
+    </div>
+  `;
+  // Update path in titlebar
+  if (path) {
+    windows[id].title = 'Files — ' + path;
+    $(id).querySelector('.win-title').textContent = 'Files — ' + path;
+  }
+  return id;
+}
+
+function initEditorWindow(title, content) {
+  const id = createWindow('editor', title || 'Text Editor', { width: 560, height: 400 });
+  const body = $(id + '-body');
+  body.innerHTML = `
+    <div class="editor-toolbar">
+      <span class="editor-filename">${esc(title || 'untitled')}</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--gnome-muted)">UTF-8</span>
+    </div>
+    <div class="editor-body" id="${id}-editor"></div>
+  `;
+  if (content) {
+    const editor = $(id + '-editor');
+    editor.textContent = content;
+  }
+  return id;
+}
+
+function appendEditorText(winId, text) {
+  const editor = $(winId + '-editor');
+  if (!editor) return;
+  editor.textContent += text;
+  editor.scrollTop = editor.scrollHeight;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 5. NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function showNotification(title, body, duration = 4000) {
+  const area = $('notification-area');
+  const el = document.createElement('div');
+  el.className = 'gnome-notification';
+  el.innerHTML = `<div class="notif-title">${esc(title)}</div><div class="notif-body">${esc(body)}</div>`;
+  area.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity 0.3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 6. EVENT → WINDOW MAPPING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Map tool names to window types and labels
+const TOOL_WINDOW_MAP = {
+  // Browser
+  'search.web':            { type: 'browser', title: 'Web Browser' },
+  // File manager
+  'files.list':            { type: 'files',   title: 'Files' },
+  'files.tree':            { type: 'files',   title: 'Files' },
+  'workspace.tree':        { type: 'files',   title: 'Files' },
+  'workspace.list':        { type: 'files',   title: 'Files' },
+  // Text editor
+  'files.read':            { type: 'editor',  title: 'Text Editor' },
+  'files.write':           { type: 'editor',  title: 'Text Editor' },
+  'workspace.read':        { type: 'editor',  title: 'Text Editor' },
+  'workspace.write':       { type: 'editor',  title: 'Text Editor' },
+  'workspace.edit':        { type: 'editor',  title: 'Text Editor' },
+  'notes.read':            { type: 'editor',  title: 'Notes' },
+  'notes.write':           { type: 'editor',  title: 'Notes' },
+  'notes.list':            { type: 'files',   title: 'Notes' },
+  // Terminal (system/network/pc tools)
+  'system.info':           { type: 'terminal', title: 'System Info' },
+  'system.crashes':        { type: 'terminal', title: 'Event Viewer' },
+  'system.run_disk_cleanup': { type: 'terminal', title: 'Disk Cleanup' },
+  'system.restore_point':  { type: 'terminal', title: 'System Restore' },
+  'pc.hardware':           { type: 'terminal', title: 'Hardware Monitor' },
+  'pc.gpu':                { type: 'terminal', title: 'GPU Monitor' },
+  'pc.temps':              { type: 'terminal', title: 'Temperatures' },
+  'pc.windows_updates':    { type: 'terminal', title: 'Windows Update' },
+  'pc.startup_programs':   { type: 'terminal', title: 'Startup Programs' },
+  'network.info':          { type: 'terminal', title: 'Network Info' },
+  'network.ping':          { type: 'terminal', title: 'Ping' },
+  'network.speedtest':     { type: 'terminal', title: 'Speed Test' },
+  'weather.current':       { type: 'terminal', title: 'Weather' },
+  'time.now':              { type: 'terminal', title: 'Clock' },
+};
+
+// Track active tool windows so tool.end can update them
+let activeToolWindows = {};  // tool_name → winId
+
+function handleEvent(evt) {
+  switch (evt.type) {
+
+    case 'tool.start': {
+      const name = evt.data.name || '';
+      const args = evt.data.args || {};
+
+      // Determine window type
+      const mapping = TOOL_WINDOW_MAP[name];
+      const type  = mapping ? mapping.type : 'terminal';
+      const title = mapping ? mapping.title : name;
+
+      // Format a human-readable command string for terminal display
+      function formatCmd(toolName, toolArgs) {
+        const shortName = toolName.split('.').pop();
+        const argStr = Object.entries(toolArgs)
+          .filter(([_, v]) => v !== undefined && v !== null && v !== '')
+          .map(([k, v]) => typeof v === 'string' ? `--${k} "${v}"` : `--${k} ${v}`)
+          .join(' ');
+        return shortName + (argStr ? ' ' + argStr : '');
+      }
+
+      let winId;
+      if (type === 'terminal') {
+        // Reuse existing terminal or create new
+        const existing = Object.entries(windows).find(([_, w]) => w.type === 'terminal');
+        if (existing) {
+          winId = existing[0];
+          focusWindow(winId);
+          // Update title to current tool
+          const titleEl = windows[winId].el.querySelector('.win-title');
+          if (titleEl) titleEl.textContent = title;
+        } else {
+          winId = initTerminalWindow(title);
+          const body = $(winId + '-body');
+          body.innerHTML = '';
+        }
+        appendTerminalCommand(winId, formatCmd(name, args));
+
+      } else if (type === 'browser') {
+        // Reuse existing browser or create new
+        const existing = Object.entries(windows).find(([_, w]) => w.type === 'browser');
+        if (existing) {
+          winId = existing[0];
+          focusWindow(winId);
+          const titleEl = windows[winId].el.querySelector('.win-title');
+          if (titleEl) titleEl.textContent = 'Searching: ' + (args.query || name);
+          const urlEl = $(winId + '-url');
+          if (urlEl) urlEl.textContent = 'duckduckgo.com/?q=' + encodeURIComponent(args.query || '');
+          const content = $(winId + '-content');
+          if (content) content.innerHTML = `<div style="color:var(--gnome-muted);text-align:center;padding:40px;">Searching...</div>`;
+        } else {
+          const url = 'duckduckgo.com/?q=' + encodeURIComponent(args.query || '');
+          winId = initBrowserWindow('Searching: ' + (args.query || name), url);
+          const content = $(winId + '-content');
+          if (content) content.innerHTML = `<div style="color:var(--gnome-muted);text-align:center;padding:40px;">Searching...</div>`;
+        }
+
+      } else if (type === 'files') {
+        const path = args.path || args.directory || 'KaiFiles';
+        // Reuse existing file manager
+        const existing = Object.entries(windows).find(([_, w]) => w.type === 'files');
+        if (existing) {
+          winId = existing[0];
+          focusWindow(winId);
+          const titleEl = windows[winId].el.querySelector('.win-title');
+          if (titleEl) titleEl.textContent = 'Files — ' + path;
+        } else {
+          winId = initFileManagerWindow('Files', path);
+        }
+
+      } else if (type === 'editor') {
+        const fname = args.path || args.filename || name;
+        const shortName = fname.split(/[/\\]/).pop() || fname;
+        // Reuse existing editor if same file, otherwise new
+        const existing = Object.entries(windows).find(([_, w]) => w.type === 'editor' && !w.data._isThinking);
+        if (existing) {
+          winId = existing[0];
+          focusWindow(winId);
+          const titleEl = windows[winId].el.querySelector('.win-title');
+          if (titleEl) titleEl.textContent = shortName;
+          const fnameEl = windows[winId].el.querySelector('.editor-filename');
+          if (fnameEl) fnameEl.textContent = shortName;
+          const editorEl = $(winId + '-editor');
+          if (editorEl) editorEl.textContent = 'Loading...';
+        } else {
+          winId = initEditorWindow(shortName);
+          const editorEl = $(winId + '-editor');
+          if (editorEl) editorEl.textContent = 'Loading...';
+        }
+      }
+
+      if (winId) activeToolWindows[name] = winId;
+      showNotification('Tool', name, 2500);
+      break;
+    }
+
+    case 'tool.end': {
+      const name = evt.data.name || '';
+      const winId = activeToolWindows[name];
+      const success = evt.data.success;
+      const duration = evt.data.duration;
+      const output = evt.data.output || '';
+      const args = evt.data.args || {};
+
+      if (winId && windows[winId]) {
+        const type = windows[winId].type;
+
+        if (type === 'terminal') {
+          if (success && output) {
+            // Render output line by line
+            for (const line of output.split('\n')) {
+              appendTerminalLine(winId, line, 'term-output');
+            }
+            appendTerminalLine(winId, `\n[done in ${duration}s]`, 'term-output');
+          } else if (!success) {
+            appendTerminalLine(winId, `[error: ${evt.data.error || 'unknown'}]`, 'term-error');
+          } else {
+            appendTerminalLine(winId, `[done in ${duration}s]`, 'term-output');
+          }
+
+        } else if (type === 'browser') {
+          const titleEl = windows[winId].el.querySelector('.win-title');
+          const contentEl = $(winId + '-content');
+          const urlEl = $(winId + '-url');
+          if (success && output) {
+            if (titleEl) titleEl.textContent = 'Results — ' + (args.query || 'search');
+            if (urlEl) urlEl.textContent = 'duckduckgo.com/?q=' + encodeURIComponent(args.query || '');
+            // Parse search results (format: "1. Title\n   Snippet\n   URL")
+            if (contentEl) {
+              const blocks = output.split(/\n\n(?=\d+\.)/);
+              let html = '';
+              for (const block of blocks) {
+                const lines = block.trim().split('\n');
+                if (!lines[0]) continue;
+                const titleLine = lines[0].replace(/^\d+\.\s*/, '');
+                const snippet = (lines[1] || '').trim();
+                const url = (lines[2] || '').trim();
+                if (titleLine && !titleLine.startsWith('---') && !titleLine.startsWith('Synthesize')) {
+                  html += `<div class="search-result">
+                    <div class="sr-title">${esc(titleLine)}</div>
+                    ${url ? `<div class="sr-url">${esc(url)}</div>` : ''}
+                    ${snippet ? `<div class="sr-snippet">${esc(snippet)}</div>` : ''}
+                  </div>`;
+                }
+              }
+              contentEl.innerHTML = html || `<div style="padding:20px;color:var(--gnome-muted)">No results</div>`;
+            }
+          } else {
+            if (titleEl) titleEl.textContent = 'Search Failed';
+            if (contentEl) contentEl.innerHTML = `<div style="padding:20px;color:#e95420">${esc(evt.data.error || 'Search failed')}</div>`;
+          }
+
+        } else if (type === 'files') {
+          const filesEl = $(winId + '-files');
+          if (success && output && filesEl) {
+            // Parse file listing — output is usually lines of filenames or tree output
+            const lines = output.split('\n').filter(l => l.trim());
+            let html = '';
+            for (const line of lines) {
+              const name = line.trim().replace(/^[│├└─\s]+/, '');
+              if (!name) continue;
+              const isDir = name.endsWith('/') || name.endsWith('\\') || !name.includes('.');
+              const icon = isDir ? '\u{1F4C1}' : '\u{1F4C4}';
+              const displayName = name.replace(/[/\\]$/, '');
+              html += `<div class="fm-file highlight">
+                <div class="fm-file-icon">${icon}</div>
+                <div class="fm-file-name">${esc(displayName)}</div>
+              </div>`;
+            }
+            filesEl.innerHTML = html || filesEl.innerHTML;
+          }
+
+        } else if (type === 'editor') {
+          const editorEl = $(winId + '-editor');
+          if (success && output && editorEl) {
+            editorEl.textContent = output;
+            editorEl.scrollTop = 0;
+          } else if (!success && editorEl) {
+            editorEl.textContent = '// Error: ' + (evt.data.error || 'unknown');
+          }
+          // Update filename in toolbar
+          const fnameEl = windows[winId].el.querySelector('.editor-filename');
+          if (fnameEl && args.path) {
+            fnameEl.textContent = args.path.split(/[/\\]/).pop() || args.path;
+          }
+        }
+      }
+
+      delete activeToolWindows[name];
+      break;
+    }
+
+    case 'think': {
+      // Show thinking in a text editor window
+      const text = evt.data.text || '';
+      const existing = Object.entries(windows).find(([_, w]) => w.type === 'editor' && w.data._isThinking);
+      let winId;
+      if (existing) {
+        winId = existing[0];
+        focusWindow(winId);
+      } else {
+        winId = initEditorWindow('Thoughts');
+        windows[winId].data._isThinking = true;
+      }
+      appendEditorText(winId, text + '\n');
+      break;
+    }
+
+    case 'status': {
+      const label = evt.data.label || '';
+      $('topbar-app-name').textContent = label;
+      break;
+    }
+
+    case 'stream.token': {
+      // Tokens go to the active editor/thinking window if any, otherwise ignored
+      // (main chat window handles display — this is just the desktop view)
+      break;
+    }
+
+    case 'stream.end': {
+      const tools = evt.data.tools_used || [];
+      const dur = evt.data.duration || 0;
+      if (tools.length) {
+        showNotification('Done', `Used ${tools.length} tool(s) in ${dur}s`, 3000);
+      }
+      $('topbar-app-name').textContent = 'Desktop';
+      break;
+    }
+
+    case 'memory.write': {
+      const entries = evt.data.entries || 0;
+      showNotification('Memory', `Saved ${entries} new knowledge entries`, 3000);
+      break;
+    }
+
+    case 'error': {
+      showNotification('Error', evt.data.message || 'Something went wrong', 5000);
+      break;
+    }
+
+    case 'ping':
+      break;  // keepalive, ignore
+
+    default:
+      if (evt.type) {
+        console.log('[computer] unhandled event:', evt.type, evt);
+      }
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 7. WEBSOCKET + REPLAY
+// ══════════════════════════════════════════════════════════════════════════════
+
+function setConnectionStatus(status) {
+  const dot   = $('conn-dot');
+  const label = $('conn-label');
+  dot.className = 'conn-dot ' + status;
+  label.textContent = status;
+}
+
+function connectWebSocket() {
+  if (!SESSION_ID) {
+    setConnectionStatus('offline');
+    showNotification('No Session', 'Open Kai\'s Computer from a chat session', 5000);
+    return;
+  }
+
+  setConnectionStatus('connecting');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setConnectionStatus('connected');
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data);
+      handleEvent(evt);
+    } catch (err) {
+      console.error('[computer] bad event:', err);
+    }
+  };
+
+  ws.onclose = () => {
+    setConnectionStatus('offline');
+    // Reconnect after 3s
+    setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = () => {
+    setConnectionStatus('offline');
+  };
+}
+
+async function loadExistingEvents() {
+  if (!SESSION_ID) return;
+  try {
+    const res = await fetch(EVENTS_URL);
+    if (!res.ok) return;
+    const events = await res.json();
+    // Replay events to reconstruct state
+    for (const evt of events) {
+      handleEvent(evt);
+    }
+  } catch (err) {
+    console.error('[computer] failed to load events:', err);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 8. INIT
+// ══════════════════════════════════════════════════════════════════════════════
+
+bootSequence();
+
+</script>
+</body>
+</html>
