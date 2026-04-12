@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+chcp 65001 >nul
 title Kai — Local AI Agent
 color 0F
 
@@ -9,9 +10,19 @@ echo  ║       Kai — Local AI Agent           ║
 echo  ╚══════════════════════════════════════╝
 echo.
 
+:: ── Resolve Python from venv or PATH ────────────────────────────────────────
+set "VENV=%~dp0.venv\Scripts"
+if exist "%VENV%\python.exe" (
+    set "PY=%VENV%\python.exe"
+    set "PYW=%VENV%\pythonw.exe"
+) else (
+    set "PY=python"
+    set "PYW=pythonw"
+)
+
 :: ── Step 1: Check Python ─────────────────────────────────────────────────────
 echo [1/5] Checking Python...
-python --version >nul 2>&1
+"%PY%" --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
     echo  [!] Python is not installed or not in PATH.
@@ -21,20 +32,20 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYVER=%%v
+for /f "tokens=2" %%v in ('"%PY%" --version 2^>^&1') do set PYVER=%%v
 echo      Python %PYVER% found.
 
 :: ── Step 2: Install Python dependencies ──────────────────────────────────────
 echo.
 echo [2/5] Checking Python packages...
-python -c "import pydantic, fastapi, uvicorn, psutil, sqlite_vec" >nul 2>&1
+"%PY%" -c "import pydantic, fastapi, uvicorn, psutil, sqlite_vec, webview" >nul 2>&1
 if %errorlevel% neq 0 (
     echo      Installing dependencies...
-    python -m pip install -r "%~dp0requirements.txt" --quiet
+    "%PY%" -m pip install -r "%~dp0requirements.txt" --quiet
     if %errorlevel% neq 0 (
         echo.
         echo  [!] Failed to install packages. Try running manually:
-        echo      python -m pip install -r requirements.txt
+        echo      %PY% -m pip install -r requirements.txt
         echo.
         pause
         exit /b 1
@@ -101,7 +112,8 @@ echo   Starting Kai...
 echo  ════════════════════════════════════════
 echo.
 cd /d "%~dp0"
-python web.py
+:: Desktop app (no console window). Falls back to web.py if pywebview missing.
+"%PYW%" app.py 2>nul || "%PY%" web.py
 pause
 exit /b 0
 

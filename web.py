@@ -28,7 +28,7 @@ except ModuleNotFoundError:
     print(f"  Python executable: {sys.executable}")
     print(f"  Fix:  {sys.executable} -m pip install uvicorn[standard]")
     sys.exit(1)
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +42,7 @@ from kai.memory import semantic as _semantic
 from kai.identity import seed_founding_entry
 from kai.tools import registry as tool_registry
 from kai import sessions as _sessions
+from kai import events as _events
 from kai import campaign as _campaign
 from kai._app_state import set_embed_fn as _set_embed_fn
 
@@ -162,8 +163,9 @@ class _AuthGuard:
     # Routes that never require auth (no cookie parsing needed)
     _PUBLIC = frozenset({
         "/login", "/users", "/users/login", "/users/register",
+        "/api/show-window",  # single-instance lock (desktop app)
     })
-    _PUBLIC_PREFIXES = ("/static/",)
+    _PUBLIC_PREFIXES = ("/static/", "/ws/", "/api/events/", "/computer")
 
     # Routes that parse the cookie but don't reject if missing
     # /dashboard/stats is NOT here — it requires auth to prevent user_id=0 data leaks.
@@ -340,6 +342,12 @@ async def index(request: Request):
 async def login_page():
     """Serve the standalone login page."""
     return HTMLResponse(content=_read_html("login.html"))
+
+
+@app.get("/computer", response_class=HTMLResponse)
+async def computer_page():
+    """Serve Kai's Computer — simulated Ubuntu desktop."""
+    return HTMLResponse(content=_read_html("computer.html"))
 
 
 _HIGHLIGHT_KEYS = {"user_name", "user_role", "location", "gaming"}
@@ -986,6 +994,50 @@ async def chat(req: ChatRequest, request: Request):
     )
 
 
+# ── Activity event endpoints ──────────────────────────────────────────────────
+
+@app.websocket("/ws/activity/{session_id}")
+async def ws_activity(ws: WebSocket, session_id: str):
+    """
+    Real-time activity stream for a session (powers Kai's Computer).
+    Events are pushed as JSON lines.
+    """
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue = asyncio.Queue()
+
+    def _on_event(event: _events.Event) -> None:
+        asyncio.run_coroutine_threadsafe(q.put(event.to_json()), loop)
+
+    _events.subscribe(session_id, _on_event)
+    try:
+        while True:
+            try:
+                payload = await asyncio.wait_for(q.get(), timeout=30)
+                await ws.send_text(payload)
+            except asyncio.TimeoutError:
+                # Send keepalive ping to detect dead connections
+                await ws.send_text('{"type":"ping"}')
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _events.unsubscribe(session_id, _on_event)
+
+
+@app.get("/api/events/{session_id}")
+async def get_events(session_id: str, since: float = 0, limit: int = 500):
+    """Fetch persisted events for replay / history."""
+    return _events.get_events(session_id, since_ts=since, limit=limit)
+
+
+@app.get("/api/events")
+async def list_event_sessions():
+    """List all session IDs that have events."""
+    return _events.get_session_ids()
+
+
 # ── Startup ────────────────────────────────────────────────────────────────────
 
 # Gate: archive thread waits for first user message to finish before running.
@@ -1047,8 +1099,27 @@ def _init() -> None:
 
     _ollama = OllamaClient()
     if not _ollama.is_alive():
-        print("[!] Ollama is not running. Start it with: ollama serve")
-        sys.exit(1)
+        print("[~] Ollama is not running — starting it...")
+        import subprocess, shutil
+        ollama_path = shutil.which("ollama")
+        if not ollama_path:
+            print("[!] Ollama is not installed or not in PATH.")
+            print("    Download it from: https://ollama.com/download")
+            sys.exit(1)
+        subprocess.Popen(
+            [ollama_path, "serve"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        # Wait for Ollama to come up (up to 15 seconds)
+        for i in range(30):
+            _time.sleep(0.5)
+            if _ollama.is_alive():
+                break
+        else:
+            print("[!] Ollama failed to start within 15 seconds.")
+            sys.exit(1)
+        print("[+] Ollama started.")
 
     # Only check chat model at startup — embed model is CPU-based now
     installed = _ollama.installed_models()
@@ -1157,6 +1228,30 @@ def _generate_self_signed_cert(cert_dir: Path) -> tuple[str, str]:
     return str(cert_path), str(key_path)
 
 
+def setup_app(host: str = "127.0.0.1", port: int = 7860,
+              scheme: str = "http") -> None:
+    """Set up middleware, mount static files, and initialise Kai.
+
+    Call once before starting uvicorn.  Extracted from main() so that
+    both the browser-based launcher and the desktop app shell can share
+    the same init path.
+    """
+    app.add_middleware(_AuthGuard)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            f"{scheme}://localhost:{port}",
+            f"{scheme}://127.0.0.1:{port}",
+        ],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
+    app.add_middleware(_SecurityHeaders)
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    _init()
+
+
 def main() -> None:
     global _tls_active
 
@@ -1192,24 +1287,8 @@ def main() -> None:
 
     scheme = "https" if _tls_active else "http"
 
-    # ── Security middleware ────────────────────────────────────────────────
-    app.add_middleware(_AuthGuard)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            f"{scheme}://localhost:{args.port}",
-            f"{scheme}://127.0.0.1:{args.port}",
-        ],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
-    )
-    app.add_middleware(_SecurityHeaders)
-
-    # Serve CSS / JS from kai/static/
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-
-    _init()
+    # ── Middleware + init ─────────────────────────────────────────────────
+    setup_app(host=args.host, port=args.port, scheme=scheme)
 
     url = f"{scheme}://localhost:{args.port}"
     print(f"[✓] Serving at  {url}")

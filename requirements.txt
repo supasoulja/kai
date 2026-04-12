@@ -3,8 +3,13 @@ sqlite-vec
 psutil
 fastapi
 uvicorn[standard]
+python-multipart
 pytest
 onnxruntime>=1.20
 tokenizers
 numpy
 huggingface_hub
+pywebview>=5.0
+pystray
+Pillow
+keyboard

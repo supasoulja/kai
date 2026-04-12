@@ -3,6 +3,7 @@ kai/memory/kai's memory/
 
 # ── Dev docs (personal context, not for public repo) ───────────────────────────
 HISTORY_AND_VISION.md
+docs/
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
