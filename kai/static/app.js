@@ -92,6 +92,16 @@ if (settingsLogoutBtn) {
   });
 }
 
+// Kai's Computer button
+const computerBtn = $('open-computer-btn');
+if (computerBtn) {
+  computerBtn.addEventListener('click', () => {
+    const session = _activeSession || '';
+    const boot = session ? 'warm' : 'cold';
+    window.open(`/computer?session=${encodeURIComponent(session)}&boot=${boot}`, 'kai-computer');
+  });
+}
+
 // ── 3. Dashboard ─────────────────────────────────────────────────────────────
 
 async function loadDashboard() {
@@ -137,62 +147,181 @@ if (dashUploadDoc) {
 }
 
 // ── 4. Kai Face (full animation system) ──────────────────────────────────────
+//
+// Three-tier expression system:
+//   1. Auto-preset from brain state (idle/thinking/working/error)
+//   2. Named shortcuts — Kai writes <face:annoyed> in her response
+//   3. Compositional override — <face eyes=smug mouth=smirk flair=sparkle>
+//
+// Part vocabulary: 8 eyes × 8 mouths × 10 flairs = 640 combinations
+// Names on top (for the model), numeric IDs underneath (for animation math)
 
-const FACES = {
-  idle:       '( ^ \u203F ^ )',
-  blink:      '( - \u203F - )',
-  waking:     '( ~ \u1D17 ~ )',
-  thinking:   '( \u00B0 ~ \u00B0 )?',
-  working:    '( > _ < ) !',
-  responding: '( \u30FB\u1D17\u30FB )',
-  done:       '( \u25D5 \u203F \u25D5 )',
-  error:      '( x _ x )',
+// ── Part Library ─────────────────────────────────────────────────────────────
+
+const EYES = {
+  neutral:     { id: 0, full: '\u00B7', compact: '\u00B7', blink: '-' },
+  bright:      { id: 1, full: '\u25D5', compact: '\u25D5', blink: '-' },
+  wide:        { id: 2, full: '\u00B0', compact: '\u00B0', blink: '-' },
+  smug:        { id: 3, full: '\u00AC', compact: '\u00AC', blink: '-' },
+  disapproval: { id: 4, full: '\u0CA0', compact: '\u0CA0', blink: '-' },
+  closed:      { id: 5, full: '-',      compact: '-',      blink: '-' },
+  dead:        { id: 6, full: 'x',      compact: 'x',      blink: '-' },
+  asymmetric:  { id: 7, full: '^',      compact: '^',      blink: '-' },
 };
 
-const COMPACT_FACES = {
-  idle:       '^\u203F^',
-  blink:      '-\u203F-',
-  waking:     '~\u1D17~',
-  thinking:   '\u00B0~\u00B0',
-  working:    '>_<',
-  responding: '\u00B7\u1D17\u00B7',
-  done:       '\u25D5\u203F\u25D5',
-  error:      'x_x',
+const MOUTHS = {
+  flat:    { id: 0, ch: '_' },
+  smile:   { id: 1, ch: '\u203F' },
+  smirk:   { id: 2, ch: '\u1D17' },
+  frown:   { id: 3, ch: '\u2054' },
+  open:    { id: 4, ch: 'o' },
+  wide:    { id: 5, ch: 'O' },
+  grimace: { id: 6, ch: '~' },
+  angry:   { id: 7, ch: '\u2038' },
 };
+
+const FLAIRS = {
+  none:     { id: 0, left: '', right: '' },
+  fist:     { id: 1, left: '', right: ' !' },
+  wave:     { id: 2, left: '', right: '\uFF89' },
+  arms_up:  { id: 3, left: '\u30FD', right: '\uFF89' },
+  sparkle:  { id: 4, left: '\u2727', right: '\u2727' },
+  sweat:    { id: 5, left: '', right: ';' },
+  breath:   { id: 6, left: '', right: '~' },
+  zzz:      { id: 7, left: '', right: 'Zz' },
+  question: { id: 8, left: '', right: '?' },
+  exclaim:  { id: 9, left: '', right: '!' },
+};
+
+// ── Composition Engine ───────────────────────────────────────────────────────
+
+function composeFace(eyeName, mouthName, flairName) {
+  const eye   = EYES[eyeName]   || EYES.neutral;
+  const mouth = MOUTHS[mouthName] || MOUTHS.flat;
+  const flair = FLAIRS[flairName] || FLAIRS.none;
+  const full    = `${flair.left}( ${eye.full} ${mouth.ch} ${eye.full} )${flair.right}`;
+  const compact = `${eye.compact}${mouth.ch}${eye.compact}`;
+  const faceId  = eye.id * 80 + mouth.id * 10 + flair.id;
+  return { full, compact, faceId };
+}
+
+// ── 15 Named Presets ─────────────────────────────────────────────────────────
+
+const FACE_PRESETS = {
+  idle:        { eyes: 'asymmetric', mouth: 'smile',   flair: 'none' },
+  thinking:    { eyes: 'wide',       mouth: 'grimace', flair: 'question' },
+  working:     { eyes: 'closed',     mouth: 'flat',    flair: 'fist' },
+  focused:     { eyes: 'neutral',    mouth: 'flat',    flair: 'none' },
+  happy:       { eyes: 'bright',     mouth: 'smile',   flair: 'none' },
+  amused:      { eyes: 'asymmetric', mouth: 'smirk',   flair: 'none' },
+  proud:       { eyes: 'bright',     mouth: 'smirk',   flair: 'sparkle' },
+  excited:     { eyes: 'bright',     mouth: 'wide',    flair: 'arms_up' },
+  annoyed:     { eyes: 'smug',       mouth: 'flat',    flair: 'none' },
+  confused:    { eyes: 'wide',       mouth: 'open',    flair: 'question' },
+  surprised:   { eyes: 'wide',       mouth: 'wide',    flair: 'exclaim' },
+  sympathetic: { eyes: 'neutral',    mouth: 'frown',   flair: 'none' },
+  tired:       { eyes: 'closed',     mouth: 'grimace', flair: 'breath' },
+  sleepy:      { eyes: 'closed',     mouth: 'flat',    flair: 'zzz' },
+  error:       { eyes: 'dead',       mouth: 'flat',    flair: 'none' },
+};
+
+// State-driven presets (brain states that don't come from <face> tags)
+const STATE_PRESETS = {
+  idle:       'idle',
+  blink:      null,       // special — handled by blink animation
+  waking:     'thinking',
+  thinking:   'thinking',
+  working:    'working',
+  responding: 'happy',
+  done:       'proud',
+  error:      'error',
+};
+
+function getFace(presetName) {
+  const p = FACE_PRESETS[presetName] || FACE_PRESETS.idle;
+  return composeFace(p.eyes, p.mouth, p.flair);
+}
+
+// Build blink frame for any preset (same mouth+flair, eyes closed)
+function getBlinkFrame(presetName) {
+  const p = FACE_PRESETS[presetName] || FACE_PRESETS.idle;
+  return composeFace('closed', p.mouth, p.flair);
+}
+
+// Legacy compat — FACES and COMPACT_FACES as computed objects
+const FACES = {};
+const COMPACT_FACES = {};
+for (const name of Object.keys(FACE_PRESETS)) {
+  const f = getFace(name);
+  FACES[name] = f.full;
+  COMPACT_FACES[name] = f.compact;
+}
+// Extra states that map to presets
+FACES.blink      = composeFace('closed', 'smile', 'none').full;
+COMPACT_FACES.blink = composeFace('closed', 'smile', 'none').compact;
+FACES.waking     = FACES.thinking;
+COMPACT_FACES.waking = COMPACT_FACES.thinking;
+FACES.responding = FACES.happy;
+COMPACT_FACES.responding = COMPACT_FACES.happy;
+FACES.done       = FACES.proud;
+COMPACT_FACES.done = COMPACT_FACES.proud;
+
+// ── Face Display ─────────────────────────────────────────────────────────────
 
 const faceEl = $('kai-face');
 let _blinkTimer   = null;
 let _doneTimer    = null;
 let currentAvatar = null;   // avatar element of the active response bubble
+let _currentPreset = 'idle';
 
 function setFace(state) {
   if (!faceEl) return;
-  faceEl.style.opacity = '0';
-  setTimeout(() => {
-    faceEl.textContent   = FACES[state] ?? FACES.idle;
-    faceEl.style.opacity = '1';
-  }, 120);
-  // Mirror compact version into the active bubble avatar
-  if (currentAvatar) {
-    currentAvatar.style.opacity = '0';
-    setTimeout(() => {
-      if (currentAvatar) {
-        currentAvatar.textContent   = COMPACT_FACES[state] ?? COMPACT_FACES.idle;
-        currentAvatar.style.opacity = '1';
-      }
-    }, 120);
+  const preset = STATE_PRESETS[state] || state;
+  if (FACE_PRESETS[preset]) {
+    _currentPreset = preset;
   }
+  const targetFull    = FACES[state] ?? FACES[preset] ?? FACES.idle;
+  const targetCompact = COMPACT_FACES[state] ?? COMPACT_FACES[preset] ?? COMPACT_FACES.idle;
+
+  // 3-stage blink transition: current → blink → target
+  const blinkFull    = getBlinkFrame(_currentPreset).full;
+  const blinkCompact = getBlinkFrame(_currentPreset).compact;
+
+  faceEl.textContent = blinkFull;
+  if (currentAvatar) currentAvatar.textContent = blinkCompact;
+
+  setTimeout(() => {
+    if (faceEl) faceEl.textContent = targetFull;
+    if (currentAvatar) currentAvatar.textContent = targetCompact;
+  }, 150);
+}
+
+function setComposedFace(eyeName, mouthName, flairName) {
+  if (!faceEl) return;
+  const face = composeFace(eyeName, mouthName, flairName);
+
+  // Blink transition
+  const blinkFace = composeFace('closed', mouthName, flairName);
+  faceEl.textContent = blinkFace.full;
+  if (currentAvatar) currentAvatar.textContent = blinkFace.compact;
+
+  setTimeout(() => {
+    if (faceEl) faceEl.textContent = face.full;
+    if (currentAvatar) currentAvatar.textContent = face.compact;
+  }, 150);
 }
 
 function startIdleBlink() {
   stopIdleBlink();
   function scheduleBlink() {
     _blinkTimer = setTimeout(() => {
-      if (faceEl && faceEl.textContent === FACES.idle) {
-        faceEl.textContent = FACES.blink;
+      const idleFull = FACES[_currentPreset] || FACES.idle;
+      if (faceEl && faceEl.textContent === idleFull) {
+        const blink = getBlinkFrame(_currentPreset);
+        faceEl.textContent = blink.full;
         setTimeout(() => {
-          if (faceEl && faceEl.textContent === FACES.blink) {
-            faceEl.textContent = FACES.idle;
+          if (faceEl && faceEl.textContent === blink.full) {
+            faceEl.textContent = idleFull;
           }
           scheduleBlink();
         }, 120);
@@ -208,29 +337,61 @@ function stopIdleBlink() {
   if (_blinkTimer) { clearTimeout(_blinkTimer); _blinkTimer = null; }
 }
 
+// ── Face Tag Parser ──────────────────────────────────────────────────────────
+// Strips <face:...> tags from Kai's response and applies them.
+// Two forms:
+//   <face:annoyed>       → named shortcut
+//   <face eyes=smug mouth=smirk flair=sparkle> → compositional
+
+const FACE_TAG_RE = /<face(?::(\w+)|(\s+[^>]+))>/g;
+
+function parseFaceTags(text) {
+  let cleaned = text;
+  let match;
+  FACE_TAG_RE.lastIndex = 0;
+  while ((match = FACE_TAG_RE.exec(text)) !== null) {
+    if (match[1]) {
+      // Named shortcut: <face:annoyed>
+      const name = match[1];
+      if (FACE_PRESETS[name]) {
+        setFace(name);
+      }
+    } else if (match[2]) {
+      // Compositional: <face eyes=smug mouth=smirk flair=sparkle>
+      const attrs = match[2];
+      const eyes  = (attrs.match(/eyes=(\w+)/) || [])[1] || 'neutral';
+      const mouth = (attrs.match(/mouth=(\w+)/) || [])[1] || 'flat';
+      const flair = (attrs.match(/flair=(\w+)/) || [])[1] || 'none';
+      setComposedFace(eyes, mouth, flair);
+    }
+    cleaned = cleaned.replace(match[0], '');
+  }
+  return cleaned;
+}
+
 // ── Waking up animation ──────────────────────────────────────────────────────
 
 let _wakingActive = false;
 
 const WAKING_FRAMES = [
-  ['( \u2500 _ \u2500 )', '\u2500_\u2500'],   // heavy-lidded
-  ['( \u2500 _ \u2500 )', '\u2500_\u2500'],   // hold
-  ['( - _ - )',           '-_-'],              // eyes shutting
-  ['( > _ < )',           '>_<'],              // rubbing
-  ['( > ~ < )',           '>~<'],              // really rubbing
-  ['( > _ < )',           '>_<'],              // rubbing
-  ['( \u00B0 _ \u00B0 )', '\u00B0_\u00B0'],   // eyes snap open
-  ['( \u00B0 ~ \u00B0 )', '\u00B0~\u00B0'],   // blinking it off
-  ['( ~ \u1D17 ~ )',      '~\u1D17~'],         // almost there
+  { eyes: 'closed',  mouth: 'flat',    flair: 'none' },     // heavy-lidded
+  { eyes: 'closed',  mouth: 'flat',    flair: 'none' },     // hold
+  { eyes: 'closed',  mouth: 'flat',    flair: 'breath' },   // sigh
+  { eyes: 'closed',  mouth: 'grimace', flair: 'none' },     // rubbing
+  { eyes: 'closed',  mouth: 'grimace', flair: 'none' },     // still rubbing
+  { eyes: 'wide',    mouth: 'flat',    flair: 'none' },     // eyes snap open
+  { eyes: 'wide',    mouth: 'grimace', flair: 'none' },     // blinking it off
+  { eyes: 'neutral', mouth: 'smirk',   flair: 'none' },     // almost there
 ];
 
 async function playWakingAnimation() {
   _wakingActive = true;
   while (_wakingActive) {
-    for (const [full, compact] of WAKING_FRAMES) {
+    for (const frame of WAKING_FRAMES) {
       if (!_wakingActive) break;
-      if (faceEl) { faceEl.style.opacity = '1'; faceEl.textContent = full; }
-      if (currentAvatar) { currentAvatar.style.opacity = '1'; currentAvatar.textContent = compact; }
+      const f = composeFace(frame.eyes, frame.mouth, frame.flair);
+      if (faceEl) { faceEl.textContent = f.full; }
+      if (currentAvatar) { currentAvatar.textContent = f.compact; }
       await sleep(260);
     }
   }
@@ -248,6 +409,8 @@ function faceOnStatus(statusText) {
     setFace('thinking');
   } else if (t.includes('responding')) {
     setFace('responding');
+  } else if (t.includes('analyzing')) {
+    setFace('focused');
   } else {
     setFace('working');
   }
@@ -260,6 +423,7 @@ function faceOnDone(hadError) {
   _doneTimer = setTimeout(() => {
     currentAvatar = null;
     setFace('idle');
+    _currentPreset = 'idle';
     startIdleBlink();
   }, 2200);
 }
@@ -464,9 +628,13 @@ async function sendMessage() {
           totalTokens++;
           const tokEl = $('s-tokens');
           if (tokEl) tokEl.textContent = totalTokens.toLocaleString();
-          appendText(content, ev.text);
+          // Parse and strip face tags from token text before display
+          const cleanToken = parseFaceTags(ev.text);
+          if (cleanToken) appendText(content, cleanToken);
 
         } else if (ev.type === 'done') {
+          // Strip face tags from final text before rendering
+          fullText = fullText.replace(FACE_TAG_RE, '');
           if (fullText) renderMarkdown(content, fullText);
           else if (!hasTokens) hideStatus(si);
           // Record think time
