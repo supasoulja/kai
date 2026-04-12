@@ -15,11 +15,28 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 
 ---
 
+## Features
+
+- **Native desktop app** — pywebview (Edge WebView2), system tray, global hotkey (Ctrl+Shift+K), single-instance lock, startup-on-login toggle
+- **Kai's Computer** — a simulated Ubuntu/GNOME desktop that visualizes Kai's behind-the-scenes activity in real time. Every tool call becomes a window: web searches open a browser, file ops open a file manager, system commands run in a terminal. Pure downstream projection — Kai never reads the event log.
+- **Kaomoji face system** — 640-combination ASCII face (8 eyes x 8 mouths x 10 flairs) with 15 named presets, 3-stage blink transitions, and idle animation. Kai controls her expression via `<face:annoyed>` tags in her response stream.
+- **Event bus** — SQLite-backed event log with real-time WebSocket streaming. Every tool call, reasoning chunk, and status change is recorded and broadcastable.
+- **40 tools** — system diagnostics, file management, web search, notes, network tools, crash analysis, and D&D campaign management
+- **4-tier memory** — semantic facts, episodic summaries, procedural rules, session cache. All SQLite, all local, all per-user isolated.
+- **Dual embedding** — fast CPU-only ONNX (384-dim, ~5 ms) for live search, optional GPU re-embed at shutdown (2560-dim) for higher quality
+- **Document RAG** — upload PDFs and text files, chunked and embedded for vector search
+- **Multi-user auth** — name + PIN + machine-bound certificate. Session cookies, per-user memory isolation.
+- **ReAct tool loop** — non-streaming tool rounds with error escalation, JSON repair for broken tool calls, fact extraction and grounding
+- **Streaming responses** — SSE streaming with markdown rendering, thinking block display, and activity logging
+
+---
+
 ## Requirements
 
-- Python 3.11+
-- [Ollama](https://ollama.com) installed and running
+- Python 3.12+
+- [Ollama](https://ollama.com) installed (Kai auto-starts it if not running)
 - AMD or NVIDIA GPU recommended (CPU works, just slower)
+- 8 GB VRAM minimum
 
 ---
 
@@ -27,33 +44,80 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 
 ```bash
 # 1. Clone the repo
-git clone <https://github.com/supasoulja/newb_agent>
+git clone https://github.com/supasoulja/newb_agent
 cd newb_agent
 
-# 2. Install dependencies
+# 2. Create a virtual environment
+python -m venv .venv
+.venv/Scripts/activate    # Windows
+# source .venv/bin/activate  # Linux/Mac
+
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 3. Pull required models (only the chat model is needed at runtime)
-ollama pull qwen3.5:9b            # primary model — chat, tools, summarization (~6.3 GB)
+# 4. Pull required models
+ollama pull qwen3.5:9b            # primary model (~6.3 GB)
 
-# Optional: reasoning model for heavy tasks
-ollama pull qwen3:8b              # :model heavy in CLI (~6.0 GB, thinking ON)
+# Optional:
+ollama pull qwen3:8b              # reasoning model (~6.0 GB)
+ollama pull qwen3-embedding:4b    # HQ embedding for shutdown re-embed (~2.5 GB)
 
-# Optional: HQ embedding model (runs automatically at shutdown if available)
-ollama pull qwen3-embedding:4b    # high-quality re-embed at exit (~2.5 GB)
-
-# 4. Run (web UI)
-python web.py
-
-# Or run as CLI
-python cli.py
+# 5. Run
+python app.py     # desktop app (recommended)
+python web.py     # browser-based web UI
+python cli.py     # terminal REPL
 ```
 
-The web UI opens automatically at `http://localhost:7860`.
+Or on Windows, double-click `start.bat` — it auto-detects the venv.
 
-First run creates a machine certificate and prompts you to register an account (name + PIN).
+First run downloads a small (~25 MB) ONNX embedding model and prompts you to register an account.
 
-The first launch also downloads a small (~25 MB) ONNX embedding model from HuggingFace — this is cached at `~/.cache/kai/` and reused on subsequent runs.
+---
+
+## Running Modes
+
+| Mode | Command | What you get |
+|------|---------|-------------|
+| **Desktop app** | `python app.py` | Native window, system tray, hotkey, close-to-tray dialog |
+| **Web UI** | `python web.py` | Browser at `http://localhost:7860`, same full UI |
+| **CLI** | `python cli.py` | Terminal REPL with `:commands` |
+
+---
+
+## Kai's Computer
+
+A simulated Ubuntu/GNOME desktop that shows what Kai is doing behind the scenes.
+
+**How it works:**
+- Click the **Computer** button in the top bar of the main chat UI
+- A new window opens with a boot sequence (BIOS → splash → login → desktop)
+- Every tool Kai uses spawns a corresponding window on the desktop:
+  - `search.web` → browser window with search results
+  - `system.*`, `pc.*`, `network.*` → terminal window with command output
+  - `files.*` → file manager or text editor
+  - `<think>` reasoning → text editor showing thought process
+- Window manager supports drag, resize, minimize, maximize, close
+- Top bar shows clock, connection status, and current activity
+- Dock shows which window types are active
+
+**Architecture:** The event bus (`kai/events.py`) records every tool call, thinking chunk, and status change to SQLite. Kai's Computer connects via WebSocket and renders events as desktop windows. This is a pure downstream projection — Kai's brain never reads the event log and behaves identically whether the desktop is open or not.
+
+---
+
+## Face System
+
+Kai has a visible ASCII face in the chat window that reflects her emotional state.
+
+**Part library:** 8 eyes x 8 mouths x 10 flairs = 640 unique combinations.
+
+**15 named presets:** idle, thinking, working, focused, happy, amused, proud, excited, annoyed, confused, surprised, sympathetic, tired, sleepy, error.
+
+**Three-tier system:**
+1. **Auto-preset** — brain state drives idle/thinking/working automatically
+2. **Named shortcuts** — Kai writes `<face:annoyed>` in her response (tag stripped before display)
+3. **Compositional** — `<face eyes=smug mouth=smirk flair=sparkle>` for custom expressions
+
+All face changes use a 3-stage blink transition (current → eyes-closed → new face). Idle blinking runs every 3-7 seconds.
 
 ---
 
@@ -63,125 +127,31 @@ Sized for 8 GB VRAM. Ollama swaps models so only one is loaded at a time.
 
 | Model | Role | VRAM |
 |-------|------|------|
-| `qwen3.5:9b` | Chat, tools, summarization | ~6.3 GB (Gated DeltaNet = tiny KV cache) |
-| `qwen3:8b` | Reasoning / heavy tasks (`:model heavy`) | ~6.0 GB |
-| `Xenova/bge-small-en-v1.5` | Live embedding (CPU, ONNX) | 0 — runs on CPU |
+| `qwen3.5:9b` | Chat, tools, summarization | ~6.3 GB |
+| `qwen3:8b` | Reasoning / heavy tasks | ~6.0 GB |
+| `Xenova/bge-small-en-v1.5` | Live embedding (CPU, ONNX) | 0 — CPU only |
 | `qwen3-embedding:4b` | HQ re-embed at shutdown | ~2.5 GB (optional) |
-
-**Dual embedding strategy:**
-
-- **Live ops** use a fast 33M-parameter ONNX model on CPU (384-dim vectors, ~5 ms per query). Zero VRAM. No model swapping. No latency spikes.
-- **At shutdown**, when the chat model is unloaded, Kai optionally re-embeds everything with the heavy `qwen3-embedding:4b` model (2560-dim vectors) into shadow tables for future use.
 
 Set `OLLAMA_KV_CACHE_TYPE=q8_0` in your environment to halve KV-cache VRAM usage.
 
 ---
 
-## AMD GPU Note
-
-If Ollama is running on CPU instead of GPU, the context window may be too large.
-The config sets `CONTEXT_WINDOW = 8192` to fit in 8 GB VRAM. Verify with `ollama ps`:
-
-```
-NAME           SIZE    PROCESSOR    CONTEXT
-qwen3.5:9b    6.3 GB  100% GPU     8192
-```
-
-If it still shows CPU, verify your ROCm or AMDGPU-PRO drivers are installed.
-
----
-
-## Web UI
-
-```
-python web.py [--port 8080] [--no-browser]
-```
-
-Multi-user web interface with:
-- **Login/register** — name + PIN + machine-bound certificate (no cloud auth)
-- **Dashboard** — memory stats, recent sessions, quick actions
-- **Chat** — streamed responses with status indicator, markdown rendering, animated ASCII face
-- **Settings** — response mode, reasoning toggle, memory browser, document upload, DM mode
-
-Each user gets isolated memory, sessions, and campaigns.
-
-> **Note:** DM mode is a work in progress. The idea is to provide an AI-hosted D&D experience for you and your friends, with campaign management, NPCs, quests, and event logs, but this functionality is not finished yet.
-
----
-
-## CLI
-
-```
-python cli.py [--debug] [--model heavy]
-```
-
-| Command | What it does |
-|---------|-------------|
-| `:memory` | Show all memory — facts, rules, episodic entries |
-| `:facts` | Show stored semantic facts |
-| `:forget <key>` | Delete a semantic fact |
-| `:rules` | Show behavioral rules |
-| `:history` | Show last 10 episodic entries |
-| `:trace` | Show last 10 turn traces with timing |
-| `:tools` | List registered tools |
-| `:vector` | Show vector table stats (episodic + RAG embeddings) |
-| `:model heavy` | Switch to qwen3:8b (thinking ON) |
-| `:model fast` | Switch back to qwen3.5:9b |
-| `:model <name>` | Switch to a user-added model (see `:models`) |
-| `:models` | List all configured models |
-| `:debug` | Toggle debug output |
-| `exit` | Quit |
-
----
-
 ## Tools
 
-Kai picks the right tool automatically. You never have to ask her to use one.
+Kai picks the right tool automatically. 40 tools across 10 namespaces:
 
-| Tool | What it does |
-|------|-------------|
-| `time.now` | Current date and time |
-| `weather.current` | Current weather (DuckDuckGo, no API key) |
-| `search.web` | Web search (DuckDuckGo) |
-| `system.info` | CPU, RAM, disk usage snapshot |
-| `system.temps` | CPU and GPU temperatures |
-| `system.crashes` | Recent Windows crash/error events |
-| `system.gpu_crashes` | GPU crash events from Windows event log |
-| `system.game_crashes` | Game crash events from Windows event log |
-| `system.create_restore_point` | Create a Windows restore point before changes |
-| `system.clear_temp_files` | Delete temp files |
-| `system.disable_startup_program` | Disable a startup entry |
-| `system.run_disk_cleanup` | Run Windows Disk Cleanup |
-| `pc.startup_programs` | List startup programs |
-| `pc.event_logs` | Scan Windows event logs |
-| `pc.network_info` | IP, adapters, connection status |
-| `pc.windows_updates` | Check for pending Windows updates |
-| `pc.deep_scan` | Full system diagnostic (CPU, GPU, disk, crashes, startup, network) |
-| `files.disk_usage` | Per-drive usage |
-| `files.find_large` | Find largest files/folders |
-| `files.find_old` | Find files not accessed recently |
-| `files.recent` | Files modified in the last N days |
-| `files.read` | Read the contents of a file |
-| `files.list` | List files in a directory |
-| `files.write` | Create or overwrite a file in the workspace |
-| `files.append` | Append text to a file |
-| `files.edit` | Edit a specific section of a file |
-| `network.ping` | Ping a host |
-| `network.traceroute` | Trace route to a host |
-| `network.full_diagnostic` | Full network diagnostic |
-| `notes.save` | Save a note |
-| `notes.search` | Search saved notes |
-| `notes.list` | List recent notes |
-| `workspace.git_clone` | Clone an allowed git repository |
-| `workspace.git_pull` | Update a cloned repository |
-| `workspace.git_list_allowed` | List repos Kai is allowed to clone |
-| `campaign.npc_save` | Save an NPC to campaign memory (DM mode) |
-| `campaign.event_log` | Log a campaign event (DM mode) |
-| `campaign.quest_update` | Update a quest (DM mode) |
-| `campaign.recall` | Search campaign memory (DM mode) |
-| `campaign.status` | Get active campaign status (DM mode) |
-
-> **Note:** These campaign tools are included in the repo, but DM mode is not completed. The goal is to let Kai host D&D for you and your friends, yet the feature is still under development.
+| Namespace | Tools | Purpose |
+|-----------|-------|---------|
+| `system.*` | info, temps, crashes, gpu_crashes, game_crashes, create_restore_point, clear_temp_files, disable_startup_program, run_disk_cleanup | System diagnostics and maintenance |
+| `pc.*` | startup_programs, event_logs, network_info, windows_updates, deep_scan | Hardware and OS inspection |
+| `files.*` | disk_usage, find_large, find_old, recent, read, list, write, append, edit | File system operations |
+| `network.*` | ping, traceroute, full_diagnostic | Network diagnostics |
+| `search.*` | web | DuckDuckGo web search |
+| `workspace.*` | git_clone, git_pull, git_list_allowed | Git repository management |
+| `notes.*` | save, search, list | Personal note taking |
+| `weather.*` | current | Weather via DuckDuckGo |
+| `time.*` | now | Current date and time |
+| `campaign.*` | npc_save, event_log, quest_update, recall, status | D&D campaign management (WIP) |
 
 ---
 
@@ -191,66 +161,43 @@ Four tiers — all SQLite, all local:
 
 | Tier | What it stores | Persists? |
 |------|---------------|-----------|
-| **Semantic** | Stable facts: user name, preferences, hardware model | Yes — forever |
+| **Semantic** | Stable facts: user name, preferences, hardware | Yes — forever |
 | **Episodic** | Session summaries (compressed from raw turns) | Yes — across sessions |
 | **Procedural** | Behavioral rules (tone, response style) | Yes — set at startup |
 | **Session** | Runtime stats: CPU%, temps, disk% | No — current session only |
 
-**How it works:**
-- Raw turns are staged in episodic memory temporarily (never injected into context)
-- When active history exceeds ~3 000 tokens, the oldest turns are compressed into a single summary message that stays in the conversation — keeping the thread intact without blowing the token budget
-- The compressed content is archived to the episodic DB; raw turns are then deleted
-- Archives are only retrieved when semantically relevant to the current query — not read on every turn
-- On "New Chat", the current session is compressed and archived before clearing
-- Volatile stats (CPU%, temps) never touch the DB; they live in the session cache only
-- On startup, any stale volatile facts from old sessions are automatically purged
-- **Per-user isolation** — every memory table is scoped by `user_id`; users never see each other's data
-
-**Embedding:**
-- Live vector search uses CPU-only ONNX embedding (384-dim, ~5 ms per query, zero VRAM)
-- At shutdown, all entries are re-embedded with `qwen3-embedding:4b` (2560-dim) into shadow HQ tables
-- The ONNX model (`Xenova/bge-small-en-v1.5`) is downloaded automatically on first run (~25 MB)
-
-**Document RAG:**
-- Upload PDFs and text files via the web UI
-- Documents are chunked and embedded for vector search
-- Relevant chunks are auto-injected into context when the query matches
-- Owner-only delete; shared documents visible to all users
+- History auto-compresses when it exceeds ~3k tokens
+- Archives retrieved only when semantically relevant — not injected every turn
+- Per-user isolation — users never see each other's data
 
 ---
 
 ## Authentication
 
-Kai uses a three-factor local auth system:
+Three-factor local auth:
 
 1. **Name** — identifies the account (case-insensitive)
-2. **PIN** — 4+ digits, stored only as a SHA-256 hash
-3. **Machine certificate** — a 30-byte random key generated once per installation (`kai/device.py`). Its hash is stored per user at registration. A copied database is useless on another machine.
-
-Session cookies (httpOnly, strict SameSite) keep you logged in for 7 days.
+2. **PIN** — 4+ digits, stored as SHA-256 hash
+3. **Machine certificate** — 30-byte random key generated once per installation. A copied database is useless on another machine.
 
 ---
 
-## Adding Models
+## CLI Commands
 
-Add custom models without touching code. In the CLI:
-
-```
-:models          # list all configured models
-:model <name>    # switch to a model
-```
-
-Or edit `kai/models.py` to register new Ollama models with optional thinking mode.
-
----
-
-## Customizing Kai
-
-Edit `kai/persona.md` — no code changes needed. The file controls:
-- What Kai is and how she thinks
-- Her domain (what she owns and monitors)
-- Voice, tone, and communication style
-- Rules for memory, tools, and system changes
+| Command | What it does |
+|---------|-------------|
+| `:memory` | Show all memory |
+| `:facts` | Show stored semantic facts |
+| `:forget <key>` | Delete a semantic fact |
+| `:rules` | Show behavioral rules |
+| `:history` | Show last 10 episodic entries |
+| `:trace` | Show last 10 turn traces |
+| `:tools` | List registered tools |
+| `:model heavy` | Switch to reasoning model |
+| `:model fast` | Switch back to chat model |
+| `:models` | List all configured models |
+| `:debug` | Toggle debug output |
+| `exit` | Quit |
 
 ---
 
@@ -258,74 +205,87 @@ Edit `kai/persona.md` — no code changes needed. The file controls:
 
 ```
 newb_agent/
-├── web.py                    <- FastAPI server + SSE streaming + multi-user auth
-├── cli.py                    <- terminal REPL entry point
+├── app.py                    <- native desktop app (pywebview + pystray)
+├── web.py                    <- FastAPI server + SSE streaming + WebSocket
+├── cli.py                    <- terminal REPL
+├── start.bat                 <- Windows launcher (auto-detects venv)
 ├── requirements.txt
 ├── kai/
 │   ├── persona.md            <- edit this to change behavior
-│   ├── brain.py              <- Ollama HTTP client + ReAct tool-call loop
-│   ├── identity.py           <- builds system prompt from persona.md
-│   ├── config.py             <- all settings (models, paths, thresholds)
+│   ├── brain.py              <- Ollama client + ReAct loop + event emissions
+│   ├── events.py             <- event bus (SQLite + pub/sub + WebSocket)
+│   ├── config.py             <- all settings
+│   ├── identity.py           <- system prompt builder
 │   ├── embed.py              <- CPU embedding (ONNX) + shutdown HQ re-embed
-│   ├── models.py             <- model registry (add custom models here)
-│   ├── schema.py             <- shared data types
-│   ├── trace.py              <- turn timing and observability
-│   ├── sessions.py           <- persist and browse conversation history
-│   ├── campaign.py           <- D&D campaign data (DM mode)
-│   ├── db.py                 <- database schema + migrations
-│   ├── users.py              <- user registration, login, machine-bound auth
+│   ├── models.py             <- model registry
+│   ├── sessions.py           <- conversation history persistence
+│   ├── users.py              <- auth + machine-bound certificates
 │   ├── device.py             <- machine certificate generation
-│   ├── upgrade.py            <- version change detection
-│   ├── _app_state.py         <- thread-local user_id + shared embed function
 │   ├── memory/
-│   │   ├── manager.py        <- single interface over all memory tiers
+│   │   ├── manager.py        <- unified interface over all memory tiers
 │   │   ├── semantic.py       <- long-term key-value facts
 │   │   ├── procedural.py     <- behavioral rules
 │   │   ├── episodic.py       <- session summaries + vector search
-│   │   ├── documents.py      <- document RAG (upload, chunk, search)
-│   │   ├── extractor.py      <- auto-extract facts from conversation
-│   │   ├── context.py        <- assembles the system prompt context block
+│   │   ├── documents.py      <- document RAG
+│   │   ├── context.py        <- system prompt context assembly
 │   │   └── router.py         <- memory domain routing via embeddings
 │   ├── tools/
-│   │   ├── registry.py       <- tool router + Ollama schema declarations
+│   │   ├── registry.py       <- tool router + schema declarations
 │   │   ├── system_info.py    <- CPU, RAM, disk
 │   │   ├── temps.py          <- GPU/CPU temperatures
 │   │   ├── pc_tools.py       <- startup programs, event logs, deep scan
-│   │   ├── system_ops.py     <- restore points, cleanup, disk cleanup
-│   │   ├── file_tools.py     <- large/old/recent file search + read/list
-│   │   ├── workspace_tools.py<- file write/append/edit + git clone/pull
+│   │   ├── system_ops.py     <- restore points, cleanup
+│   │   ├── file_tools.py     <- file search + read/write
+│   │   ├── workspace_tools.py<- git clone/pull + file edit
 │   │   ├── network.py        <- ping, traceroute, diagnostics
 │   │   ├── crash_logs.py     <- Windows error event parsing
-│   │   ├── campaign_tools.py <- NPC/event/quest tools for DM mode
 │   │   ├── search.py         <- DuckDuckGo web search
-│   │   ├── weather.py        <- weather via DuckDuckGo
+│   │   ├── weather.py        <- weather
 │   │   ├── notes.py          <- note save/search
-│   │   ├── rag.py            <- document upload/search/delete tools
-│   │   ├── memory_tools.py   <- episodic search + session recall tools
-│   │   └── time_tool.py      <- current datetime
+│   │   └── ...
 │   └── static/
+│       ├── app.html          <- main chat UI (Tailwind + Material Design)
+│       ├── app.js            <- chat streaming, face system, all UI logic
+│       ├── computer.html     <- Kai's Computer (simulated GNOME desktop)
 │       ├── login.html        <- login/register page
-│       ├── app.html          <- main app (Tailwind + Material Design)
-│       ├── style.css         <- CSS for dynamically generated elements
-│       └── app.js            <- tab switching, SSE streaming, all UI logic
+│       └── style.css         <- shared styles
 └── tests/
     ├── test_memory.py
     ├── test_brain.py
     ├── test_tools.py
-    └── test_integration.py   <- requires Ollama running
+    └── test_integration.py
 ```
 
 ---
 
-## Running Tests
+## Known Issues
 
-```bash
-# Unit tests -- no Ollama needed
-python -m pytest tests/test_memory.py tests/test_brain.py tests/test_tools.py -v
+- **Desktop shortcut may not launch correctly** — `pythonw.exe` swallows errors silently. Use `python app.py` from the terminal to debug. May need to kill stale Python processes on port 7860 first.
+- **Session end/clear buttons not responding** — the New Chat / clear session buttons in the sidebar don't fire their click handlers. Under investigation.
+- **Kai's Computer windows don't populate on first load** — the WebSocket connection requires an active session ID passed via URL parameter. Opening Kai's Computer before starting a chat session shows an empty desktop.
+- **Model slow on large persona context** — the face system instructions in `persona.md` add to the system prompt. On 8 GB VRAM, this can add 1-2 seconds to first response. Keep persona additions minimal.
+- **DM mode incomplete** — campaign tools exist but the full D&D hosting experience is still under development.
 
-# Integration tests -- requires Ollama + models
-python -m pytest tests/test_integration.py -v -s
-```
+---
+
+## Build Plan
+
+Kai is under active development. Here's the roadmap:
+
+### Completed
+- **Phase 1 — App Shell:** Native desktop app with pywebview, system tray, single-instance lock, global hotkey, close-to-tray dialog, startup shortcut management
+- **Phase 2a — Event Bus:** SQLite-backed event log with real-time WebSocket streaming, wired into brain.py at all tool/thinking/streaming hook points
+- **Phase 2b — Kai's Computer:** Simulated Ubuntu desktop with 4 window types, boot sequence, window manager, event-to-window mapping with real tool output
+- **Phase 2c — Face System:** 640-combination kaomoji face with part library, 15 presets, composition engine, face tag parser, blink transitions
+
+### In Progress
+- **Phase 3 — Data Collection:** Use Kai daily for 1-2 weeks to collect event bus data. This data informs the tool audit and provides training data for fine-tuning.
+
+### Planned
+- **Phase 4 — Tool Audit & Distillation:** Analyze event data to identify which tools are used, which overlap, and which can be merged. Goal: trim 40 tools down to ~25 high-quality tools.
+- **Phase 5 — Model System Overhaul:** Merge chat and reasoning into one model. Dynamic embedding model selection by VRAM (0.6b/4b/8b). Structured JSON output for tool calls to replace regex parsing.
+- **Phase 6 — Fine-Tuning:** QLoRA fine-tune of qwen3.5:9b using real conversation data, tool call patterns, face expressions, and structured output. Training via unsloth, deployed as a custom Ollama model.
+- **Phase 7 — Fun Features:** Backlog of quality-of-life improvements and experimental features.
 
 ---
 
@@ -334,37 +294,26 @@ python -m pytest tests/test_integration.py -v -s
 All settings are in `kai/config.py`:
 
 ```python
-CHAT_MODEL            = "qwen3.5:9b"              # chat + tools + summarization
-REASONING_MODEL       = "qwen3:8b"                # heavy tasks (:model heavy)
-SUMMARY_MODEL         = "qwen3.5:9b"              # reuses chat model
-
-# CPU embedding — live ops (no VRAM, no Ollama)
-FAST_EMBED_MODEL      = "Xenova/bge-small-en-v1.5" # 33M params, ONNX quantized
-FAST_EMBED_DIM        = 384                         # vector dimensions
-
-# GPU embedding — shutdown re-embed to shadow tables
-HQ_EMBED_MODEL        = "qwen3-embedding:4b"       # 2560-dim, MTEB top-tier
-HQ_EMBED_DIM          = 2560
-
-CONTEXT_WINDOW        = 8192                       # tokens passed to Ollama
-HISTORY_CHAR_LIMIT    = 12000                      # compress history when exceeded (~3k tokens)
-HISTORY_COMPRESS_KEEP = 4                          # keep last N exchanges verbatim
-EPISODIC_TOP_K        = 5                          # archive entries injected per prompt
+CHAT_MODEL       = "qwen3.5:9b"               # chat + tools + summarization
+REASONING_MODEL  = "qwen3:8b"                  # heavy tasks
+CONTEXT_WINDOW   = 8192                        # tokens passed to Ollama
+FAST_EMBED_MODEL = "Xenova/bge-small-en-v1.5"  # CPU embedding (ONNX)
 ```
 
 ---
 
-## Dependencies
+## Running Tests
 
+```bash
+# Unit tests — no Ollama needed
+python -m pytest tests/test_memory.py tests/test_brain.py tests/test_tools.py -v
+
+# Integration tests — requires Ollama + models
+python -m pytest tests/test_integration.py -v -s
 ```
-pydantic>=2.0       # data validation
-sqlite-vec          # vector search in SQLite
-psutil              # system monitoring
-fastapi             # web server
-uvicorn[standard]   # ASGI runner
-pytest              # testing
-onnxruntime>=1.20   # CPU embedding inference
-tokenizers          # fast tokenization (Rust-backed)
-numpy               # array operations
-huggingface_hub     # model download + caching
-```
+
+---
+
+## License
+
+MIT
