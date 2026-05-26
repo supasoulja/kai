@@ -8,6 +8,8 @@ from kai.tools import memory_tools                           # noqa: F401
 from kai.tools import campaign_tools                         # noqa: F401
 from kai.tools import workspace_tools                        # noqa: F401
 from kai.tools import rag                                    # noqa: F401
+from kai.tools import self_inspect                           # noqa: F401
+from kai.tools import sandbox                                # noqa: F401
 from kai.tools.registry import registry
 
 __all__ = ["registry"]
