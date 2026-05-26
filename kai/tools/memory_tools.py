@@ -146,6 +146,38 @@ def reflect(thought: str, category: str = "observation") -> str:
 
 
 @registry.tool(
+    name="memory.sleep_notes",
+    description=(
+        "Read your own sleep journal — notes you wrote to yourself at shutdown. "
+        "Each entry is a first-person journal entry about what happened in that session. "
+        "Use this when the user asks about the sleep protocol, your welcome-back notes, "
+        "or what you wrote before going to sleep. Returns the most recent entries."
+    ),
+    parameters={
+        "last_n": {
+            "type": "integer",
+            "description": "Number of recent sleep notes to return (default 3, max 10).",
+            "required": False,
+        },
+    },
+)
+def sleep_notes(last_n: int = 3) -> str:
+    from kai.config import MEMORY_DIR
+    log_file = MEMORY_DIR / "sleep_log.txt"
+    if not log_file.exists():
+        return "No sleep notes yet — I haven't gone to sleep since this feature was added."
+
+    text = log_file.read_text(encoding="utf-8").strip()
+    entries = [e.strip() for e in text.split("\n---") if e.strip()]
+    if not entries:
+        return "Sleep log exists but is empty."
+
+    last_n = min(max(1, int(last_n)), 10)
+    recent = entries[-last_n:]
+    return f"{len(recent)} sleep note(s):\n\n" + "\n\n---\n\n".join(recent)
+
+
+@registry.tool(
     name="memory.read_reflections",
     description=(
         "Read your own past reflections about capabilities and limitations. "

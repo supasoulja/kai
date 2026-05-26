@@ -4,6 +4,12 @@ Local AI agent. No cloud. No API keys. Runs entirely on your hardware.
 
 **Stack:** Python + Ollama + SQLite. No LangChain. No frameworks.
 
+> **Warning:** This is a solo developer project. Kai is an AI agent that can run system
+> commands, modify files, and suggest changes to your PC. **Do not blindly follow her advice.**
+> Always review what she's proposing before approving destructive actions — especially system
+> repairs, service changes, file deletions, and registry edits. She can be wrong. She can
+> hallucinate. She has safety rails, but they are not bulletproof. Use at your own risk.
+
 ---
 
 ## What Kai Is
@@ -21,7 +27,7 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 - **Kai's Computer** — a simulated Ubuntu/GNOME desktop that visualizes Kai's behind-the-scenes activity in real time. Every tool call becomes a window: web searches open a browser, file ops open a file manager, system commands run in a terminal. Pure downstream projection — Kai never reads the event log.
 - **Kaomoji face system** — 640-combination ASCII face (8 eyes x 8 mouths x 10 flairs) with 15 named presets, 3-stage blink transitions, and idle animation. Kai controls her expression via `<face:annoyed>` tags in her response stream.
 - **Event bus** — SQLite-backed event log with real-time WebSocket streaming. Every tool call, reasoning chunk, and status change is recorded and broadcastable.
-- **40 tools** — system diagnostics, file management, web search, notes, network tools, crash analysis, and D&D campaign management
+- **60 tools** — system diagnostics, sandboxed file management, web search, notes, network tools, crash analysis, self-inspection, and D&D campaign management
 - **4-tier memory** — semantic facts, episodic summaries, procedural rules, session cache. All SQLite, all local, all per-user isolated.
 - **Dual embedding** — fast CPU-only ONNX (384-dim, ~5 ms) for live search, optional GPU re-embed at shutdown (2560-dim) for higher quality
 - **Document RAG** — upload PDFs and text files, chunked and embedded for vector search

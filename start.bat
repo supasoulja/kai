@@ -1,16 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
-chcp 65001 >nul
-title Kai — Local AI Agent
+title Kai - Local AI Agent
 color 0F
 
 echo.
-echo  ╔══════════════════════════════════════╗
-echo  ║       Kai — Local AI Agent           ║
-echo  ╚══════════════════════════════════════╝
+echo  +--------------------------------------+
+echo  :       Kai - Local AI Agent           :
+echo  +--------------------------------------+
 echo.
 
-:: ── Resolve Python from venv or PATH ────────────────────────────────────────
+:: -- Resolve Python from venv or PATH --
 set "VENV=%~dp0.venv\Scripts"
 if exist "%VENV%\python.exe" (
     set "PY=%VENV%\python.exe"
@@ -20,7 +19,7 @@ if exist "%VENV%\python.exe" (
     set "PYW=pythonw"
 )
 
-:: ── Step 1: Check Python ─────────────────────────────────────────────────────
+:: -- Step 1: Check Python --
 echo [1/5] Checking Python...
 "%PY%" --version >nul 2>&1
 if %errorlevel% neq 0 (
@@ -32,10 +31,10 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=2" %%v in ('"%PY%" --version 2^>^&1') do set PYVER=%%v
+for /f "tokens=2" %%v in ('"%PY%" --version 2^>^&1') do set "PYVER=%%v"
 echo      Python %PYVER% found.
 
-:: ── Step 2: Install Python dependencies ──────────────────────────────────────
+:: -- Step 2: Install Python dependencies --
 echo.
 echo [2/5] Checking Python packages...
 "%PY%" -c "import pydantic, fastapi, uvicorn, psutil, sqlite_vec, webview" >nul 2>&1
@@ -55,7 +54,7 @@ if %errorlevel% neq 0 (
     echo      All packages present.
 )
 
-:: ── Step 3: Check Ollama ─────────────────────────────────────────────────────
+:: -- Step 3: Check Ollama --
 echo.
 echo [3/5] Checking Ollama...
 ollama --version >nul 2>&1
@@ -68,48 +67,51 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=4" %%v in ('ollama --version 2^>^&1') do set OLLVER=%%v
-echo      Ollama %OLLVER% found.
+for /f "tokens=*" %%a in ('ollama --version 2^>^&1') do set "OLLVER=%%a"
+echo      %OLLVER%
 
-:: Check if Ollama is running (try to reach the API)
-curl -s -o nul -w "" http://127.0.0.1:11434/api/tags >nul 2>&1
+:: Check if Ollama is running (try to reach the API on localhost)
+curl -s -o nul http://127.0.0.1:11434/api/tags >nul 2>&1
 if %errorlevel% neq 0 (
-    echo      Ollama is not running — starting it...
+    echo      Ollama is not running - starting it...
     start /min "" ollama serve
-    :: Wait for it to come up
-    timeout /t 3 /nobreak >nul
+    timeout /t 4 /nobreak >nul
     curl -s -o nul http://127.0.0.1:11434/api/tags >nul 2>&1
     if %errorlevel% neq 0 (
-        echo      Waiting for Ollama to start...
-        timeout /t 5 /nobreak >nul
+        echo      Still waiting for Ollama...
+        timeout /t 6 /nobreak >nul
+        curl -s -o nul http://127.0.0.1:11434/api/tags >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo      Could not reach Ollama. Start it manually then re-run.
+            pause
+            exit /b 1
+        )
     )
 )
 echo      Ollama is running.
 
-:: ── Step 4: Pull models ──────────────────────────────────────────────────────
+:: -- Step 4: Pull models --
 echo.
 echo [4/5] Checking AI models...
 
 :: Chat model
-call :check_model "qwen3.5:9b" "Chat"
-
+call :check_model qwen3.5:9b Chat
 :: Reasoning model
-call :check_model "qwen3:8b" "Reasoning"
-
+call :check_model qwen3:8b Reasoning
 :: Embedding model
-call :check_model "qwen3-embedding:4b" "Embedding"
+call :check_model qwen3-embedding:4b Embedding
 
-:: ── Step 5: Set KV cache quantization for 8GB cards ─────────────────────────
+:: -- Step 5: Set KV cache quantization for 8GB cards --
 echo.
 echo [5/5] Configuring for 8 GB VRAM...
-set OLLAMA_KV_CACHE_TYPE=q8_0
+set "OLLAMA_KV_CACHE_TYPE=q8_0"
 echo      KV cache quantization: q8_0
 
-:: ── Launch ───────────────────────────────────────────────────────────────────
+:: -- Launch --
 echo.
-echo  ════════════════════════════════════════
+echo  ========================================
 echo   Starting Kai...
-echo  ════════════════════════════════════════
+echo  ========================================
 echo.
 cd /d "%~dp0"
 :: Desktop app (no console window). Falls back to web.py if pywebview missing.
@@ -117,13 +119,17 @@ cd /d "%~dp0"
 pause
 exit /b 0
 
-:: ── Helper: check and pull a model if missing ───────────────────────────────
+:: -- Helper: check and pull a model if missing --
 :check_model
-set MODEL=%~1
-set LABEL=%~2
+set "MODEL=%~1"
+set "LABEL=%~2"
+if "%MODEL%"=="" (
+    echo  [!] check_model called with empty model name
+    exit /b 1
+)
 ollama show %MODEL% >nul 2>&1
 if %errorlevel% neq 0 (
-    echo      Pulling %LABEL% model: %MODEL% (this may take a few minutes^)...
+    echo      Pulling %LABEL% model: %MODEL%...
     ollama pull %MODEL%
     if %errorlevel% neq 0 (
         echo  [!] Failed to pull %MODEL%.

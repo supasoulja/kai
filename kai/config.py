@@ -46,7 +46,7 @@ FAST_EMBED_DIM   = 384
 HQ_EMBED_MODEL   = "qwen3-embedding:4b"
 HQ_EMBED_DIM     = 2560
 
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"  # explicit IPv4 — localhost resolves to IPv6 on Windows
+OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 # ── Context window ─────────────────────────────────────────────────────────────
 # qwen3.5:9b supports 256K context. 8192 keeps KV-cache small (~130 MB) thanks

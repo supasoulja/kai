@@ -252,14 +252,10 @@ def build_directory(
         count = len(domain_facts["notes"])
         lines.append(f"- Notes: {count} saved note{'s' if count != 1 else ''}")
 
-    # Documents
+    # Documents — note count only; don't list filenames unprompted
     if doc_inventory:
-        names = [d["filename"] for d in doc_inventory[:5]]  # cap at 5 names
-        extra = len(doc_inventory) - 5
-        doc_str = ", ".join(names)
-        if extra > 0:
-            doc_str += f" +{extra} more"
-        lines.append(f"- Documents: {doc_str} ({len(doc_inventory)} file{'s' if len(doc_inventory) != 1 else ''})")
+        n = len(doc_inventory)
+        lines.append(f"- Documents: {n} uploaded file{'s' if n != 1 else ''} (use docs.list to see names)")
 
     # Episodic
     if episodic_count > 0:

@@ -51,6 +51,8 @@ def check_models(ollama: OllamaClient, required: list[str]) -> bool:
 
 def startup_report(memory: MemoryManager, model: str) -> str:
     """Build the brief status line shown on launch."""
+    from kai.sleep import load_welcome_back
+
     facts  = memory.list_facts()
     recent = memory.recent_episodes(limit=1)
     rules  = memory.list_rules()
@@ -63,10 +65,17 @@ def startup_report(memory: MemoryManager, model: str) -> str:
         if recent else "First session."
     )
 
-    return (
+    report = (
         f"{greeting} Model: {model} | "
         f"Facts: {len(facts)} | Episodes: {len(recent)} | {last_session}"
     )
+
+    # Show welcome-back message if Kai left herself a note
+    wb = load_welcome_back()
+    if wb:
+        report += f"\n\n  [Kai's note to herself]\n  {wb[:200]}{'...' if len(wb) > 200 else ''}"
+
+    return report
 
 
 # ── CLI commands ───────────────────────────────────────────────────────────────
@@ -78,6 +87,7 @@ Commands:
   :forget <key> delete a semantic fact
   :rules        show procedural rules
   :history      show last 10 episodic entries
+  :sleep        show Kai's last welcome-back note
   :trace        show last 10 turn traces (timing, tools used)
   :tools        list registered tools
   :vector       show vector table stats (episodic + RAG embeddings)
@@ -185,6 +195,24 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
 
     elif command == ":vector":
         _show_vector_stats()
+
+    elif command == ":sleep":
+        from kai.sleep import load_welcome_back
+        from kai.config import MEMORY_DIR
+        wb = load_welcome_back()
+        if wb:
+            print(f"\n  [Pending welcome-back note]\n  {wb}\n")
+        else:
+            log_file = MEMORY_DIR / "sleep_log.txt"
+            if log_file.exists():
+                lines = log_file.read_text(encoding="utf-8").strip().split("\n---")
+                last = lines[-1].strip() if lines else ""
+                if last:
+                    print(f"\n  [Last sleep note]\n  {last}\n")
+                else:
+                    print("  No sleep notes yet.")
+            else:
+                print("  No sleep notes yet. Kai hasn't gone to sleep.")
 
     elif command == ":debug":
         cfg.DEBUG = not cfg.DEBUG
@@ -382,10 +410,16 @@ def main() -> None:
     if upgrade_msg:
         print(f"\n  [upgrade] {upgrade_msg[:100]}")
 
-    # Register shutdown hook: HQ re-embed with Qwen when CLI exits
+    # Register shutdown hook: sleep cycle + HQ re-embed
     import atexit
     def _on_shutdown():
-        print("\n[~] Running HQ re-embed with Qwen...")
+        from kai.sleep import run_sleep_cycle
+        try:
+            run_sleep_cycle(ollama, brain)
+        except Exception as exc:
+            print(f"[!] Sleep cycle failed: {exc}")
+
+        print("[~] Running HQ re-embed with Qwen...")
         try:
             from kai.embed import shutdown_reembed
             shutdown_reembed()
