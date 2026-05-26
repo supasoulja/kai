@@ -23,6 +23,7 @@ from kai.identity import build_identity_block
 from kai.memory import semantic, procedural, episodic
 from kai.memory import router
 from kai.schema import ContextBlock
+from kai.sleep import load_welcome_back, clear_welcome_back
 from typing import Callable
 
 # Shared pool for parallel retrieval — 3 workers covers episodic + RAG + campaign.
@@ -108,6 +109,9 @@ def build(
         session_keys=list((session_state or {}).keys()),
     )
 
+    # Welcome-back message — injected once on first turn, then cleared
+    welcome_back = _get_and_clear_welcome_back()
+
     block = ContextBlock(
         identity=identity_text,
         memory_directory=directory,
@@ -118,6 +122,7 @@ def build(
         campaign=campaign_text,
         rag_chunks=rag_chunks,
         doc_inventory=doc_inv,
+        welcome_back=welcome_back,
     )
 
     # Use a larger budget in DM mode — campaigns need more context
@@ -137,6 +142,52 @@ def build(
         rendered_len -= len(str(removed)) + 20
 
     return block
+
+
+_welcome_back_used = False
+
+def _get_and_clear_welcome_back() -> str:
+    """Load welcome-back message on first call, return empty string after.
+    Does NOT clear the file — call mark_welcome_back_delivered() after a
+    successful response so the note survives timeouts and crashes."""
+    global _welcome_back_used
+    if _welcome_back_used:
+        return ""
+    _welcome_back_used = True
+    parts = []
+    msg = load_welcome_back()
+    if msg:
+        parts.append(msg)
+    # One-shot persona gap check
+    gaps = _check_persona_gaps()
+    if gaps:
+        parts.append(gaps)
+    return "\n\n".join(parts)
+
+
+def mark_welcome_back_delivered():
+    """Clear the welcome-back file after a successful first response."""
+    try:
+        msg = load_welcome_back()
+        if msg:
+            clear_welcome_back()
+    except Exception:
+        pass
+
+
+def _check_persona_gaps() -> str:
+    """Check for undocumented tools on first boot. Returns a note or empty string."""
+    try:
+        from kai.tools.self_inspect import check_persona
+        result = check_persona()
+        if "not mentioned in persona.md" in result:
+            return (
+                "[PERSONA GAP DETECTED] " + result.split("\n")[0] +
+                " Consider asking the user if they'd like you to propose an update."
+            )
+    except Exception:
+        pass
+    return ""
 
 
 def _fetch_episodic(
