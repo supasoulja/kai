@@ -92,13 +92,11 @@ def _gather_temps() -> str:
     # Detect vendor first, then use the right tool — no blind trial-and-error
     vendor = _gpu_vendor()
     if vendor == "amd":
-        # pyadl: ADL (AMD Display Library) — same SDK Adrenalin uses, no admin needed
-        # amd-smi: ships with ROCm/enterprise cards, rare on consumer Windows
-        gpu = _pyadl() or _amd_smi() or _rocm_smi() or _gpu_wmi_fallback()
+        gpu = _pyadl() or _amd_smi() or _rocm_smi() or _hwinfo_gpu() or _gpu_wmi_fallback()
     elif vendor == "nvidia":
-        gpu = _nvidia_smi() or _gpu_wmi_fallback()
+        gpu = _nvidia_smi() or _hwinfo_gpu() or _gpu_wmi_fallback()
     else:
-        gpu = _nvidia_smi() or _pyadl() or _amd_smi() or _rocm_smi() or _gpu_wmi_fallback()
+        gpu = _nvidia_smi() or _pyadl() or _amd_smi() or _rocm_smi() or _hwinfo_gpu() or _gpu_wmi_fallback()
     if gpu:
         lines.append(gpu)
 
@@ -109,9 +107,9 @@ def _gather_temps() -> str:
     combined = "\n".join(lines)
     if "Temp: n/a" in combined and "°C" not in combined:
         combined += (
-            "\n\nNote: Temperature sensors are unavailable on this hardware via WMI. "
+            "\n\nNote: Temperature sensors are unavailable. "
             "The load, clock, and VRAM data above IS valid — report those. "
-            "Suggest HWiNFO64 (free) for detailed temperature monitoring."
+            "If HWiNFO64 is installed, ensure Shared Memory Support is ON in settings."
         )
     return combined
 
@@ -148,9 +146,18 @@ def _cpu_info() -> str | None:
 
 def _cpu_temp_wmi() -> str:
     """
-    WMI thermal zones (tenths of Kelvin → Celsius).
-    Many boards don't expose this — returns 'n/a' if unavailable.
+    CPU temp: try HWiNFO64 shared memory first, fall back to WMI thermal zones.
     """
+    # HWiNFO64 — accurate temps from the actual sensor IC
+    try:
+        from kai.hwinfo import get_cpu_temp as _hwinfo_cpu
+        t = _hwinfo_cpu()
+        if t != "n/a":
+            return t
+    except Exception:
+        pass
+
+    # WMI thermal zones (tenths of Kelvin → Celsius) — many boards don't expose this
     try:
         ps = (
             "Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace 'root/wmi' "
@@ -563,6 +570,22 @@ def _nvidia_smi() -> str | None:
         return "\n".join(lines) if lines else None
     except FileNotFoundError:
         return None  # nvidia-smi not on PATH — not NVIDIA or driver not installed
+    except Exception:
+        return None
+
+
+# ── HWiNFO64 shared memory (works for any GPU — AMD, NVIDIA, Intel) ──────────
+
+def _hwinfo_gpu() -> str | None:
+    """
+    Query GPU via HWiNFO64's shared memory interface.
+    Requires HWiNFO64 running with Shared Memory Support enabled.
+    Works for RDNA3+ and any other GPU that HWiNFO64 supports.
+    """
+    try:
+        from kai.hwinfo import get_gpu_summary
+        result = get_gpu_summary()
+        return result  # None if unavailable
     except Exception:
         return None
 
