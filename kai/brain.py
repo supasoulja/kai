@@ -38,6 +38,26 @@ MAX_TOOL_ROUNDS   = 8   # increased to support multi-step tasks (scan → restor
 _HISTORY_HARD_CAP = 60  # safety ceiling — compression normally keeps history much smaller
 _FACT_EXTRACT_THRESHOLD = 2  # two-phase fact extraction fires when ≥ this many tools were called
 
+# Tools that need user confirmation before execution.
+# When the model calls one of these, execution is paused and a confirm button
+# is shown to the user. The tool runs only after they click "Go ahead."
+_CONFIRM_TOOLS = {
+    "pc.deep_scan",
+    "system.clear_temp_files",
+    "system.run_disk_cleanup",
+    "system.create_restore_point",
+    "system.repair_files",
+    "system.disable_startup_program",
+}
+
+_CONFIRM_RE = re.compile(
+    r"^(go\s*ahead|ye[spa]h?|yup|ok(ay)?|sure|do\s*it|confirm(ed)?|"
+    r"run\s*it|scan|proceed|go\s*for\s*it|let'?s?\s*go|approved?|"
+    r"y|bet|send\s*it|mhm|uh\s*huh|absolutely|please|pls|def(initely)?|"
+    r"fo\s*sho|for\s*sure|aight|alright|right|dew\s*it|hit\s*it)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
 # ── Tool signal detection ─────────────────────────────────────────────────────
 # Categorized keyword lists composed into one regex at module load.
 # Adding a new tool category = add a list entry here.
@@ -158,6 +178,17 @@ _TOOL_PHRASE_PATTERNS = [
     r"(?:what.{0,15}in|contents?\s+of|summarize|explain).{0,20}(?:document|pdf|file|upload)",
     r"(?:list|show).{0,15}(?:uploaded?|my)\s+(?:file|document|pdf)",
     r"(?:delete|remove).{0,15}(?:document|file|pdf)",
+    # Self-inspection triggers
+    r"(?:your|the)\s+(?:source|code|brain|internals|implementation|tools?|memory\s+system)",
+    r"how\s+(?:do|does|are)\s+you\s+(?:work|think|run|function|operate|decide)",
+    r"(?:show|read|look\s+at|inspect).{0,15}(?:your|own).{0,15}(?:code|source|brain|file)",
+    r"(?:update|check|change|edit).{0,15}(?:persona|identity|your\s+(?:rules|behavior))",
+    r"(?:new|missing|undocumented).{0,15}(?:feature|tool|capability)",
+    # Sandbox / file management triggers
+    r"(?:move|copy|rename|delete|trash|organize|clean\s*up).{0,20}(?:file|folder|directory|dir\b)",
+    r"(?:move|copy|rename|delete|trash).{0,5}(?:it|that|this|them)",
+    r"(?:put|bring|copy).{0,15}(?:into|to|in).{0,15}(?:workspace|kaifil)",
+    r"approve|go\s+ahead|do\s+it|execute\s+(?:it|that|the)",
 ]
 
 # Compose single keywords into \b(word1|word2|...)\b, then join with phrase patterns.
@@ -205,27 +236,42 @@ def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
     Attempt to extract a tool call from plain-text content the model emitted
     when Ollama failed to parse it as a structured tool_call.
 
+    Two recovery strategies:
+      1. Broken JSON — the model emitted {"name": "...", "arguments": {...}} as text
+      2. Narrated call — the model wrote "Running `pc.deep_scan` now" instead of calling it
+
     Returns a synthetic tool_call dict matching Ollama's format, or None.
     """
+    # Strategy 1: broken JSON
     m = _BROKEN_TOOL_CALL_RE.search(content)
-    if not m:
+    if m:
+        name = m.group(1)
+        if name in known_tools:
+            try:
+                args = json.loads(m.group(2))
+            except json.JSONDecodeError:
+                raw = m.group(2).replace("'", '"')
+                raw = re.sub(r",\s*}", "}", raw)
+                try:
+                    args = json.loads(raw)
+                except json.JSONDecodeError:
+                    args = None
+            if args is not None:
+                return {"function": {"name": name, "arguments": args}}
+
+    # Strategy 2: narrated tool call — model mentions a tool by name in prose
+    # e.g. "Running `pc.deep_scan` now" or "I'll use system.info to check"
+    # Guard: only fires on short responses (< 500 chars) — longer text is likely
+    # an explanation, not a failed tool call.
+    _, clean = _strip_thinking(content)
+    if not clean or len(clean) > 500:
         return None
-    name = m.group(1)
-    if name not in known_tools:
-        return None
-    try:
-        args = json.loads(m.group(2))
-    except json.JSONDecodeError:
-        # Try repair: strip trailing commas, fix single quotes
-        raw = m.group(2).replace("'", '"')
-        raw = re.sub(r",\s*}", "}", raw)
-        try:
-            args = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-    return {
-        "function": {"name": name, "arguments": args},
-    }
+    for tool_name in known_tools:
+        if tool_name in clean:
+            if cfg.DEBUG:
+                print(f"[recover] narrated tool call: {tool_name}")
+            return {"function": {"name": tool_name, "arguments": {}}}
+    return None
 
 
 # Shared compression prompt — used by _maybe_compress_history, flush_history_snapshot,
@@ -387,9 +433,20 @@ _TOOL_LABELS: dict[str, str] = {
     "memory.search_history":         "Searching past conversations",
     "memory.reflect":                "Writing a reflection",
     "memory.read_reflections":       "Reading past reflections",
+    "memory.sleep_notes":            "Reading sleep journal",
     "docs.search":                   "Searching documents",
     "docs.list":                     "Listing documents",
+    "self.inspect":                  "Reading my own source code",
+    "self.check_persona":            "Checking persona for gaps",
+    "self.propose_persona_update":   "Drafting persona update",
+    "self.apply_persona_update":     "Updating persona",
     "docs.delete":                   "Removing document",
+    "sandbox.copy_to_workspace":     "Copying file to workspace",
+    "sandbox.propose_move":          "Proposing file move",
+    "sandbox.propose_delete":        "Proposing file deletion",
+    "sandbox.propose_rename":        "Proposing file rename",
+    "sandbox.approve":               "Executing approved operation",
+    "sandbox.history":               "Checking sandbox history",
 }
 
 
@@ -598,6 +655,7 @@ class Brain:
         self._memory_router_ready: bool = False       # memory domain index built lazily
         self._compressing: bool = False               # prevents concurrent history compressions
         self._turn_count: int = 0                     # monotonic counter for learn-rate gating
+        self._pending_confirm: dict | None = None     # tool call awaiting user confirmation
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
 
     def shutdown(self) -> None:
@@ -694,6 +752,21 @@ class Brain:
         trace_id  = trace_id or str(uuid.uuid4())[:8]
         turn_start = time.monotonic()
         tools_used: list[str] = []
+
+        # ── Pending tool confirmation ────────────────────────────────────────
+        # If a confirm-gated tool is waiting and the user just said "go ahead",
+        # execute the tool now and stream the model's presentation of results.
+        if self._pending_confirm and _CONFIRM_RE.match(user_input.strip()):
+            print(f"[confirm] user confirmed — executing {self._pending_confirm['name']}")
+            yield from self._run_confirmed_tool(
+                user_input, trace_id, turn_start, on_status,
+            )
+            return
+
+        # If the user said something other than confirm, clear the pending tool
+        if self._pending_confirm:
+            print(f"[confirm] user said '{user_input}' — clearing pending {self._pending_confirm['name']}")
+            self._pending_confirm = None
 
         # Auto-think: when reasoning mode is ON, still skip it for trivial
         # prompts like "hello" to avoid 30s of wasted chain-of-thought.
@@ -806,7 +879,12 @@ class Brain:
                 # If recovery injected tool_calls, fall through to tool execution
                 if not msg.get("tool_calls"):
                     _, clean = _strip_thinking(content)
-                    final = clean or "[no response]"
+                    if not clean:
+                        if tools_used:
+                            clean = f"Done — used {', '.join(dict.fromkeys(tools_used))}."
+                        else:
+                            clean = "[no response]"
+                    final = clean
 
                     # Search raw content (includes <think> blocks) so retry signals
                     # inside thinking are still detected.
@@ -843,6 +921,7 @@ class Brain:
                 "content": msg.get("content", ""),
                 "tool_calls": msg["tool_calls"],
             })
+            _confirm_intercepted = False
             any_tool_error = False   # Python exception — tool completely failed
             any_soft_error = False   # Tool ran but output contains a Windows error code
             for tc in msg["tool_calls"]:
@@ -850,6 +929,32 @@ class Brain:
                 tool_name = fn.get("name") or ""
                 tool_args = fn.get("arguments", {})
                 tools_used.append(tool_name)
+
+                # ── Confirm gate: pause and ask the user before running ──────
+                if tool_name in _CONFIRM_TOOLS:
+                    print(f"[confirm] intercepted {tool_name} — waiting for user OK")
+                    self._pending_confirm = {
+                        "name": tool_name,
+                        "args": tool_args,
+                        "trace_id": trace_id,
+                        "label": _TOOL_LABELS.get(tool_name, tool_name),
+                    }
+                    result = {
+                        "output": (
+                            f"⏸ {tool_name} requires your OK before running. "
+                            "Describe what you want to do and ask the user to confirm."
+                        ),
+                        "success": True,
+                    }
+                    messages.append({"role": "tool", "content": json.dumps(result)})
+                    yield "", False, {
+                        "confirm_tool": True,
+                        "name": tool_name,
+                        "label": self._pending_confirm["label"],
+                    }
+                    _confirm_intercepted = True
+                    break  # exit tool loop — wait for user confirmation
+
                 if on_status:
                     on_status(_TOOL_LABELS.get(tool_name, tool_name))
                 if self.session_id:
@@ -883,6 +988,12 @@ class Brain:
                 # Detected by the 0x hex-code pattern — unambiguous, no false positives.
                 elif re.search(r"\b0x[0-9a-fA-F]{4,}\b", result.get("output", "")):
                     any_soft_error = True
+
+            # Confirm-gated tool was intercepted — skip to final answer so the
+            # model can ask the user for confirmation.
+            if _confirm_intercepted:
+                tools_schema = None
+                break
 
             # Error escalation (paper "Less is More", Tier 2 fallback):
             # First failure → give the model the full tool set so it has every alternative.
@@ -973,14 +1084,21 @@ class Brain:
         if self.session_id and tools_used:
             events.emit(events.EVENT_STATUS, self.session_id, label="Responding...")
 
+        # After tool rounds, disable thinking — the model already reasoned during
+        # the tool phase.  Thinking here risks the entire final answer being
+        # swallowed into <think> tags, producing "[no response]".
+        final_think = use_think and not tools_used
+
         _tokens: list[str] = []
+        _think_tokens: list[str] = []
         for token, done, meta in self.ollama.chat_stream(
-            messages, tools=None, model=self.model, think=use_think
+            messages, tools=None, model=self.model, think=final_think
         ):
             if done:
                 break
             # Think block — pass to UI as a separate event, don't add to response text
             if meta.get("think_block") is not None:
+                _think_tokens.append(meta["think_block"])
                 if self.session_id:
                     events.emit(events.EVENT_THINK, self.session_id,
                                 text=meta["think_block"])
@@ -995,19 +1113,147 @@ class Brain:
         # Strip any leaked <think> tags before persisting (matches non-streaming path).
         # Trace keeps the raw text for debugging; everything else gets the clean version.
         _, clean_text = _strip_thinking(full_text)
-        clean_text = clean_text or "[no response]"  # don't fall back to think-tagged text
+        if not clean_text and (tools_used or _think_tokens):
+            # Model produced no visible output — either thinking swallowed
+            # the answer or a tool round left nothing for the final reply.
+            # Retry once with thinking OFF to get a real response.
+            retry_tokens: list[str] = []
+            for token, done, meta in self.ollama.chat_stream(
+                messages, tools=None, model=self.model, think=False
+            ):
+                if done:
+                    break
+                if meta.get("think_block") is not None:
+                    continue
+                retry_tokens.append(token)
+                if self.session_id:
+                    events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=token)
+                yield token, False, {}
+            _, clean_text = _strip_thinking("".join(retry_tokens))
+        if not clean_text:
+            if tools_used:
+                clean_text = f"Done — used {', '.join(dict.fromkeys(tools_used))}."
+            else:
+                clean_text = "[no response]"
 
         self._record_trace(trace_id, user_input, context, tools_used, full_text, turn_start)
         with self._history_lock:
             self._session_history.append({"role": "user",      "content": user_input})
             self._session_history.append({"role": "assistant", "content": clean_text})
         msg_id = self._persist_turn(user_input, clean_text)
+
+        # Clear the welcome-back note only after a successful response
+        if self._turn_count <= 1:
+            try:
+                from kai.memory.context import mark_welcome_back_delivered
+                mark_welcome_back_delivered()
+            except Exception:
+                pass
         if self.session_id:
             events.emit(events.EVENT_STREAM_END, self.session_id,
                         tools_used=tools_used,
                         duration=round(time.monotonic() - turn_start, 3))
         yield "", True, {"message_id": msg_id} if msg_id else {}
         # commit + learn: runs off the hot path so the user isn't waiting
+        self._bg_pool.submit(self._post_turn, user_input, clean_text)
+
+    def _run_confirmed_tool(
+        self,
+        user_input: str,
+        trace_id: str,
+        turn_start: float,
+        on_status: "Callable[[str], None] | None" = None,
+    ) -> Generator[tuple[str, bool, dict], None, None]:
+        """Execute a confirm-gated tool after the user approved it."""
+        pending = self._pending_confirm
+        self._pending_confirm = None
+        tool_name = pending["name"]
+        tool_args = pending["args"]
+        tools_used = [tool_name]
+
+        if on_status:
+            on_status(pending["label"])
+        if self.session_id:
+            events.emit(events.EVENT_STATUS, self.session_id, label=pending["label"])
+            events.emit(events.EVENT_TOOL_START, self.session_id,
+                        name=tool_name, args=tool_args)
+
+        _tool_t0 = time.monotonic()
+        result = self._execute_tool(tool_name, tool_args, trace_id)
+        _tool_dur = round(time.monotonic() - _tool_t0, 3)
+
+        if self.session_id:
+            _evt_output = str(result.get("output", ""))[:2000]
+            events.emit(events.EVENT_TOOL_END, self.session_id,
+                        name=tool_name, duration=_tool_dur,
+                        success=result.get("success", False),
+                        error=result.get("error"),
+                        output=_evt_output, args=tool_args)
+
+        # Build messages with the tool result injected
+        context = self.memory.render_context(
+            query=user_input, dm_mode=self.dm_mode,
+        )
+        context += (
+            "\n\n[CRITICAL GROUNDING RULE]\n"
+            "Before stating ANY fact about this system, ask: did a tool result "
+            "or [SEMANTIC] entry provide this data in THIS conversation? "
+            "If not — call a tool first, or say \"I'd need to check that.\" "
+            "Never fabricate numbers, outputs, or success messages."
+        )
+        with self._history_lock:
+            history = list(self._session_history[-_HISTORY_HARD_CAP:])
+
+        evidence = str(result.get("output", ""))[:3000]
+        messages: list[dict] = [
+            {"role": "system", "content": context},
+            *history,
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"function": {"name": tool_name, "arguments": tool_args}}]},
+            {"role": "tool", "content": json.dumps(result)},
+            {"role": "system", "content": (
+                "GROUNDING: Respond using ONLY data from the tool result above. "
+                "Quote exact values. If you lack data the user needs, say so.\n\n"
+                "KEY EVIDENCE:\n" + evidence
+            )},
+        ]
+
+        if on_status:
+            on_status("Responding...")
+        if self.session_id:
+            events.emit(events.EVENT_STATUS, self.session_id, label="Responding...")
+
+        # Stream the final answer
+        _tokens: list[str] = []
+        for token, done, meta in self.ollama.chat_stream(
+            messages, tools=None, model=self.model, think=False,
+        ):
+            if done:
+                break
+            if meta.get("think_block") is not None:
+                continue
+            _tokens.append(token)
+            if self.session_id:
+                events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=token)
+            yield token, False, {}
+        full_text = "".join(_tokens)
+
+        _, clean_text = _strip_thinking(full_text)
+        if not clean_text:
+            clean_text = f"Done — used {tool_name}."
+
+        self._record_trace(trace_id, user_input, context, tools_used, full_text, turn_start)
+        with self._history_lock:
+            self._session_history.append({"role": "user", "content": user_input})
+            self._session_history.append({"role": "assistant", "content": clean_text})
+        msg_id = self._persist_turn(user_input, clean_text)
+
+        if self.session_id:
+            events.emit(events.EVENT_STREAM_END, self.session_id,
+                        tools_used=tools_used,
+                        duration=round(time.monotonic() - turn_start, 3))
+        yield "", True, {"message_id": msg_id} if msg_id else {}
         self._bg_pool.submit(self._post_turn, user_input, clean_text)
 
     def _persist_turn(self, user_input: str, response: str) -> int | None:

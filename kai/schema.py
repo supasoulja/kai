@@ -59,6 +59,8 @@ class ContextBlock:
     doc_inventory: list[dict] = field(default_factory=list)
     # Memory directory — tiny always-injected summary of what data exists
     memory_directory: str = ""
+    # Welcome-back message — written by Kai at shutdown, read on first turn
+    welcome_back: str = ""
 
     # Class-level constant: human-readable labels for session state keys
     _SESSION_LABELS: ClassVar[dict[str, str]] = {
@@ -80,10 +82,17 @@ class ContextBlock:
     }
 
     def render(self) -> str:
+        from datetime import datetime
         parts = []
+
+        now = datetime.now()
+        parts.append(f"[CLOCK] {now.strftime('%A, %B %d %Y — %I:%M %p')}")
 
         if self.identity:
             parts.append(f"[IDENTITY]\n{self.identity.strip()}")
+
+        if self.welcome_back:
+            parts.append(f"[WELCOME BACK — Your note to yourself from last session]\n{self.welcome_back.strip()}")
 
         if self.memory_directory:
             parts.append(self.memory_directory)
@@ -120,15 +129,15 @@ class ContextBlock:
                 sections.append(f"[{chunk['doc_name']}]\n{chunk['content']}")
             parts.append("[DOCUMENTS]\n" + "\n\n---\n\n".join(sections))
 
-        # Always show doc inventory so Kai knows what files the user has uploaded,
-        # even when no chunks matched the current query.
-        if self.doc_inventory and not self.rag_chunks:
+        # Doc inventory: only show when the query is document-related
+        # (i.e. RAG chunks were retrieved). Otherwise the model mentions
+        # filenames unprompted which confuses users.
+        if self.doc_inventory and self.rag_chunks:
             lines = []
             for doc in self.doc_inventory:
                 lines.append(f"- {doc['filename']} ({doc['file_type']}, {doc['chunk_count']} chunks)")
             parts.append(
-                "[UPLOADED FILES — The user has given you these documents. "
-                "Use docs.search to read their content.]\n" + "\n".join(lines)
+                "[UPLOADED FILES]\n" + "\n".join(lines)
             )
 
         return "\n\n".join(parts)

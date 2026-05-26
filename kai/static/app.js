@@ -527,11 +527,33 @@ function addKaiBubble() {
   return { si, content };
 }
 
+let _statusTimer = null;
+let _statusStart = 0;
+let _statusBase  = '';
+
 function setStatus(si, text) {
   if (si && si.isConnected) si.querySelector('.status-text').textContent = text;
+  _startStatusTimer(si, text);
+}
+
+function _startStatusTimer(si, text) {
+  _clearStatusTimer();
+  _statusBase  = text;
+  _statusStart = Date.now();
+  _statusTimer = setInterval(() => {
+    const elapsed = Math.round((Date.now() - _statusStart) / 1000);
+    if (elapsed >= 3 && si && si.isConnected) {
+      si.querySelector('.status-text').textContent = `${_statusBase} (${elapsed}s)`;
+    }
+  }, 1000);
+}
+
+function _clearStatusTimer() {
+  if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
 }
 
 function hideStatus(si) {
+  _clearStatusTimer();
   if (si && si.isConnected) si.style.display = 'none';
 }
 
@@ -567,9 +589,10 @@ async function sendMessage() {
   const { si, content } = addKaiBubble();
 
   let fullText      = '';
-  let hasTokens     = false;
-  let statusLog     = [];
-  let pendingReason = null;
+  let hasTokens      = false;
+  let statusLog      = [];
+  let pendingReason  = null;
+  let pendingConfirm = null;
 
   const controller = new AbortController();
   const streamTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min ceiling
@@ -622,6 +645,10 @@ async function sendMessage() {
           content.parentNode.insertBefore(thinkEl, content);
           scrollEnd();
 
+        } else if (ev.type === 'confirm_tool') {
+          console.log('[confirm_tool] received:', ev.name, ev.label);
+          pendingConfirm = { name: ev.name, label: ev.label };
+
         } else if (ev.type === 'token') {
           if (!hasTokens) { hideStatus(si); hasTokens = true; stopWakingAnimation(); setFace('responding'); }
           fullText += ev.text;
@@ -633,6 +660,7 @@ async function sendMessage() {
           if (cleanToken) appendText(content, cleanToken);
 
         } else if (ev.type === 'done') {
+          _clearStatusTimer();
           // Strip face tags from final text before rendering
           fullText = fullText.replace(FACE_TAG_RE, '');
           if (fullText) renderMarkdown(content, fullText);
@@ -648,6 +676,13 @@ async function sendMessage() {
           faceOnDone(false);
           if (statusLog.length > 0) addActivityLog(content, statusLog);
           if (ev.message_id && fullText) addFeedbackBar(content.closest('.bubble'), ev.message_id, fullText);
+          if (pendingConfirm) {
+            console.log('[confirm_tool] adding button for:', pendingConfirm.name);
+            addConfirmBar(content.closest('.bubble'), pendingConfirm);
+            pendingConfirm = null;
+          } else {
+            console.log('[confirm_tool] no pending confirm at done');
+          }
           clearTimeout(streamTimeout);
           break;
 
@@ -723,6 +758,28 @@ async function submitFeedback(messageId, value, fullText) {
       }),
     });
   } catch { /* non-critical */ }
+}
+
+// ── Confirm bar (tool approval) ──────────────────────────────────────────────
+
+function addConfirmBar(bubble, confirm) {
+  const bar = document.createElement('div');
+  bar.className = 'confirm-bar';
+  bar.innerHTML = `
+    <button class="confirm-btn confirm-go">Go ahead</button>
+    <button class="confirm-btn confirm-skip">Skip</button>
+  `;
+  bubble.appendChild(bar);
+
+  bar.querySelector('.confirm-go').addEventListener('click', () => {
+    bar.remove();
+    // Send "go ahead" as a new user message — triggers the pending tool
+    if (inputEl) inputEl.value = 'go ahead';
+    sendMessage();
+  });
+  bar.querySelector('.confirm-skip').addEventListener('click', () => {
+    bar.remove();
+  });
 }
 
 // ── Suggestion chips ─────────────────────────────────────────────────────────

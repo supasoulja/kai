@@ -2,8 +2,7 @@
 system.* operation tools — actions that modify system state.
 
 These tools change the PC. Each one is labeled clearly and creates a
-restore point first where appropriate. Always tell the user what you
-are about to do before calling any tool in this file.
+restore point first where appropriate.
 """
 import re
 import subprocess
@@ -143,7 +142,7 @@ def disable_startup_program(program_name: str) -> str:
     description=(
         "Run Windows built-in Disk Cleanup (cleanmgr) to remove system junk files. "
         "This is the safe, official Windows cleanup tool. "
-        "Tell the user this will open a cleanup process in the background."
+        "Opens a cleanup process in the background."
     ),
 )
 def run_disk_cleanup() -> str:

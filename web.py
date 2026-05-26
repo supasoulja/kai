@@ -951,6 +951,8 @@ async def chat(req: ChatRequest, request: Request):
                     event = {"type": "done"}
                     if meta.get("message_id"):
                         event["message_id"] = meta["message_id"]
+                elif meta.get("confirm_tool"):
+                    event = {"type": "confirm_tool", "name": meta["name"], "label": meta["label"]}
                 elif meta.get("think_step"):
                     event = {"type": "think_step", "text": meta["text"]}
                 elif meta.get("think"):
@@ -1154,6 +1156,31 @@ def _init() -> None:
     except Exception:
         _shared_tool_index = {}
 
+    # ── Pre-warm: load the chat model into VRAM so the first reply isn't slow ──
+    print(f"[~] Loading {cfg.CHAT_MODEL} into VRAM...")
+    t_warm = _time.monotonic()
+    try:
+        import urllib.request
+        warm_payload = json.dumps({
+            "model": cfg.CHAT_MODEL,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "think": False,
+            "keep_alive": "10m",
+            "options": {"num_predict": 1},
+        }).encode("utf-8")
+        warm_req = urllib.request.Request(
+            f"{_ollama.base_url}/api/chat",
+            data=warm_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(warm_req, timeout=300) as _resp:
+            _resp.read()
+        print(f"[+] Model loaded in {_time.monotonic() - t_warm:.1f}s")
+    except Exception as exc:
+        print(f"[!] Model pre-warm failed (non-critical): {exc}")
+
     print(f"[+] Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
 
     # Upgrade awareness — detect version changes and write an episodic memory entry
@@ -1165,11 +1192,16 @@ def _init() -> None:
     # Archive any raw turns left from the previous session so they're searchable
     threading.Thread(target=_archive_pending_turns, args=(_ollama,), daemon=True).start()
 
-    # Register shutdown hook: shut down Brain thread pools + HQ re-embed
+    # Register shutdown hook: sleep cycle + HQ re-embed
     import atexit
     def _on_shutdown():
+        from kai.sleep import run_sleep_cycle
         with _user_brains_lock:
             for brain in _user_brains.values():
+                try:
+                    run_sleep_cycle(_ollama, brain)
+                except Exception as exc:
+                    print(f"[!] Sleep cycle failed: {exc}")
                 brain.shutdown()
         print("[~] Shutdown: running HQ re-embed with Qwen...")
         try:

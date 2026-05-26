@@ -207,7 +207,6 @@ def get_windows_updates() -> str:
         "recent crashes and errors, startup programs, and disk space. "
         "Use this whenever someone asks you to speed up their PC, do a health check, "
         "diagnose slowness, or figure out what's wrong with their computer. "
-        "Takes 1-3 minutes — tell the user you are scanning before calling this. "
         "After the scan: present findings as a prioritized issue list, worst first. "
         "Be specific: '92% disk full' not 'disk space is low'. "
         "Only report sections that have actual problems — skip clean ones. "
