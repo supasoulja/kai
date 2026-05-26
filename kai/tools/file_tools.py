@@ -32,13 +32,22 @@ def _ps(cmd: str, timeout: int = 45) -> str | None:
 
 
 def _safe_path(path: str) -> str:
-    """Escape a path for safe interpolation inside a PowerShell single-quoted string.
+    r"""Escape a path for safe interpolation inside a PowerShell single-quoted string.
     Single quotes are doubled ('') — the only escape needed in PS literal strings.
-    Backticks are removed (PS escape/expansion character)."""
+    Backticks are removed (PS escape/expansion character).
+    All backslashes normalized to forward slashes (PS handles both, avoids
+    trailing backslash escaping the closing quote)."""
     p = path.strip().strip('"')   # remove surrounding double-quotes only
     p = p.replace("`", "")        # remove PS backtick (escape/expansion char)
     p = p.replace("'", "''")      # PS literal single-quote escape
+    p = p.replace("\\", "/")      # normalize to forward slash
     return p
+
+
+def _is_drive_root(path: str) -> bool:
+    """Check if a path is a drive root like C:/ or D:/."""
+    p = path.replace("\\", "/").rstrip("/")
+    return len(p) == 2 and p[1] == ":" and p[0].isalpha()
 
 
 def _default_home() -> str:
@@ -53,7 +62,6 @@ def _default_home() -> str:
         "Use the drive path the user mentions (e.g. 'C:\\', 'D:\\', 'E:\\'). "
         "If the user says 'everywhere', 'all drives', or 'my whole PC', call this tool "
         "once per drive that likely has user data — check C:\\ first, then any others (D:\\, E:\\, etc.). "
-        "Before calling: tell the user which drive(s) you're scanning — this can take 30-60 seconds per drive. "
         "After retrieving: flag the top 2-3 largest folders and whether they're expected "
         "(e.g. 'Games at 400 GB is normal if you have a lot installed') or worth investigating."
     ),
@@ -71,17 +79,23 @@ def _default_home() -> str:
 def get_disk_usage(path: str = "", top_n: int = 12) -> str:
     top_n = max(1, min(int(top_n), 100))
     path = _safe_path(path) or _default_home()
+
+    # On drive roots, scan folders one at a time to avoid timeouts
+    if _is_drive_root(path):
+        return _disk_usage_chunked(path, top_n)
+
     cmd = (
-        f"Get-ChildItem -Path '{path}' -Directory -ErrorAction SilentlyContinue | "
+        f"Get-ChildItem -Path '{path}' -Directory -Force -ErrorAction SilentlyContinue | "
         f"ForEach-Object {{ "
         f"  $sz = (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | "
         f"    Measure-Object -Property Length -Sum).Sum; "
-        f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round(($sz ?? 0)/1MB,0)}} "
+        f"  if ($null -eq $sz) {{ $sz = 0 }}; "
+        f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round($sz/1MB,0)}} "
         f"}} | Sort-Object SizeMB -Descending | Select-Object -First {int(top_n)} | ConvertTo-Json"
     )
-    out = _ps(cmd, timeout=90)
+    out = _ps(cmd, timeout=120)
     if out == _TIMEOUT_SENTINEL:
-        return f"Scan of '{path}' timed out. Try a more specific subfolder."
+        return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
     if not out:
         return f"Could not analyze '{path}'. Check the path exists and is accessible."
     try:
@@ -99,6 +113,63 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
         return out[:2000]
 
 
+_SKIP_FOLDERS = {
+    "windows", "$recycle.bin", "system volume information",
+    "recovery", "$winreagent", "$sysreset", "documents and settings",
+}
+
+
+def _disk_usage_chunked(drive: str, top_n: int = 12) -> str:
+    """Scan a drive root one folder at a time. Skips system dirs, skips
+    any folder that takes longer than 15s to enumerate."""
+    # List top-level folders
+    list_cmd = (
+        f"Get-ChildItem -Path '{drive}' -Directory -Force -ErrorAction SilentlyContinue | "
+        f"Select-Object -ExpandProperty FullName"
+    )
+    out = _ps(list_cmd, timeout=10)
+    if not out:
+        return f"Could not list folders in '{drive}'."
+
+    folders = [f.strip() for f in out.splitlines() if f.strip()]
+    results: list[tuple[str, int]] = []  # (path, size_mb)
+    skipped: list[str] = []
+
+    for folder in folders:
+        name = Path(folder).name.lower()
+        if name in _SKIP_FOLDERS:
+            skipped.append(folder)
+            continue
+
+        safe_folder = folder.replace("'", "''").replace("\\", "/")
+        cmd = (
+            f"$sz = (Get-ChildItem -Path '{safe_folder}' -Recurse -File "
+            f"-ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; "
+            f"if ($null -eq $sz) {{ $sz = 0 }}; "
+            f"[math]::Round($sz/1MB,0)"
+        )
+        size_out = _ps(cmd, timeout=15)
+        if size_out == _TIMEOUT_SENTINEL:
+            skipped.append(f"{folder} (scan timed out)")
+            continue
+        try:
+            mb = int(size_out.strip()) if size_out and size_out.strip().lstrip("-").isdigit() else 0
+        except (ValueError, AttributeError):
+            mb = 0
+        results.append((folder, mb))
+
+    results.sort(key=lambda x: x[1], reverse=True)
+    results = results[:top_n]
+
+    lines = [f"Folder sizes in {drive}:"]
+    for folder, mb in results:
+        size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+        lines.append(f"  {size_str:>10}  {folder}")
+    if skipped:
+        lines.append(f"\nSkipped {len(skipped)} system/slow folder(s)")
+    return "\n".join(lines)
+
+
 @registry.tool(
     name="files.find_large",
     description=(
@@ -108,7 +179,6 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
         "If the user says 'everywhere' or 'all drives', call this tool once per drive. "
         "Only set min_size_mb>0 if the user explicitly wants files over a certain size. "
         "Skips Windows system folders automatically when scanning a drive root. "
-        "Before calling: tell the user which drive you're scanning — drive scans can take up to 2 minutes. "
         "After retrieving: point out obvious space hogs — game installs, video files, "
         "old installer archives (.iso, .exe, .msi in Downloads), large zip/rar files. "
         "Note which look safe to delete (old installers, duplicate downloads) vs. keep (active game installs)."
@@ -135,9 +205,7 @@ def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> s
     min_bytes = min_size_mb * 1024 * 1024
 
     # When scanning a drive root, exclude slow/protected system directories
-    p_lower = path.lower().rstrip("\\")
-    is_drive_root = len(p_lower) <= 3 and p_lower.endswith(":")  # e.g. "c:" or "c:\"
-    if is_drive_root:
+    if _is_drive_root(path):
         exclude_filter = (
             "Where-Object { "
             "$_.FullName -notlike '*\\Windows\\*' -and "
@@ -198,7 +266,6 @@ def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> s
         "Only use the home folder default if the user is asking about their personal files specifically. "
         "SIZE RULES: if the user says 'oldest files' without specifying a size, use min_size_mb=0 "
         "to find files of any size, not just files over 50 MB. "
-        "Before calling: tell the user what you're about to scan and that it may take up to a minute. "
         "After retrieving: note which files look like safe cleanup candidates — "
         "old installers, archived downloads, unused media, old backups. "
         "Flag anything that might be important (old documents, project files) as 'check before deleting'. "
