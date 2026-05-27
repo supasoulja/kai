@@ -48,6 +48,8 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 
 ## Setup
 
+### Windows
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/supasoulja/newb_agent
@@ -55,8 +57,7 @@ cd newb_agent
 
 # 2. Create a virtual environment
 python -m venv .venv
-.venv/Scripts/activate    # Windows
-# source .venv/bin/activate  # Linux/Mac
+.venv\Scripts\activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
@@ -69,12 +70,53 @@ ollama pull qwen3:8b              # reasoning model (~6.0 GB)
 ollama pull qwen3-embedding:4b    # HQ embedding for shutdown re-embed (~2.5 GB)
 
 # 5. Run
-python app.py     # desktop app (recommended)
+python app.py     # desktop app (recommended — requires desktop extras)
 python web.py     # browser-based web UI
 python cli.py     # terminal REPL
 ```
 
-Or on Windows, double-click `start.bat` — it auto-detects the venv.
+Or double-click `start.bat` — it auto-detects the venv and pulls models if needed.
+
+For the desktop app (`python app.py`), also install desktop extras:
+```bash
+pip install -r requirements-desktop.txt
+```
+
+### Linux
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/supasoulja/newb_agent
+cd newb_agent
+
+# 2. Create a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 5. Pull required models
+ollama pull qwen3.5:9b            # primary model (~6.3 GB)
+
+# Optional:
+ollama pull qwen3:8b              # reasoning model (~6.0 GB)
+ollama pull qwen3-embedding:4b    # HQ embedding for shutdown re-embed (~2.5 GB)
+
+# 6. Run
+python web.py     # browser-based web UI (recommended on Linux)
+python cli.py     # terminal REPL
+```
+
+Or run `./start.sh` — it auto-detects the venv, installs deps, and pulls models if needed.
+
+> **Note:** On Linux, some tools (crash logs, Windows updates, startup programs, restore
+> points, disk cleanup) are Windows-specific and will report "only available on Windows."
+> Core tools (system info, file operations, network diagnostics, web search, notes,
+> memory) work fully on both platforms.
 
 First run downloads a small (~25 MB) ONNX embedding model and prompts you to register an account.
 
@@ -82,11 +124,11 @@ First run downloads a small (~25 MB) ONNX embedding model and prompts you to reg
 
 ## Running Modes
 
-| Mode | Command | What you get |
-|------|---------|-------------|
-| **Desktop app** | `python app.py` | Native window, system tray, hotkey, close-to-tray dialog |
-| **Web UI** | `python web.py` | Browser at `http://localhost:7860`, same full UI |
-| **CLI** | `python cli.py` | Terminal REPL with `:commands` |
+| Mode | Command | Platform | What you get |
+|------|---------|----------|-------------|
+| **Desktop app** | `python app.py` | Windows | Native window, system tray, hotkey, close-to-tray dialog |
+| **Web UI** | `python web.py` | Windows + Linux | Browser at `http://localhost:7860`, same full UI |
+| **CLI** | `python cli.py` | Windows + Linux | Terminal REPL with `:commands` |
 
 ---
 
@@ -215,7 +257,9 @@ newb_agent/
 ├── web.py                    <- FastAPI server + SSE streaming + WebSocket
 ├── cli.py                    <- terminal REPL
 ├── start.bat                 <- Windows launcher (auto-detects venv)
-├── requirements.txt
+├── start.sh                  <- Linux launcher (auto-detects venv)
+├── requirements.txt          <- core deps (all platforms)
+├── requirements-desktop.txt  <- extras for desktop app (pywebview, pystray)
 ├── kai/
 │   ├── persona.md            <- edit this to change behavior
 │   ├── brain.py              <- Ollama client + ReAct loop + event emissions

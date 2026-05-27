@@ -3,11 +3,17 @@ system.crashes — recent Windows Event Log errors and critical events.
 
 Pulls from the System and Application logs. Filters out noise (DCOM 10016,
 driver verifier chatter, etc.) to surface actual problems.
+
+Platform: Windows only (uses PowerShell / Windows Event Log).
 """
 import subprocess
+import sys
 import json
 
 from kai.tools.registry import registry
+
+_IS_WINDOWS = sys.platform == "win32"
+_LINUX_MSG = "This tool is only available on Windows. On Linux, check: journalctl -p err -b"
 
 # Event sources that are usually noise — skip them
 _NOISE_SOURCES = {
@@ -34,6 +40,8 @@ _NOISE_IDS = {10016, 10010, 7031}
     ),
 )
 def get_crash_logs() -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG
     events = _fetch_events(days=7, max_events=20)
     events = _filter_noise(events)
 
@@ -121,6 +129,8 @@ def _filter_noise(events: list[dict]) -> list[dict]:
     },
 )
 def get_gpu_crashes(days: int = 30) -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG
     ps = f"""
 $start = (Get-Date).AddDays(-{int(days)})
 $results = @()
@@ -248,6 +258,8 @@ _SYSTEM_PROCS = {
     },
 )
 def get_game_crashes(days: int = 7, game_name: str = "") -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG
     game_filter = game_name.strip().lower()
     ps = f"""
 $start = (Get-Date).AddDays(-{int(days)})

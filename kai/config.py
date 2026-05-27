@@ -93,7 +93,11 @@ NOTES_SEARCH_TOP_K = 5
 # ── Document RAG ───────────────────────────────────────────────────────────────
 RAG_TOP_K     = 3    # max chunks auto-injected into context per query
 RAG_THRESHOLD = 0.5  # cosine distance cutoff (0=identical, 2=opposite); 0.5 = relevant
-WORKSPACE_DIR      = Path("C:/KaiFiles")   # only folder Kai can write files to
+import sys as _sys
+WORKSPACE_DIR      = (                     # only folder Kai can write files to
+    Path("C:/KaiFiles") if _sys.platform == "win32"
+    else Path.home() / "KaiFiles"
+)
 
 # Git repos Kai is allowed to clone. Add URLs here to grant access.
 # Trailing slashes and .git suffixes are ignored during comparison.

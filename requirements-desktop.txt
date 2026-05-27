@@ -1,0 +1,13 @@
+# Extra dependencies for the native desktop app (python app.py).
+# Install these ON TOP of the core requirements:
+#   pip install -r requirements.txt
+#   pip install -r requirements-desktop.txt
+#
+# On Linux you also need system packages first:
+#   Ubuntu/Debian:  sudo apt install python3-gi gir1.2-webkit2-4.1 libappindicator3-dev
+#   Fedora:         sudo dnf install python3-gobject webkit2gtk4.1 libappindicator-gtk3
+
+pywebview>=5.0
+pystray
+Pillow
+keyboard

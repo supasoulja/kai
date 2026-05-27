@@ -2,26 +2,47 @@
 files.* tools — find large/old files, check folder sizes, list recent files,
 read file contents, list directory contents.
 All read-only. No files are moved, deleted, or modified.
+
+Platform: Cross-platform.  PowerShell is used on Windows for disk scanning;
+pure Python / shell commands are used on Linux.
 """
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 from kai.tools.registry import registry
 
-
+_IS_WINDOWS = sys.platform == "win32"
 _TIMEOUT_SENTINEL = "__TIMEOUT__"
+
 
 def _ps(cmd: str, timeout: int = 45) -> str | None:
     """
     Run a PowerShell command, return stdout or None on empty result.
     Returns _TIMEOUT_SENTINEL string on timeout so callers can give honest feedback.
+    Only works on Windows.
     """
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
             capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace",
+        )
+        out = r.stdout.strip()
+        return out if out else None
+    except subprocess.TimeoutExpired:
+        return _TIMEOUT_SENTINEL
+    except Exception:
+        return None
+
+
+def _sh(cmd: str, timeout: int = 45) -> str | None:
+    """Run a shell command on Linux, return stdout or None."""
+    try:
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout,
         )
         out = r.stdout.strip()
         return out if out else None
@@ -38,16 +59,24 @@ def _safe_path(path: str) -> str:
     All backslashes normalized to forward slashes (PS handles both, avoids
     trailing backslash escaping the closing quote)."""
     p = path.strip().strip('"')   # remove surrounding double-quotes only
-    p = p.replace("`", "")        # remove PS backtick (escape/expansion char)
-    p = p.replace("'", "''")      # PS literal single-quote escape
-    p = p.replace("\\", "/")      # normalize to forward slash
+    if _IS_WINDOWS:
+        p = p.replace("`", "")        # remove PS backtick (escape/expansion char)
+        p = p.replace("'", "''")      # PS literal single-quote escape
+        p = p.replace("\\", "/")      # normalize to forward slash
     return p
 
 
 def _is_drive_root(path: str) -> bool:
-    """Check if a path is a drive root like C:/ or D:/."""
+    """Check if a path is a drive root like C:/ or D:/ (Windows only)."""
     p = path.replace("\\", "/").rstrip("/")
     return len(p) == 2 and p[1] == ":" and p[0].isalpha()
+
+
+def _is_fs_root(path: str) -> bool:
+    """Check if a path is the filesystem root (/ on Linux, C:/ etc. on Windows)."""
+    if _IS_WINDOWS:
+        return _is_drive_root(path)
+    return path.rstrip("/") == "" or path == "/"
 
 
 def _default_home() -> str:
@@ -80,49 +109,107 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
     top_n = max(1, min(int(top_n), 100))
     path = _safe_path(path) or _default_home()
 
-    # On drive roots, scan folders one at a time to avoid timeouts
-    if _is_drive_root(path):
-        return _disk_usage_chunked(path, top_n)
+    # On filesystem roots, scan folders one at a time to avoid timeouts
+    if _is_fs_root(path):
+        if _IS_WINDOWS:
+            return _disk_usage_chunked_win(path, top_n)
+        else:
+            return _disk_usage_linux(path, top_n)
 
-    cmd = (
-        f"Get-ChildItem -Path '{path}' -Directory -Force -ErrorAction SilentlyContinue | "
-        f"ForEach-Object {{ "
-        f"  $sz = (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | "
-        f"    Measure-Object -Property Length -Sum).Sum; "
-        f"  if ($null -eq $sz) {{ $sz = 0 }}; "
-        f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round($sz/1MB,0)}} "
-        f"}} | Sort-Object SizeMB -Descending | Select-Object -First {int(top_n)} | ConvertTo-Json"
-    )
-    out = _ps(cmd, timeout=120)
-    if out == _TIMEOUT_SENTINEL:
-        return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
-    if not out:
-        return f"Could not analyze '{path}'. Check the path exists and is accessible."
+    if _IS_WINDOWS:
+        cmd = (
+            f"Get-ChildItem -Path '{path}' -Directory -Force -ErrorAction SilentlyContinue | "
+            f"ForEach-Object {{ "
+            f"  $sz = (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | "
+            f"    Measure-Object -Property Length -Sum).Sum; "
+            f"  if ($null -eq $sz) {{ $sz = 0 }}; "
+            f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round($sz/1MB,0)}} "
+            f"}} | Sort-Object SizeMB -Descending | Select-Object -First {int(top_n)} | ConvertTo-Json"
+        )
+        out = _ps(cmd, timeout=120)
+        if out == _TIMEOUT_SENTINEL:
+            return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
+        if not out:
+            return f"Could not analyze '{path}'. Check the path exists and is accessible."
+        try:
+            data = json.loads(out)
+            if isinstance(data, dict):
+                data = [data]
+            lines = [f"Folder sizes in {path}:"]
+            for item in data:
+                mb = item.get("SizeMB") or 0
+                name = item.get("Path", "?")
+                size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+                lines.append(f"  {size_str:>10}  {name}")
+            return "\n".join(lines)
+        except Exception:
+            return out[:2000]
+    else:
+        return _disk_usage_linux(path, top_n)
+
+
+# ── Linux disk usage helpers ──────────────────────────────────────────
+
+_SKIP_DIRS_LINUX = {
+    "proc", "sys", "dev", "run", "snap", "lost+found", "mnt", "media",
+}
+
+def _disk_usage_linux(path: str, top_n: int = 12) -> str:
+    """Scan folder sizes using du on Linux."""
+    p = Path(path)
+    if not p.exists():
+        return f"Could not analyze '{path}'. Path does not exist."
+
+    # du -s --block-size=1M on each top-level dir
     try:
-        data = json.loads(out)
-        if isinstance(data, dict):
-            data = [data]
-        lines = [f"Folder sizes in {path}:"]
-        for item in data:
-            mb = item.get("SizeMB") or 0
-            name = item.get("Path", "?")
-            size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
-            lines.append(f"  {size_str:>10}  {name}")
-        return "\n".join(lines)
-    except Exception:
-        return out[:2000]
+        entries = sorted(p.iterdir())
+    except PermissionError:
+        return f"Permission denied: {path}"
+
+    results: list[tuple[str, int]] = []
+    skipped: list[str] = []
+
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name_lower = entry.name.lower()
+        if name_lower in _SKIP_DIRS_LINUX or name_lower.startswith("."):
+            skipped.append(str(entry))
+            continue
+        out = _sh(f"du -s --block-size=1M '{entry}' 2>/dev/null", timeout=15)
+        if out == _TIMEOUT_SENTINEL:
+            skipped.append(f"{entry} (scan timed out)")
+            continue
+        if out:
+            try:
+                mb = int(out.split()[0])
+                results.append((str(entry), mb))
+            except (ValueError, IndexError):
+                pass
+
+    results.sort(key=lambda x: x[1], reverse=True)
+    results = results[:top_n]
+
+    lines = [f"Folder sizes in {path}:"]
+    for folder, mb in results:
+        size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+        lines.append(f"  {size_str:>10}  {folder}")
+    if skipped:
+        lines.append(f"\nSkipped {len(skipped)} system/hidden folder(s)")
+    return "\n".join(lines)
 
 
-_SKIP_FOLDERS = {
+# ── Windows disk usage helpers ────────────────────────────────────────
+
+_SKIP_FOLDERS_WIN = {
     "windows", "$recycle.bin", "system volume information",
     "recovery", "$winreagent", "$sysreset", "documents and settings",
 }
 
 
-def _disk_usage_chunked(drive: str, top_n: int = 12) -> str:
+def _disk_usage_chunked_win(drive: str, top_n: int = 12) -> str:
     """Scan a drive root one folder at a time. Skips system dirs, skips
     any folder that takes longer than 15s to enumerate."""
-    # List top-level folders
     list_cmd = (
         f"Get-ChildItem -Path '{drive}' -Directory -Force -ErrorAction SilentlyContinue | "
         f"Select-Object -ExpandProperty FullName"
@@ -132,12 +219,12 @@ def _disk_usage_chunked(drive: str, top_n: int = 12) -> str:
         return f"Could not list folders in '{drive}'."
 
     folders = [f.strip() for f in out.splitlines() if f.strip()]
-    results: list[tuple[str, int]] = []  # (path, size_mb)
+    results: list[tuple[str, int]] = []
     skipped: list[str] = []
 
     for folder in folders:
         name = Path(folder).name.lower()
-        if name in _SKIP_FOLDERS:
+        if name in _SKIP_FOLDERS_WIN:
             skipped.append(folder)
             continue
 
@@ -204,6 +291,13 @@ def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> s
     path = _safe_path(path) or _default_home()
     min_bytes = min_size_mb * 1024 * 1024
 
+    if _IS_WINDOWS:
+        return _find_large_win(path, min_bytes, min_size_mb, top_n)
+    else:
+        return _find_large_linux(path, min_bytes, min_size_mb, top_n)
+
+
+def _find_large_win(path: str, min_bytes: int, min_size_mb: int, top_n: int) -> str:
     # When scanning a drive root, exclude slow/protected system directories
     if _is_drive_root(path):
         exclude_filter = (
@@ -237,6 +331,45 @@ def find_large_files(path: str = "", min_size_mb: int = 0, top_n: int = 10) -> s
         )
     if not out:
         return f"No files found in '{path}'."
+    return _format_large_results(out, path, min_size_mb)
+
+
+def _find_large_linux(path: str, min_bytes: int, min_size_mb: int, top_n: int) -> str:
+    # Use find + sort to locate largest files
+    size_filter = f"-size +{min_size_mb}M " if min_size_mb > 0 else ""
+    # Exclude system dirs on root scan
+    excludes = ""
+    if _is_fs_root(path):
+        for d in ("proc", "sys", "dev", "run"):
+            excludes += f" -path '/{d}' -prune -o"
+    cmd = (
+        f"find '{path}' {excludes} -type f {size_filter}"
+        f"-printf '%s %p\\n' 2>/dev/null | sort -rn | head -n {top_n}"
+    )
+    out = _sh(cmd, timeout=120)
+    if out == _TIMEOUT_SENTINEL:
+        return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
+    if not out:
+        return f"No files found in '{path}'."
+
+    header = (
+        f"Largest files (>{min_size_mb} MB) in {path}:"
+        if min_size_mb > 0
+        else f"Largest files in {path}:"
+    )
+    lines = [header]
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            try:
+                mb = round(int(parts[0]) / 1_048_576, 1)
+                lines.append(f"  {mb:>8.1f} MB  {parts[1]}")
+            except ValueError:
+                pass
+    return "\n".join(lines)
+
+
+def _format_large_results(out: str, path: str, min_size_mb: int) -> str:
     try:
         data = json.loads(out)
         if isinstance(data, dict):
@@ -298,34 +431,59 @@ def find_old_files(
     top_n = max(1, min(int(top_n), 100))
     path = _safe_path(path) or _default_home()
     min_bytes = min_size_mb * 1024 * 1024
-    cmd = (
-        f"$cutoff = (Get-Date).AddDays(-{int(days)}); "
-        f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "
-        f"Where-Object {{$_.LastWriteTime -lt $cutoff -and $_.Length -gt {min_bytes}}} | "
-        f"Sort-Object LastWriteTime | "
-        f"Select-Object -First {int(top_n)} FullName, "
-        f"@{{N='LastModified';E={{$_.LastWriteTime.ToString('yyyy-MM-dd')}}}}, "
-        f"@{{N='SizeMB';E={{[math]::Round($_.Length/1MB,1)}}}} | "
-        f"ConvertTo-Json"
-    )
-    out = _ps(cmd, timeout=90)
-    if out == _TIMEOUT_SENTINEL:
-        return f"Scan of '{path}' timed out. Try a more specific subfolder."
-    if not out:
-        return f"No files older than {days} days (>{min_size_mb} MB) found in '{path}'."
-    try:
-        data = json.loads(out)
-        if isinstance(data, dict):
-            data = [data]
+
+    if _IS_WINDOWS:
+        cmd = (
+            f"$cutoff = (Get-Date).AddDays(-{int(days)}); "
+            f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "
+            f"Where-Object {{$_.LastWriteTime -lt $cutoff -and $_.Length -gt {min_bytes}}} | "
+            f"Sort-Object LastWriteTime | "
+            f"Select-Object -First {int(top_n)} FullName, "
+            f"@{{N='LastModified';E={{$_.LastWriteTime.ToString('yyyy-MM-dd')}}}}, "
+            f"@{{N='SizeMB';E={{[math]::Round($_.Length/1MB,1)}}}} | "
+            f"ConvertTo-Json"
+        )
+        out = _ps(cmd, timeout=90)
+        if out == _TIMEOUT_SENTINEL:
+            return f"Scan of '{path}' timed out. Try a more specific subfolder."
+        if not out:
+            return f"No files older than {days} days (>{min_size_mb} MB) found in '{path}'."
+        try:
+            data = json.loads(out)
+            if isinstance(data, dict):
+                data = [data]
+            lines = [f"Files not modified in {days}+ days (>{min_size_mb} MB) in {path}:"]
+            for item in data:
+                mb = item.get("SizeMB", 0)
+                name = item.get("FullName", "?")
+                last = item.get("LastModified", "?")
+                lines.append(f"  {last}  {mb:>8.1f} MB  {name}")
+            return "\n".join(lines)
+        except Exception:
+            return out[:2000]
+    else:
+        # Linux: use find with -mtime and -size
+        size_filter = f"-size +{min_size_mb}M " if min_size_mb > 0 else ""
+        cmd = (
+            f"find '{path}' -type f -mtime +{days} {size_filter}"
+            f"-printf '%T+ %s %p\\n' 2>/dev/null | sort | head -n {top_n}"
+        )
+        out = _sh(cmd, timeout=90)
+        if out == _TIMEOUT_SENTINEL:
+            return f"Scan of '{path}' timed out. Try a more specific subfolder."
+        if not out:
+            return f"No files older than {days} days (>{min_size_mb} MB) found in '{path}'."
         lines = [f"Files not modified in {days}+ days (>{min_size_mb} MB) in {path}:"]
-        for item in data:
-            mb = item.get("SizeMB", 0)
-            name = item.get("FullName", "?")
-            last = item.get("LastModified", "?")
-            lines.append(f"  {last}  {mb:>8.1f} MB  {name}")
+        for line in out.splitlines():
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                try:
+                    date_str = parts[0][:10]  # YYYY-MM-DD from ISO timestamp
+                    mb = round(int(parts[1]) / 1_048_576, 1)
+                    lines.append(f"  {date_str}  {mb:>8.1f} MB  {parts[2]}")
+                except (ValueError, IndexError):
+                    pass
         return "\n".join(lines)
-    except Exception:
-        return out[:2000]
 
 
 @registry.tool(
@@ -345,30 +503,53 @@ def find_old_files(
 def get_recent_files(path: str = "", count: int = 15) -> str:
     count = max(1, min(int(count), 100))
     path = _safe_path(path) or _default_home()
-    cmd = (
-        f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "
-        f"Sort-Object LastWriteTime -Descending | "
-        f"Select-Object -First {int(count)} FullName, "
-        f"@{{N='Modified';E={{$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm')}}}}, "
-        f"@{{N='SizeMB';E={{[math]::Round($_.Length/1MB,2)}}}} | "
-        f"ConvertTo-Json"
-    )
-    out = _ps(cmd, timeout=60)
-    if not out:
-        return f"No files found in '{path}'."
-    try:
-        data = json.loads(out)
-        if isinstance(data, dict):
-            data = [data]
+
+    if _IS_WINDOWS:
+        cmd = (
+            f"Get-ChildItem -Path '{path}' -Recurse -File -ErrorAction SilentlyContinue | "
+            f"Sort-Object LastWriteTime -Descending | "
+            f"Select-Object -First {int(count)} FullName, "
+            f"@{{N='Modified';E={{$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm')}}}}, "
+            f"@{{N='SizeMB';E={{[math]::Round($_.Length/1MB,2)}}}} | "
+            f"ConvertTo-Json"
+        )
+        out = _ps(cmd, timeout=60)
+        if not out:
+            return f"No files found in '{path}'."
+        try:
+            data = json.loads(out)
+            if isinstance(data, dict):
+                data = [data]
+            lines = [f"Recently modified files in {path}:"]
+            for item in data:
+                mb = item.get("SizeMB", 0)
+                name = item.get("FullName", "?")
+                mod = item.get("Modified", "?")
+                lines.append(f"  {mod}  {mb:>8.2f} MB  {name}")
+            return "\n".join(lines)
+        except Exception:
+            return out[:2000]
+    else:
+        # Linux: use find -printf with ISO timestamp + size + path
+        cmd = (
+            f"find '{path}' -maxdepth 3 -type f "
+            f"-printf '%T+ %s %p\\n' 2>/dev/null | "
+            f"sort -r | head -n {count}"
+        )
+        out = _sh(cmd, timeout=60)
+        if not out:
+            return f"No files found in '{path}'."
         lines = [f"Recently modified files in {path}:"]
-        for item in data:
-            mb = item.get("SizeMB", 0)
-            name = item.get("FullName", "?")
-            mod = item.get("Modified", "?")
-            lines.append(f"  {mod}  {mb:>8.2f} MB  {name}")
+        for line in out.splitlines():
+            parts = line.split(None, 2)
+            if len(parts) >= 3:
+                try:
+                    date_str = parts[0][:16].replace("+", " ")  # "2024-01-15 14:30"
+                    mb = round(int(parts[1]) / 1_048_576, 2)
+                    lines.append(f"  {date_str}  {mb:>8.2f} MB  {parts[2]}")
+                except (ValueError, IndexError):
+                    pass
         return "\n".join(lines)
-    except Exception:
-        return out[:2000]
 
 
 _MAX_LINES  = 400   # max lines returned per read

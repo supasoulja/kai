@@ -5,13 +5,19 @@ Sources (no kernel driver required — WinRing0/hwmon.exe removed):
   - GPU: nvidia-smi (NVIDIA only; AMD/Intel fall back to WMI with no temps)
   - CPU temp: WMI MSAcpi_ThermalZoneTemperature (best-effort, hardware-dependent)
   - CPU load/clock: Win32_Processor via WMI
+
+Platform: Windows only (uses PowerShell / WMI).  On Linux, use `sensors` or
+`lm-sensors` directly — this module returns a helpful message instead.
 """
 import json
 import subprocess
+import sys
 import threading
 import time
 
 from kai.tools.registry import registry
+
+_IS_WINDOWS = sys.platform == "win32"
 
 _cache_lock      = threading.Lock()
 _cache_result:   str | None = None
@@ -68,6 +74,11 @@ def _maybe_refresh() -> None:
     ),
 )
 def get_temps() -> str:
+    if not _IS_WINDOWS:
+        return (
+            "system.temps is only available on Windows (uses PowerShell / WMI).\n"
+            "On Linux, install lm-sensors and run: sensors"
+        )
     global _cache_result, _cache_time
     _maybe_refresh()
     with _cache_lock:
@@ -661,5 +672,6 @@ def _gpu_util_wmi() -> int | None:
         return None
 
 
-# Pre-warm cache on module load
-_maybe_refresh()
+# Pre-warm cache on module load (Windows only)
+if _IS_WINDOWS:
+    _maybe_refresh()

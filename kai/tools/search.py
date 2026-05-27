@@ -71,7 +71,19 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
         with urllib.request.urlopen(req, timeout=10) as resp:
             html = resp.read().decode("utf-8", errors="replace")
 
-        return _parse_results(html, max_results)
+        results = _parse_results(html, max_results)
+
+        # Warn if DDG returned HTML but we parsed nothing — likely a
+        # layout change broke the regex patterns.
+        if not results and len(html) > 1000:
+            print(
+                "[!] search.web: DuckDuckGo returned HTML "
+                f"({len(html)} chars) but 0 results parsed. "
+                "The HTML class names may have changed — "
+                "check _parse_results() regex patterns."
+            )
+
+        return results
     except Exception:
         return []
 

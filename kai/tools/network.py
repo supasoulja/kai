@@ -1,11 +1,16 @@
 """
 network.* tools — ping, traceroute, and full connectivity diagnostics.
 All read-only. No configuration changes made.
+
+Platform: Cross-platform (uses native ping/traceroute with OS-specific flags).
 """
 import re
 import subprocess
+import sys
 
 from kai.tools.registry import registry
+
+_IS_WINDOWS = sys.platform == "win32"
 
 
 def _run(args: list[str], timeout: int = 60) -> str:
@@ -29,33 +34,55 @@ def _safe_host(host: str) -> str:
 
 
 def _parse_ping(output: str, host: str, count: int) -> str:
-    """Parse Windows ping.exe output into a clean summary."""
+    """Parse ping output into a clean summary. Handles both Windows and Linux formats."""
     if not output:
         return f"Ping to {host} timed out (no response)."
 
     lower = output.lower()
     if "could not find host" in lower or "request could not find" in lower:
         return f"Could not resolve host: {host}. DNS may not be working."
+    # Linux: "Name or service not known" / "Temporary failure in name resolution"
+    if "unknown host" in lower or "name or service not known" in lower or "failure in name resolution" in lower:
+        return f"Could not resolve host: {host}. DNS may not be working."
     if "destination host unreachable" in lower or "request timed out" in lower:
-        # Count how many timed out
         timeouts = lower.count("request timed out")
         loss_pct = int(timeouts / count * 100)
         return f"Ping {host}: {loss_pct}% packet loss (host may be down or blocking ICMP)."
 
-    # Parse "Lost = X (Y% loss)"
+    # ── Try Windows format first ──
+    # "Lost = X (Y% loss)"
     loss_m = re.search(r"Lost\s*=\s*\d+\s*\(\s*(\d+)%\s*loss\)", output)
-    # Parse "Minimum = Xms, Maximum = Xms, Average = Xms"
+    # "Minimum = Xms, Maximum = Xms, Average = Xms"
     rtt_m = re.search(
         r"Minimum\s*=\s*(\d+)ms.*?Maximum\s*=\s*(\d+)ms.*?Average\s*=\s*(\d+)ms",
         output, re.DOTALL | re.IGNORECASE,
     )
+
+    # ── Try Linux format ──
+    # "X packets transmitted, Y received, Z% packet loss"
+    if not loss_m:
+        loss_m = re.search(r"(\d+)%\s*packet loss", output)
+    # "rtt min/avg/max/mdev = 1.234/5.678/9.012/1.234 ms"
+    if not rtt_m:
+        rtt_linux = re.search(
+            r"(?:rtt|round-trip)\s+min/avg/max(?:/\w+)?\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)",
+            output,
+        )
+        if rtt_linux:
+            # Wrap into the same group structure — convert float to int
+            class _G:
+                def __init__(self, mn, avg, mx):
+                    self._v = (mn, avg, mx)
+                def group(self, i):
+                    return str(int(float(self._v[i - 1])))
+            rtt_m = _G(rtt_linux.group(1), rtt_linux.group(2), rtt_linux.group(3))
 
     if not loss_m and not rtt_m:
         return output[:600]
 
     loss = loss_m.group(1) if loss_m else "?"
     if rtt_m:
-        mn, mx, avg = rtt_m.group(1), rtt_m.group(2), rtt_m.group(3)
+        mn, mx, avg = rtt_m.group(1), rtt_m.group(3), rtt_m.group(2)
         quality = ""
         avg_ms = int(avg)
         if avg_ms < 30:
@@ -96,7 +123,9 @@ def ping_host(host: str, count: int = 10) -> str:
     if not host:
         return "Invalid host."
     count = max(1, min(int(count), 50))
-    out = _run(["ping", "-n", str(count), host], timeout=count * 3 + 10)
+    # Windows: ping -n <count>   Linux: ping -c <count>
+    flag = "-n" if _IS_WINDOWS else "-c"
+    out = _run(["ping", flag, str(count), host], timeout=count * 3 + 10)
     return _parse_ping(out, host, count)
 
 
@@ -122,8 +151,13 @@ def traceroute(host: str) -> str:
     host = _safe_host(host)
     if not host:
         return "Invalid host."
-    # -d = no DNS lookup (faster), -w 1000 = 1s timeout per hop, -h 20 = max 20 hops
-    out = _run(["tracert", "-d", "-w", "1000", "-h", "20", host], timeout=90)
+    if _IS_WINDOWS:
+        # -d = no DNS lookup (faster), -w 1000 = 1s timeout per hop, -h 20 = max 20 hops
+        cmd = ["tracert", "-d", "-w", "1000", "-h", "20", host]
+    else:
+        # Linux: traceroute -n (no DNS) -m 20 (max hops) -w 1 (1s timeout)
+        cmd = ["traceroute", "-n", "-m", "20", "-w", "1", host]
+    out = _run(cmd, timeout=90)
     if not out:
         return f"Traceroute to {host} timed out."
     # Trim the header/footer and limit output
@@ -147,35 +181,47 @@ def traceroute(host: str) -> str:
 def full_diagnostic() -> str:
     import subprocess as _sp
 
-    # Get default gateway from routing table
+    # Get default gateway from routing table (platform-specific)
     gateway = ""
     try:
-        r = _sp.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
-             "Sort-Object RouteMetric | Select-Object -First 1).NextHop"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
-        )
-        gateway = r.stdout.strip()
+        if _IS_WINDOWS:
+            r = _sp.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+                 "Sort-Object RouteMetric | Select-Object -First 1).NextHop"],
+                capture_output=True, text=True, timeout=10,
+                encoding="utf-8", errors="replace",
+            )
+            gateway = r.stdout.strip()
+        else:
+            # Linux: ip route show default
+            r = _sp.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # Output: "default via 192.168.1.1 dev eth0 ..."
+            m = re.search(r"via\s+([\d.]+)", r.stdout)
+            if m:
+                gateway = m.group(1)
     except Exception:
         pass
 
+    ping_flag = "-n" if _IS_WINDOWS else "-c"
     results = []
 
     # 1. Gateway ping
     if gateway and gateway not in ("", "{}"):
-        out = _run(["ping", "-n", "5", gateway], timeout=25)
+        out = _run(["ping", ping_flag, "5", gateway], timeout=25)
         results.append(_parse_ping(out, f"Gateway ({gateway})", 5))
     else:
         results.append("Gateway: could not determine default gateway.")
 
     # 2. Google DNS
-    out = _run(["ping", "-n", "10", "8.8.8.8"], timeout=40)
+    out = _run(["ping", ping_flag, "10", "8.8.8.8"], timeout=40)
     results.append(_parse_ping(out, "8.8.8.8 (Google DNS)", 10))
 
     # 3. Cloudflare DNS
-    out = _run(["ping", "-n", "10", "1.1.1.1"], timeout=40)
+    out = _run(["ping", ping_flag, "10", "1.1.1.1"], timeout=40)
     results.append(_parse_ping(out, "1.1.1.1 (Cloudflare)", 10))
 
     return "\n\n".join(results)

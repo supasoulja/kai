@@ -2,11 +2,18 @@
 pc.* tools — startup programs, event logs, network info, Windows updates,
 and deep system scan.
 All read-only. No system changes made.
+
+Platform: Windows only (uses PowerShell / WMI).  On Linux these tools return
+a helpful message instead of crashing.
 """
 import json
 import subprocess
+import sys
 import threading
 from kai.tools.registry import registry
+
+_IS_WINDOWS = sys.platform == "win32"
+_LINUX_MSG = "This tool is only available on Windows."
 
 
 def _ps(cmd: str, timeout: int = 20) -> str | None:
@@ -36,6 +43,8 @@ def _ps(cmd: str, timeout: int = 20) -> str | None:
     ),
 )
 def get_startup_programs() -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG
     cmd = (
         "Get-CimInstance Win32_StartupCommand | "
         "Select-Object Name, Command, Location, User | "
@@ -83,6 +92,8 @@ def get_startup_programs() -> str:
     },
 )
 def get_event_logs(hours: int = 24, level: str = "Error") -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG + " On Linux, check: journalctl -p err -b --since '24 hours ago'"
     level_map = {"warning": "3", "warn": "3", "both": "2,3", "all": "2,3"}
     levels = level_map.get(level.strip().lower(), "2")  # default Error
 
@@ -119,6 +130,8 @@ def get_event_logs(hours: int = 24, level: str = "Error") -> str:
     description="Get active network adapter info: IP address, gateway, DNS, and link speed.",
 )
 def get_network_info() -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG + " On Linux, use: ip addr && ip route"
     cmd = (
         "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { "
         "  $idx = $_.InterfaceIndex; "
@@ -163,6 +176,8 @@ def get_network_info() -> str:
     ),
 )
 def get_windows_updates() -> str:
+    if not _IS_WINDOWS:
+        return _LINUX_MSG + " On Linux, check updates with your package manager (apt, dnf, pacman)."
     cmd = (
         "try { "
         "  $s = New-Object -ComObject Microsoft.Update.Session; "
@@ -217,11 +232,11 @@ def deep_scan() -> str:
     """
     Runs all major diagnostics concurrently and returns a consolidated health report.
     Calls the individual tool functions directly in parallel threads to save time.
+    On Linux, Windows-only sections (crashes, startup, event logs) are skipped.
     """
     # Lazy imports to avoid circular deps at module load time
     from kai.tools.system_info import get_system_info
     from kai.tools.temps import get_temps
-    from kai.tools.crash_logs import get_crash_logs
     from kai.tools.file_tools import get_disk_usage
 
     results: dict[str, str] = {}
@@ -232,14 +247,22 @@ def deep_scan() -> str:
         except Exception as exc:
             results[key] = f"(error: {exc})"
 
+    # Cross-platform tasks always run
+    disk_root = "C:\\" if _IS_WINDOWS else "/"
     tasks = [
-        ("resources", get_system_info,      [], {}),
-        ("temps",     get_temps,            [], {}),
-        ("crashes",   get_crash_logs,       [], {}),
-        ("startup",   get_startup_programs, [], {}),
-        ("errors",    get_event_logs,       [], {"hours": 48, "level": "Error"}),
-        ("disk",      get_disk_usage,       [], {"path": "C:\\", "top_n": 8}),
+        ("resources", get_system_info, [], {}),
+        ("temps",     get_temps,       [], {}),
+        ("disk",      get_disk_usage,  [], {"path": disk_root, "top_n": 8}),
     ]
+
+    # Windows-only tasks
+    if _IS_WINDOWS:
+        from kai.tools.crash_logs import get_crash_logs
+        tasks.extend([
+            ("crashes", get_crash_logs,       [], {}),
+            ("startup", get_startup_programs, [], {}),
+            ("errors",  get_event_logs,       [], {"hours": 48, "level": "Error"}),
+        ])
 
     threads = [
         threading.Thread(target=run, args=(key, fn, *args), kwargs=kwargs, daemon=True)
@@ -273,7 +296,7 @@ def deep_scan() -> str:
         sections.append(results["startup"])
 
     if "disk" in results:
-        sections.append("-- Disk Usage (C:\\) --")
+        sections.append(f"-- Disk Usage ({disk_root}) --")
         sections.append(results["disk"])
 
     return "\n\n".join(sections)
