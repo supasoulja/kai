@@ -189,6 +189,16 @@ _TOOL_PHRASE_PATTERNS = [
     r"(?:move|copy|rename|delete|trash).{0,5}(?:it|that|this|them)",
     r"(?:put|bring|copy).{0,15}(?:into|to|in).{0,15}(?:workspace|kaifil)",
     r"approve|go\s+ahead|do\s+it|execute\s+(?:it|that|the)",
+    # Conversational system-inspection triggers (natural phrasing, no hardware noun)
+    r"(?:check|look\s+at|scan|inspect|examine|monitor|sense).{0,15}(?:your\s+|the\s+)?surroundings?",
+    r"(?:notice|see|spot|sense|find).{0,20}(?:anything|something).{0,15}(?:different|unusual|weird|odd|off|wrong|new|strange|amiss)",
+    r"(?:anything|something).{0,15}(?:different|unusual|weird|odd|off|wrong|new|strange|amiss)",
+    r"(?:dig|look|go|search|scan|check|probe|investigate).{0,10}(?:deeper|closer|harder|further|more)",
+    r"\b(?:deeper|closer)\b.{0,15}(?:scan|look|check|dig)",
+    r"(?:double|triple)[-\s]*check|take\s+another\s+look|look\s+(?:again|around)|check\s+again",
+    r"(?:run|do|perform|start).{0,15}(?:a\s+|another\s+)?(?:scan|sweep|check|diagnostic|health\s*check|inspection)",
+    r"\b(scan|sweep|diagnose|inspect)\b",
+    r"(?:what'?s|how'?s).{0,15}(?:going\s+on|happening|the\s+status|everything\s+look)",
 ]
 
 # Compose single keywords into \b(word1|word2|...)\b, then join with phrase patterns.
@@ -203,8 +213,11 @@ _TOOL_SIGNALS = re.compile(
 # Short confirmations that delegate a task — "go ahead", "yes do it", "proceed", etc.
 _FOLLOW_UP_SIGNALS = re.compile(
     r"\b(go\s*ahead|proceed|do\s*(it|that|what|them)|yes(\s*please)?|sure(\s*thing)?|"
-    r"ok(ay)?|sounds?\s*good|continue|carry\s*on|"
-    r"you\s*can(\s*do)?|please\s*do|do\s*what\s*you\s*(need|want|think))\b",
+    r"ok(ay)?|sounds?\s*good|continue|carry\s*on|keep\s*going|"
+    r"you\s*can(\s*do)?|please\s*do|do\s*what\s*you\s*(need|want|think)|"
+    # continuations that ask Kai to go further on the previous task
+    r"deeper|closer|harder|further|again|more|once\s*more|"
+    r"anything\s*else|what\s*else|keep\s*looking|look\s*more)\b",
     re.IGNORECASE,
 )
 
@@ -374,14 +387,18 @@ def _query_needs_thinking(query: str) -> bool:
 
 
 def _query_needs_tools(query: str, history: list[dict] | None = None) -> bool:
+    # Direct signal: the message itself asks for something tool-worthy.
     if _TOOL_SIGNALS.search(query):
         return True
-    # If this looks like a follow-up confirmation, check whether the last
-    # assistant turn was tool-heavy — if so, tools are still needed.
+    # Continuation: short follow-ups like "dig deeper", "do it", "look again",
+    # "anything else" carry no keywords of their own — they inherit intent from
+    # the recent conversation. If any of the last few turns (either role) were
+    # about the system or a tool, keep tools available so Kai actually re-checks
+    # instead of fabricating a scan.
     if history and _FOLLOW_UP_SIGNALS.search(query):
-        for msg in reversed(history):
-            if msg["role"] == "assistant":
-                return bool(_TOOL_SIGNALS.search(msg["content"]))
+        for msg in list(reversed(history))[:4]:
+            if _TOOL_SIGNALS.search(msg.get("content", "")):
+                return True
     return False
 
 

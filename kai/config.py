@@ -63,7 +63,7 @@ CONTEXT_WINDOW = 8192  # tokens; passed as num_ctx to Ollama
 #
 # Research: 0.1-0.3 for tool-calling agents; 0.8 (Ollama default) causes
 # hallucination drift on small models.
-TEMPERATURE_TOOL   = 0.0    # tool-call rounds: greedy (no creativity needed)
+TEMPERATURE_TOOL   = 0.1    # tool-call rounds: near-greedy, slight slack for reliability
 TEMPERATURE_REASON = 0.10   # fact extraction, compression, learning
 TEMPERATURE_FINAL  = 0.399  # final streaming answer default ("Normal" preset)
 
