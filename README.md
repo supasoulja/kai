@@ -260,6 +260,8 @@ newb_agent/
 ├── start.sh                  <- Linux launcher (auto-detects venv)
 ├── requirements.txt          <- core deps (all platforms)
 ├── requirements-desktop.txt  <- extras for desktop app (pywebview, pystray)
+├── scripts/                  <- one-off maintenance scripts (migrate_embeddings.py)
+├── user_skills/              <- user-authored .md skills (e.g. quick-cleanup.md)
 ├── kai/
 │   ├── persona.md            <- edit this to change behavior
 │   ├── brain.py              <- Ollama client + ReAct loop + event emissions

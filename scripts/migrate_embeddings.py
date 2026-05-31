@@ -5,7 +5,7 @@ Migrates the episodic_vec table from nomic-embed-text (768-dim)
 to qwen3-embedding:4b (2560-dim).
 
 Run once after pulling qwen3-embedding:4b:
-    python migrate_embeddings.py
+    python scripts/migrate_embeddings.py
 
 Handles both c:/newB (kai.db) and c:/newB-roof (roof.db) if they exist.
 """

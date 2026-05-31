@@ -3,7 +3,7 @@ Skill registry — discovers, loads, and runs skills.
 
 Skills can be:
   1. Python modules in kai/skills/ that subclass Skill
-  2. Python files in a user-facing skills/ directory (alongside the project root)
+  2. Python files in a user-facing user_skills/ directory (alongside the project root)
   3. SKILL.md markdown files with structured frontmatter (name, description, triggers, steps)
 
 The registry scans all sources at startup, deduplicates by name, and provides
@@ -217,7 +217,7 @@ class SkillRegistry:
 
         Scan order:
           1. kai/skills/ — built-in Python skill modules
-          2. extra_dirs — user-facing directories (e.g. ROOT_DIR / "skills")
+          2. extra_dirs — user-facing directories (e.g. ROOT_DIR / "user_skills")
         """
         count = 0
 
