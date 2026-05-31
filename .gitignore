@@ -4,6 +4,8 @@ kai/memory/kai's memory/
 # ── Dev docs (personal context, not for public repo) ───────────────────────────
 HISTORY_AND_VISION.md
 docs/
+BUILD_PLAN.md
+PROJECT_PLAN.md
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -47,3 +49,4 @@ data/
 
 # ── Kai workspace output (files Kai writes — user data, not source) ─────────────
 KaiFiles/
+/tests
