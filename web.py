@@ -75,6 +75,15 @@ class AddModelRequest(BaseModel):
     ollama_id: str
     think: bool = False
 
+class PresetRequest(BaseModel):
+    preset: str   # "thinking" | "normal" | "creative" | "crazy"
+
+class TemperatureRequest(BaseModel):
+    temperature: float   # per-thread override, clamped to config bounds
+
+class PresetTempsRequest(BaseModel):
+    temps: dict[str, float]   # preset key -> custom temperature
+
 # Maximum input length — prevents accidental context blowout
 _MAX_INPUT_CHARS = 8000
 
@@ -300,6 +309,11 @@ def _get_or_create_brain(user_id: int) -> Brain:
         brain._tool_index = dict(_shared_tool_index)
         brain._tool_index_ready = bool(_shared_tool_index)
         brain._memory_router_ready = bool(_shared_domain_index)
+        # Restore the user's saved generation preset (think + temperature).
+        _active = memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET
+        if _active not in cfg.GEN_PRESETS:
+            _active = cfg.DEFAULT_PRESET
+        brain.apply_preset(_active, _custom_preset_temps(memory))
         _user_brains[user_id] = brain
         return brain
 
@@ -562,19 +576,90 @@ async def set_mode(req: ModeRequest, request: Request):
     return {"ok": True, "mode": req.mode, "label": _MODE_LABELS[req.mode]}
 
 
-# ── Think mode ─────────────────────────────────────────────────────────────────
+# ── Generation presets (think + temperature) ────────────────────────────────────
 
-@app.get("/settings/think")
-async def get_think(request: Request):
+def _custom_preset_temps(memory) -> dict[str, float]:
+    """The user's saved Advanced preset temperatures (empty if none/invalid)."""
+    raw = memory.get_fact("gen_preset_temps")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return {k: float(v) for k, v in data.items() if k in cfg.GEN_PRESETS}
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
+
+def _preset_list(memory) -> list[dict]:
+    """Presets with the effective temp (user override or default) for the UI."""
+    custom = _custom_preset_temps(memory)
+    return [
+        {
+            "key": key,
+            "label": p["label"],
+            "think": p["think"],
+            "temp": custom.get(key, p["temp"]),
+            "default_temp": p["temp"],
+        }
+        for key, p in cfg.GEN_PRESETS.items()
+    ]
+
+
+@app.get("/settings/preset")
+async def get_preset(request: Request):
     brain = _brain_for(request)
-    return {"think": brain._think}
+    key = brain.memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET
+    if key not in cfg.GEN_PRESETS:
+        key = cfg.DEFAULT_PRESET
+    return {
+        "preset": key,
+        "temperature": brain._final_temp,
+        "temp_min": cfg.TEMP_MIN,
+        "temp_max": cfg.TEMP_MAX,
+        "presets": _preset_list(brain.memory),
+    }
 
 
-@app.post("/settings/think")
-async def set_think(request: Request):
+@app.post("/settings/preset")
+async def set_preset(req: PresetRequest, request: Request):
     brain = _brain_for(request)
-    brain._think = not brain._think
-    return {"think": brain._think}
+    if req.preset not in cfg.GEN_PRESETS:
+        raise HTTPException(status_code=400,
+                            detail=f"Invalid preset. Choose from: {list(cfg.GEN_PRESETS)}")
+    resolved = brain.apply_preset(req.preset, _custom_preset_temps(brain.memory))
+    brain.memory.set_fact("gen_preset", req.preset, source="user_setting")
+    return {"ok": True, "preset": req.preset, **resolved}
+
+
+@app.post("/settings/temperature")
+async def set_temperature(req: TemperatureRequest, request: Request):
+    """Per-thread temperature override (this session only — not persisted)."""
+    brain = _brain_for(request)
+    temp = brain.set_temperature(req.temperature)
+    return {"ok": True, "temperature": temp}
+
+
+@app.get("/settings/preset-temps")
+async def get_preset_temps(request: Request):
+    brain = _brain_for(request)
+    return {"presets": _preset_list(brain.memory),
+            "temp_min": cfg.TEMP_MIN, "temp_max": cfg.TEMP_MAX}
+
+
+@app.post("/settings/preset-temps")
+async def set_preset_temps(req: PresetTempsRequest, request: Request):
+    """Save custom per-preset temperatures (Advanced — persisted per user)."""
+    brain = _brain_for(request)
+    cleaned = {
+        k: max(cfg.TEMP_MIN, min(cfg.TEMP_MAX, float(v)))
+        for k, v in req.temps.items() if k in cfg.GEN_PRESETS
+    }
+    brain.memory.set_fact("gen_preset_temps", json.dumps(cleaned), source="user_setting")
+    # Re-apply the active preset so the new value takes effect immediately.
+    active = brain.memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET
+    if active in cfg.GEN_PRESETS:
+        brain.apply_preset(active, cleaned)
+    return {"ok": True, "presets": _preset_list(brain.memory)}
 
 
 # ── Model management ──────────────────────────────────────────────────────────
@@ -587,7 +672,7 @@ async def get_models(request: Request):
     all_models = _models.list_models()
     # Mark which one is currently active
     for m in all_models:
-        m["active"] = (m["ollama_id"] == brain.model and m["think"] == brain._think)
+        m["active"] = (m["ollama_id"] == brain.model)
     return {"models": all_models}
 
 

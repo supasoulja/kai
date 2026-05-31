@@ -13,18 +13,18 @@ _MODELS_PATH = cfg.MEMORY_DIR / "models.json"
 
 
 def _defaults() -> list[dict]:
-    """Built-in model entries (always present, can't be deleted)."""
+    """Built-in model entries (always present, can't be deleted).
+
+    There is a single built-in model now. Thinking and creativity are controlled
+    by generation presets (see config.GEN_PRESETS), not by swapping to a separate
+    (weaker) model — qwen3.5:9b already supports native thinking. Users can still
+    add extra models (e.g. a dedicated vision model) via add_model().
+    """
     return [
         {
-            "name": "Fast",
+            "name": "Kai",
             "ollama_id": cfg.CHAT_MODEL,
             "think": False,
-            "builtin": True,
-        },
-        {
-            "name": "Heavy",
-            "ollama_id": cfg.REASONING_MODEL,
-            "think": True,
             "builtin": True,
         },
     ]

@@ -907,27 +907,125 @@ document.addEventListener('click', e => {
   }
 });
 
-// ── 8. Think Toggle ──────────────────────────────────────────────────────────
+// ── 8. Generation Mode (thinking + temperature) ───────────────────────────────
 
-async function loadThink() {
+let _presets       = [];          // [{key,label,think,temp,default_temp}]
+let _activePreset  = 'normal';
+const PRESET_LABELS = { thinking: 'Thinking', normal: 'Normal', creative: 'Creative', crazy: 'Crazy' };
+
+async function loadPreset() {
   try {
-    const d = await fetch('/settings/think').then(r => r.json());
-    _applyThink(d.think);
-  } catch { /* keep default ON */ }
+    const d = await fetch('/settings/preset').then(r => r.json());
+    _presets = d.presets || [];
+    _applyPreset(d.preset, d.temperature);
+  } catch { /* keep default */ }
 }
 
-function _applyThink(on) {
-  const btn    = $('think-toggle');
-  const status = $('think-status');
-  if (!btn) return;
-  btn.classList.toggle('active', on);
-  if (status) status.textContent = on ? 'ON' : 'OFF';
+function _applyPreset(key, temp) {
+  _activePreset = key;
+  const labelEl = $('preset-label');
+  if (labelEl) labelEl.textContent = PRESET_LABELS[key] || key;
+  document.querySelectorAll('.preset-option').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.preset === key);
+  });
+  if (typeof temp === 'number') _setTempUI(temp);
 }
 
-async function toggleThink() {
+function _setTempUI(temp) {
+  const slider = $('temp-slider');
+  const val    = $('temp-value');
+  if (slider) slider.value = temp;
+  if (val)    val.textContent = Number(temp).toFixed(2);
+}
+
+function togglePresetDropdown() {
+  const pill = $('preset-pill'), dd = $('preset-dropdown');
+  if (!pill || !dd) return;
+  const open = dd.classList.contains('open');
+  pill.classList.toggle('open', !open);
+  dd.classList.toggle('open', !open);
+}
+
+async function setPreset(key) {
+  const pill = $('preset-pill'), dd = $('preset-dropdown');
+  if (pill) pill.classList.remove('open');
+  if (dd)   dd.classList.remove('open');
   try {
-    const d = await fetch('/settings/think', { method: 'POST' }).then(r => r.json());
-    _applyThink(d.think);
+    const d = await fetch('/settings/preset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset: key }),
+    }).then(r => r.json());
+    _applyPreset(d.preset ?? key, d.temp);
+  } catch { /* ignore */ }
+}
+
+document.querySelectorAll('.preset-option').forEach(btn => {
+  btn.addEventListener('click', () => setPreset(btn.dataset.preset));
+});
+
+// Close preset dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!e.target.closest('#preset-pill') && !e.target.closest('#preset-dropdown')) {
+    const pill = $('preset-pill'), dd = $('preset-dropdown');
+    if (pill) pill.classList.remove('open');
+    if (dd)   dd.classList.remove('open');
+  }
+});
+
+// Temperature slider — live, this thread only (debounced POST)
+let _tempTimer = null;
+(function initTempSlider() {
+  const slider = $('temp-slider');
+  if (!slider) return;
+  slider.addEventListener('input', () => {
+    const t   = parseFloat(slider.value);
+    const val = $('temp-value');
+    if (val) val.textContent = t.toFixed(2);
+    clearTimeout(_tempTimer);
+    _tempTimer = setTimeout(() => {
+      fetch('/settings/temperature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ temperature: t }),
+      }).catch(() => {});
+    }, 250);
+  });
+})();
+
+// Advanced — edit + save each preset's temperature (persisted per user)
+function togglePresetAdvanced() {
+  const adv = $('preset-advanced');
+  if (!adv) return;
+  const showing = adv.style.display !== 'none';
+  adv.style.display = showing ? 'none' : 'block';
+  if (!showing) _fillAdvancedInputs();
+}
+
+function _fillAdvancedInputs() {
+  _presets.forEach(p => {
+    const inp = $('adv-' + p.key);
+    if (inp) inp.value = Number(p.temp).toFixed(2);
+  });
+}
+
+async function savePresetTemps() {
+  const temps = {};
+  ['thinking', 'normal', 'creative', 'crazy'].forEach(k => {
+    const inp = $('adv-' + k);
+    if (inp && inp.value !== '') temps[k] = parseFloat(inp.value);
+  });
+  try {
+    const d = await fetch('/settings/preset-temps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ temps }),
+    }).then(r => r.json());
+    _presets = d.presets || _presets;
+    const active = _presets.find(p => p.key === _activePreset);
+    if (active) _setTempUI(active.temp);
+    const adv = $('preset-advanced');
+    if (adv) adv.style.display = 'none';
   } catch { /* ignore */ }
 }
 
@@ -1660,7 +1758,7 @@ if (settingsUserName) settingsUserName.textContent = _currentUser.name;
 // Load everything
 loadInfo();
 loadMode();
-loadThink();
+loadPreset();
 loadModels();
 loadSessions();
 loadDmStatus();

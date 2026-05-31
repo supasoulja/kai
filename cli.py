@@ -3,7 +3,7 @@ Kai — entry point.
 Usage:
     python cli.py
     python cli.py --debug
-    python cli.py --model heavy   (use qwen3:14b with thinking)
+    python cli.py --mode thinking   (modes: thinking | normal | creative | crazy)
 """
 import argparse
 import sys
@@ -91,8 +91,8 @@ Commands:
   :trace        show last 10 turn traces (timing, tools used)
   :tools        list registered tools
   :vector       show vector table stats (episodic + RAG embeddings)
-  :model heavy  switch to reasoning model (thinking ON) for this session
-  :model fast   switch back to chat model
+  :mode <name>  set generation mode: thinking | normal | creative | crazy
+  :temp <0-2>   set temperature for this session (overrides the mode)
   :model <name> switch to a user-added model (see :models)
   :models       list all configured models
   :debug        toggle debug mode
@@ -150,26 +150,35 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
             print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
         print(f"\n  Switch with :model <name>")
 
+    elif command == ":mode":
+        key = arg.strip().lower()
+        if key in cfg.GEN_PRESETS:
+            r = brain.apply_preset(key)
+            try:
+                memory.set_fact("gen_preset", key, source="user_setting")
+            except Exception:
+                pass
+            print(f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})")
+        else:
+            print(f"  Usage: :mode <{' | '.join(cfg.GEN_PRESETS)}>")
+
+    elif command == ":temp":
+        try:
+            t = brain.set_temperature(float(arg.strip()))
+            print(f"  Temperature: {t:.2f} (this session)")
+        except ValueError:
+            print(f"  Usage: :temp <{cfg.TEMP_MIN}-{cfg.TEMP_MAX}>")
+
     elif command == ":model":
         from kai import models as _models
-        model = arg.strip().lower()
-        if model == "heavy":
-            brain.model = cfg.REASONING_MODEL
-            brain._think = True
-            print(f"  Switched to: {cfg.REASONING_MODEL} (thinking ON)")
-        elif model in ("fast", "default"):
-            brain.model = cfg.CHAT_MODEL
-            brain._think = False
-            print(f"  Switched to: {cfg.CHAT_MODEL} (thinking OFF)")
+        entry = _models.get_model(arg.strip())
+        if entry:
+            brain.model = entry["ollama_id"]
+            brain._think = entry.get("think", False)
+            think_str = "ON" if brain._think else "OFF"
+            print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
         else:
-            entry = _models.get_model(arg.strip())
-            if entry:
-                brain.model = entry["ollama_id"]
-                brain._think = entry.get("think", False)
-                think_str = "ON" if brain._think else "OFF"
-                print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
-            else:
-                print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
+            print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
 
     elif command == ":trace":
         entries = trace_log.recent(limit=10)
@@ -364,14 +373,14 @@ def _show_vector_stats() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Kai — local AI agent")
     parser.add_argument("--debug",  action="store_true", help="Enable debug output")
-    parser.add_argument("--model",  choices=["fast", "heavy"], default="fast",
-                        help=f"Model to use: fast ({cfg.CHAT_MODEL}) or heavy ({cfg.REASONING_MODEL}, thinking ON)")
+    parser.add_argument("--mode", choices=list(cfg.GEN_PRESETS), default=cfg.DEFAULT_PRESET,
+                        help="Generation mode: thinking | normal | creative | crazy")
     args = parser.parse_args()
 
     if args.debug:
         cfg.DEBUG = True
 
-    active_model = cfg.REASONING_MODEL if args.model == "heavy" else cfg.CHAT_MODEL
+    active_model = cfg.CHAT_MODEL
     # Embed model is CPU-based now — only need the chat model in Ollama
     required_models = [active_model]
 
@@ -399,6 +408,12 @@ def main() -> None:
     # ── Initialize brain ───────────────────────────────────────────────────────
     brain = Brain(memory=memory, model=active_model, ollama=ollama,
                   tool_registry=tool_registry)
+    # Apply generation mode: CLI flag overrides the saved preference.
+    _preset = args.mode if args.mode != cfg.DEFAULT_PRESET else (
+        memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET)
+    if _preset not in cfg.GEN_PRESETS:
+        _preset = cfg.DEFAULT_PRESET
+    brain.apply_preset(_preset)
 
     # ── Pre-warm: build indexes now so the first message has zero cold-start ──
     brain._ensure_memory_router()

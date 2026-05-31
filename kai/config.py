@@ -20,9 +20,6 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 #                   Gated DeltaNet arch → only 8/32 layers use full KV cache,
 #                   so KV overhead is ~130 MB at 8K (vs ~1 GB for standard 9B)
 #
-# REASONING_MODEL — heavy tasks (:model heavy in CLI), think mode enabled
-#                   qwen3:8b (Q4_K_M): ~6.0 GB total at 8K context
-#
 # EMBED_MODEL     — dedicated embedding model for episodic vector search
 #                   qwen3-embedding:4b: ~2.5 GB, 2560-dim vectors, MTEB top-tier
 #
@@ -33,7 +30,10 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 #                   high-quality shadow tables (no VRAM contention at shutdown).
 
 CHAT_MODEL      = "qwen3.5:9b"
-REASONING_MODEL = "qwen3:8b"
+# Reasoning is no longer a separate (weaker) model. qwen3.5:9b already has the
+# `thinking` capability, so "reasoning" = the main model with think=True (see
+# GEN_PRESETS below). Kept as an alias so any external reference still resolves.
+REASONING_MODEL = CHAT_MODEL
 EMBED_MODEL     = "qwen3-embedding:4b"   # shutdown re-embed (alias for HQ_EMBED_MODEL)
 SUMMARY_MODEL   = "qwen3.5:9b"
 
@@ -63,9 +63,24 @@ CONTEXT_WINDOW = 8192  # tokens; passed as num_ctx to Ollama
 #
 # Research: 0.1-0.3 for tool-calling agents; 0.8 (Ollama default) causes
 # hallucination drift on small models.
-TEMPERATURE_TOOL   = 0.0   # tool-call rounds: greedy (no creativity needed)
-TEMPERATURE_REASON = 0.10  # fact extraction, compression, learning
-TEMPERATURE_FINAL  = 0.35  # final streaming answer: preserves voice
+TEMPERATURE_TOOL   = 0.0    # tool-call rounds: greedy (no creativity needed)
+TEMPERATURE_REASON = 0.10   # fact extraction, compression, learning
+TEMPERATURE_FINAL  = 0.399  # final streaming answer default ("Normal" preset)
+
+# ── Generation presets ───────────────────────────────────────────────────────
+# User-facing presets that bundle (think, temperature) for the final answer.
+# These replace the old Fast/Heavy model swap + think toggle. The "Thinking"
+# preset turns on the main model's native chain-of-thought; the others trade
+# determinism for creativity. Users can override these temps in Settings →
+# Advanced (persisted per user) or nudge a single thread with the slider.
+GEN_PRESETS: dict[str, dict] = {
+    "thinking": {"label": "Thinking", "think": True,  "temp": 0.24},
+    "normal":   {"label": "Normal",   "think": False, "temp": 0.399},
+    "creative": {"label": "Creative", "think": False, "temp": 0.6},
+    "crazy":    {"label": "Crazy",    "think": False, "temp": 2.0},
+}
+DEFAULT_PRESET = "normal"
+TEMP_MIN, TEMP_MAX = 0.0, 2.0   # slider range + validation bounds
 
 # ── Memory ─────────────────────────────────────────────────────────────────────
 EPISODIC_TOP_K     = 5     # how many episodic results to inject into context

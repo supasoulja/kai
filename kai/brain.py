@@ -643,6 +643,7 @@ class Brain:
         self.model = model
         self.ollama = ollama or OllamaClient()
         self._think = think
+        self._final_temp: float = cfg.TEMPERATURE_FINAL  # per-session final-answer temp
         self.user_id = user_id
         self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
         self._session_history: list[dict] = []  # rolling conversation turns for this session
@@ -657,6 +658,29 @@ class Brain:
         self._turn_count: int = 0                     # monotonic counter for learn-rate gating
         self._pending_confirm: dict | None = None     # tool call awaiting user confirmation
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
+
+    def apply_preset(self, key: str, custom_temps: dict[str, float] | None = None) -> dict:
+        """Apply a generation preset — sets think mode + final-answer temperature.
+
+        `custom_temps` optionally overrides a preset's default temperature with the
+        user's saved Advanced value (keyed by preset name). Returns the resolved
+        {key, label, think, temp}.
+        """
+        preset = cfg.GEN_PRESETS.get(key)
+        if not preset:
+            raise ValueError(f"Unknown preset: {key!r}")
+        temp = preset["temp"]
+        if custom_temps and key in custom_temps:
+            temp = custom_temps[key]
+        self._think = bool(preset["think"])
+        self._final_temp = max(cfg.TEMP_MIN, min(cfg.TEMP_MAX, float(temp)))
+        return {"key": key, "label": preset["label"],
+                "think": self._think, "temp": self._final_temp}
+
+    def set_temperature(self, temp: float) -> float:
+        """Override the final-answer temperature for this session (slider). Clamped."""
+        self._final_temp = max(cfg.TEMP_MIN, min(cfg.TEMP_MAX, float(temp)))
+        return self._final_temp
 
     def shutdown(self) -> None:
         """Shut down the background thread pool. Called at server exit."""
@@ -1092,7 +1116,8 @@ class Brain:
         _tokens: list[str] = []
         _think_tokens: list[str] = []
         for token, done, meta in self.ollama.chat_stream(
-            messages, tools=None, model=self.model, think=final_think
+            messages, tools=None, model=self.model, think=final_think,
+            temperature=self._final_temp,
         ):
             if done:
                 break
@@ -1119,7 +1144,8 @@ class Brain:
             # Retry once with thinking OFF to get a real response.
             retry_tokens: list[str] = []
             for token, done, meta in self.ollama.chat_stream(
-                messages, tools=None, model=self.model, think=False
+                messages, tools=None, model=self.model, think=False,
+                temperature=self._final_temp,
             ):
                 if done:
                     break
@@ -1228,6 +1254,7 @@ class Brain:
         _tokens: list[str] = []
         for token, done, meta in self.ollama.chat_stream(
             messages, tools=None, model=self.model, think=False,
+            temperature=self._final_temp,
         ):
             if done:
                 break

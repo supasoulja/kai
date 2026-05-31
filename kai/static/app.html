@@ -443,6 +443,42 @@
     .btn-think-toggle:hover { border-color: var(--primary); }
     .btn-think-toggle.active #think-status { color: var(--tertiary); }
 
+    /* Temperature slider */
+    .temp-slider-wrap { margin-top: 12px; }
+    .temp-slider-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    #temp-value {
+      font-family: 'Space Grotesk', monospace; font-size: 12px;
+      color: var(--tertiary);
+    }
+    #temp-slider {
+      width: 100%; accent-color: var(--primary); cursor: pointer;
+    }
+    .temp-slider-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* Advanced preset editor */
+    .preset-advanced {
+      margin-top: 10px; padding: 12px;
+      background: var(--surface-high); border: 1px solid var(--outline-v);
+      border-radius: 10px;
+    }
+    .preset-adv-hint { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .preset-adv-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .preset-adv-row label {
+      font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text);
+    }
+    .preset-adv-row input {
+      width: 80px; padding: 4px 8px; text-align: right;
+      background: var(--surface); border: 1px solid var(--outline-v);
+      border-radius: 6px; color: var(--text);
+      font-family: 'Space Grotesk', monospace; font-size: 12px;
+    }
+
     /* Model list */
     .model-row {
       display: flex;
@@ -1176,12 +1212,69 @@
           </div>
         </div>
 
-        <!-- Reasoning -->
+        <!-- Generation mode (thinking + temperature) -->
         <div class="settings-section">
-          <button class="btn-think-toggle active" id="think-toggle" onclick="toggleThink()">
-            <span>Reasoning</span>
-            <span id="think-status">ON</span>
-          </button>
+          <div class="settings-label">Mode</div>
+          <div class="mode-selector-wrap">
+            <button class="mode-pill" id="preset-pill" onclick="togglePresetDropdown()">
+              <span id="preset-label">Normal</span>
+              <span class="mode-arrow">&#9662;</span>
+            </button>
+            <div id="preset-dropdown" class="mode-dropdown">
+              <button class="mode-option preset-option" data-preset="thinking">
+                <strong>Thinking</strong>
+                <span class="mode-option-desc">Reasons step-by-step before answering</span>
+              </button>
+              <button class="mode-option preset-option" data-preset="normal">
+                <strong>Normal</strong>
+                <span class="mode-option-desc">Balanced everyday responses</span>
+              </button>
+              <button class="mode-option preset-option" data-preset="creative">
+                <strong>Creative</strong>
+                <span class="mode-option-desc">Looser and more imaginative</span>
+              </button>
+              <button class="mode-option preset-option" data-preset="crazy">
+                <strong>Crazy</strong>
+                <span class="mode-option-desc">Maximum chaos &mdash; anything goes</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Temperature slider (this chat only) -->
+          <div class="temp-slider-wrap">
+            <div class="temp-slider-head">
+              <span class="settings-label" style="margin:0">Temperature</span>
+              <span id="temp-value">0.40</span>
+            </div>
+            <input type="range" id="temp-slider" min="0" max="2" step="0.01" value="0.399">
+            <div class="temp-slider-hint">Adjusts this chat only</div>
+          </div>
+
+          <!-- Advanced: editable + saved preset temperatures -->
+          <button class="settings-view-btn" id="preset-adv-toggle" onclick="togglePresetAdvanced()"
+                  style="margin-top:10px">Advanced</button>
+          <div id="preset-advanced" class="preset-advanced" style="display:none">
+            <div class="preset-adv-hint">Set the temperature each mode uses (saved for you).</div>
+            <div class="preset-adv-row">
+              <label>Thinking</label>
+              <input type="number" min="0" max="2" step="0.01" id="adv-thinking">
+            </div>
+            <div class="preset-adv-row">
+              <label>Normal</label>
+              <input type="number" min="0" max="2" step="0.01" id="adv-normal">
+            </div>
+            <div class="preset-adv-row">
+              <label>Creative</label>
+              <input type="number" min="0" max="2" step="0.01" id="adv-creative">
+            </div>
+            <div class="preset-adv-row">
+              <label>Crazy</label>
+              <input type="number" min="0" max="2" step="0.01" id="adv-crazy">
+            </div>
+            <div class="model-add-actions">
+              <button class="btn btn-sm" id="preset-adv-save" onclick="savePresetTemps()">Save</button>
+            </div>
+          </div>
         </div>
 
         <!-- Models -->
