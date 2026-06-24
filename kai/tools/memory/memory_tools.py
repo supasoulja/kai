@@ -64,12 +64,24 @@ def recent_sessions(limit: int = 3) -> str:
         limit = min(max(1, int(limit)), 10)
         user_id = get_current_user_id()
         current = get_current_session_id()
+
+        # The note Kai wrote itself last session, retained for the whole session
+        # so it's recallable past turn 1 (not just in the cold-open greeting).
+        header: list[str] = []
+        try:
+            from kai.memory.context import get_session_welcome_back
+            note = get_session_welcome_back().strip()
+            if note:
+                header.append(f'Your note to yourself from last session: "{note}"\n')
+        except Exception:
+            pass
+
         # Over-fetch a little so dropping the live session still fills `limit`.
         rows = _sessions.list_sessions(limit=limit + 2, user_id=user_id)
         rows = [s for s in rows if s["id"] != current][:limit]
         if not rows:
-            return "No earlier sessions found — this looks like our first conversation."
-        lines = ["Your recent sessions (most recent first):\n"]
+            return "".join(header) + "No earlier sessions found — this looks like our first conversation."
+        lines = header + ["Your recent sessions (most recent first):\n"]
         for s in rows:
             when = (s.get("last_active") or s.get("started_at") or "")[:16].replace("T", " ")
             title = (s.get("title") or "Untitled").strip()

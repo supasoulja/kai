@@ -18,6 +18,10 @@ from kai.util.text import strip_thinking
 
 _WELCOME_BACK_FILE = MEMORY_DIR / "welcome_back.txt"
 _SLEEP_LOG_FILE = MEMORY_DIR / "sleep_log.txt"
+# Crash trail — refreshed periodically mid-session. A clean shutdown writes a
+# real welcome-back and clears this; a hard kill leaves it for promotion on the
+# next startup so the session isn't a total recall blank.
+_CHECKPOINT_FILE = MEMORY_DIR / "session_checkpoint.txt"
 
 
 SLEEP_PROMPT = (
@@ -115,6 +119,52 @@ def clear_welcome_back() -> None:
         _WELCOME_BACK_FILE.unlink()
 
 
+# ── Crash-survival checkpoint ────────────────────────────────────────────────
+
+def checkpoint_session(session_history: list[dict], max_chars: int = 4000) -> None:
+    """Write a lightweight transcript tail to disk so a hard crash still leaves a
+    recall trail. Cheap (no LLM) — call it periodically from the turn loop. A
+    clean shutdown overwrites this with a real welcome-back and clears it."""
+    if not session_history:
+        return
+    try:
+        tail = _format_history(session_history, max_chars=max_chars)
+        if not tail.strip():
+            return
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        _CHECKPOINT_FILE.write_text(tail, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def clear_checkpoint() -> None:
+    """Drop the crash checkpoint — a clean shutdown's welcome-back supersedes it."""
+    if _CHECKPOINT_FILE.exists():
+        _CHECKPOINT_FILE.unlink()
+
+
+def promote_checkpoint_on_startup() -> None:
+    """On startup, turn a leftover checkpoint into the recall trail.
+
+    If a checkpoint exists it means last run didn't shut down cleanly. When no
+    clean welcome-back is pending, promote the checkpoint so the interrupted
+    session still surfaces; otherwise the clean note wins. Either way the stale
+    checkpoint is cleared."""
+    if not _CHECKPOINT_FILE.exists():
+        return
+    try:
+        if not _WELCOME_BACK_FILE.exists():
+            tail = _CHECKPOINT_FILE.read_text(encoding="utf-8").strip()
+            if tail:
+                save_welcome_back(
+                    "(Last session ended unexpectedly — where we were:)\n" + tail
+                )
+    except Exception:
+        pass
+    finally:
+        clear_checkpoint()
+
+
 def run_sleep_cycle(ollama, brain) -> None:
     """
     Full sleep sequence. Called at shutdown.
@@ -151,6 +201,9 @@ def run_sleep_cycle(ollama, brain) -> None:
         print(f"[+] Welcome-back message saved ({len(msg)} chars)")
     else:
         print("[~] Couldn't generate welcome-back message — skipping.")
+
+    # Clean shutdown produced a real note — the crash checkpoint is now stale.
+    clear_checkpoint()
 
 
 def _format_history(session_history: list[dict], max_chars: int = 6000) -> str:

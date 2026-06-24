@@ -1687,6 +1687,17 @@ class Brain:
                     import traceback
                     traceback.print_exc()
 
+        # Crash-survival: refresh the recall checkpoint each turn (cheap file
+        # write, no LLM). A clean shutdown supersedes it; a hard kill leaves it
+        # for promotion on the next startup.
+        try:
+            from kai.core.sleep import checkpoint_session
+            with self._history_lock:
+                hist = list(self._session_history)
+            checkpoint_session(hist)
+        except Exception:
+            pass
+
     def _extract_knowledge(self, user_text: str, assistant_text: str) -> None:
         """
         Ask the model what it learned from this exchange.

@@ -159,22 +159,31 @@ def build(
 
 
 _welcome_back_used = False
+_session_welcome_back = ""  # retained for the whole session (survives past turn 1)
 
 def _get_and_clear_welcome_back() -> str:
     """Load welcome-back message on first call, return empty string after.
     Does NOT clear the file — call mark_welcome_back_delivered() after a
     successful response so the note survives timeouts and crashes."""
-    global _welcome_back_used
+    global _welcome_back_used, _session_welcome_back
     if _welcome_back_used:
         return ""
     _welcome_back_used = True
+    _session_welcome_back = load_welcome_back() or ""
     # NOTE: no persona "gap" check here. Tools are auto-documented in the memory
     # tree (tool_docs.sync_tool_docs) and injected as the [TOOLS] block every turn
     # — persona.md is identity/voice, not a tool catalog. New capabilities are
     # surfaced as an awareness bubble (see kai/memory/capabilities.py), not nagged
     # into the cold-open greeting.
-    msg = load_welcome_back()
-    return msg or ""
+    return _session_welcome_back
+
+
+def get_session_welcome_back() -> str:
+    """The welcome-back note Kai wrote itself last session, retained for the whole
+    current session — survives past turn 1 (after the file is cleared) so tools
+    like memory.recent_sessions can still surface it. Falls back to the on-disk
+    note if it hasn't been consumed yet this session."""
+    return _session_welcome_back or (load_welcome_back() or "")
 
 
 def mark_welcome_back_delivered():

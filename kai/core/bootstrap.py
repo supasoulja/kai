@@ -64,8 +64,11 @@ def run_migrations_and_seed() -> None:
     """Run system-level DB migrations and seed default procedural rules (user 0)."""
     from kai.memory import semantic as _semantic
     from kai.memory.procedural import seed_defaults
+    from kai.core.sleep import promote_checkpoint_on_startup
     _semantic.migrate()
     seed_defaults()
+    # If the last run crashed, turn its leftover checkpoint into a recall trail.
+    promote_checkpoint_on_startup()
 
 
 def run_shutdown(ollama, brains: Iterable, *, call_brain_shutdown: bool = False) -> None:
