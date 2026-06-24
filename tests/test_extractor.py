@@ -17,6 +17,7 @@ from kai.store.db import _reset_for_tests
 _reset_for_tests()
 
 from kai.memory import semantic, extractor
+from kai.memory import context
 
 
 @pytest.fixture(autouse=True)
@@ -76,8 +77,25 @@ def test_preferences_still_accumulate():
 
 
 def test_confidence_is_stored_per_pattern():
-    extractor.extract_and_save("My name is Alice", user_id=7)   # 0.9
+    extractor.extract_and_save("My name is Alice", user_id=7)   # 1.0
     extractor.extract_and_save("I'm a developer", user_id=7)    # 0.5
     by_key = {f.key: f for f in semantic.list_facts(user_id=7)}
     assert by_key["user_name"].confidence == 1.0
     assert by_key["user_role"].confidence == 0.5
+
+
+# ── 5b: confidence gate on recall ────────────────────────────────────────────
+
+def test_recall_gate_excludes_low_confidence_facts():
+    semantic.set_fact("preference_1", "coffee", confidence=0.3, user_id=7)
+    semantic.set_fact("user_name", "Alice", confidence=1.0, user_id=7)
+    block = context.build(query="hello", user_id=7)
+    keys = {f.key for f in block.semantic}
+    assert "user_name" in keys
+    assert "preference_1" not in keys  # below RECALL_CONFIDENCE_MIN
+
+
+def test_recall_gate_keeps_boundary_confidence():
+    semantic.set_fact("user_role", "developer", confidence=0.5, user_id=7)
+    block = context.build(query="hello", user_id=7)
+    assert "developer" in {f.value for f in block.semantic}

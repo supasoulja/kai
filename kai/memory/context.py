@@ -18,7 +18,9 @@ Memory tiers:
 """
 import time
 from concurrent.futures import ThreadPoolExecutor
-from kai.config import MAX_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD
+from kai.config import (
+    MAX_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD, RECALL_CONFIDENCE_MIN,
+)
 from kai.persona.identity import build_identity_block
 from kai.memory import semantic, procedural, episodic
 from kai.memory import router
@@ -52,7 +54,11 @@ def build(
     """
     identity_text = build_identity_block(user_id=user_id)
     proc_rules    = procedural.list_rules(user_id=user_id)
-    all_facts     = semantic.list_facts(user_id=user_id)
+    # Confidence gate: keep low-trust regex guesses and decayed facts out of
+    # recall. The extractor still sees the full set (it needs them for its
+    # overwrite guard) — this filter applies only to what gets injected.
+    all_facts     = [f for f in semantic.list_facts(user_id=user_id)
+                     if f.confidence >= RECALL_CONFIDENCE_MIN]
     doc_inv       = _fetch_doc_inventory(user_id=user_id)
     tool_index    = _render_tool_index(user_id=user_id)
 

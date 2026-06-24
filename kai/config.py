@@ -134,6 +134,10 @@ EPISODIC_TOP_K     = 5     # how many episodic results to inject into context
 MEMORY_ROUTER_TOP_K     = 2      # how many memory domains to activate per query
 MEMORY_ROUTER_THRESHOLD = 0.15   # cosine similarity cutoff (below = domain doesn't match)
 LEARN_FROM_CONVERSATION = True   # model extracts knowledge after each turn (background thread)
+# Semantic facts below this confidence are not injected into context — low-trust
+# regex guesses and facts that have decayed over time stay out of recall until
+# either re-confirmed or pruned. Set to 0 to recall everything.
+RECALL_CONFIDENCE_MIN = 0.5
 # Context budget — the identity block (persona + voice + rules) + procedural + semantic
 # already uses ~5000-6000 chars.  Episodic entries need ~200-400 chars each.
 # 8192 context window ≈ 32k chars.  10k chars ≈ 3000 tokens — leaves plenty
