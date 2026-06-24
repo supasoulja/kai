@@ -266,6 +266,8 @@ import re as _re
 
 import numpy as _np
 
+from kai.llm.vecmath import cosine as _cosine
+
 from kai.memory import tree as _tree
 
 # Per-process guard so the skeleton seed runs at most once per user.
@@ -460,8 +462,9 @@ def tree_find(query: str = "") -> str:
         if not hits:
             return f"No tree facts matching '{query}'."
         return "\n".join(f"{n.path}: \"{n.value}\"" for n in hits[:5])
-    # Embeddings are L2-normalized — the dot product IS cosine similarity.
-    scored = sorted(((float(_np.dot(q, n.embedding)), n) for n in nodes),
+    # Embeddings are L2-normalized, so cosine == dot product here; use the
+    # shared vecmath helper for one consistent similarity idiom.
+    scored = sorted(((_cosine(q, n.embedding), n) for n in nodes),
                     key=lambda t: t[0], reverse=True)
     hits = [(s, n) for s, n in scored[:5] if s > 0.35]
     if not hits:

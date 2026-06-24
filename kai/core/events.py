@@ -17,7 +17,6 @@ import time
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
-from typing import Any
 
 # ── Event types ──────────────────────────────────────────────────────────────
 # Keep in sync with the frontend event handler.

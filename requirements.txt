@@ -5,7 +5,6 @@ psutil
 fastapi
 uvicorn[standard]
 python-multipart
-pytest
 onnxruntime>=1.20
 tokenizers
 numpy

@@ -6,7 +6,6 @@ Browser automation tools — JS-rendered pages that research.fetch_url can't rea
 
 Uses Playwright headless Chromium. Falls back gracefully if Playwright isn't available.
 """
-import base64
 import re
 import tempfile
 from pathlib import Path

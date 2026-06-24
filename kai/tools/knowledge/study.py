@@ -18,8 +18,6 @@ Keys:
 """
 import json
 import zipfile
-import io
-import re as _re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET

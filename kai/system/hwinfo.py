@@ -12,7 +12,6 @@ The shared memory layout is documented at:
   https://www.hwinfo.com/sdk/HWiNFO_ShM.h
 """
 import ctypes
-import ctypes.wintypes as wt
 import struct
 
 # Win32 API constants

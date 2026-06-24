@@ -5,7 +5,6 @@ Stores model definitions in models.json so users can add/remove models
 without touching code. Ships with sensible defaults from config.py.
 """
 import json
-from pathlib import Path
 
 import kai.config as cfg
 

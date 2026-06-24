@@ -13,8 +13,14 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import ollama
-import sqlite_vec
+try:
+    import ollama
+    import sqlite_vec
+except ImportError as exc:
+    sys.exit(
+        f"This migration script needs '{exc.name}'. Install the dev/script deps "
+        f"first:\n    pip install ollama sqlite-vec"
+    )
 
 
 NEW_DIM   = 2560

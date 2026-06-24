@@ -180,7 +180,7 @@ def repair_files() -> str:
         return f"sfc /scannow failed to run: {stderr[:200]}"
     # sfc outputs to stdout; summarize the key line
     if stdout:
-        lines = [l.strip() for l in stdout.splitlines() if l.strip()]
+        lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
         # Find the result line (contains "found" or "did not find" or "repaired")
         for line in lines:
             low = line.lower()

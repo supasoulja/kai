@@ -7,7 +7,6 @@ Platform: Cross-platform.  PowerShell is used on Windows for disk scanning;
 pure Python / shell commands are used on Linux.
 """
 import json
-import os
 import subprocess
 from pathlib import Path
 

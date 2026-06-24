@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import kai.config as cfg
 

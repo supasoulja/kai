@@ -11,7 +11,6 @@ Platform: Windows only (uses PowerShell / WMI).  On Linux, use `sensors` or
 """
 import json
 import subprocess
-import sys
 import threading
 import time
 
@@ -644,7 +643,7 @@ def _amd_hwmon_linux() -> str | None:
     Looks for hwmon dirs whose 'name' file contains 'amdgpu'.
     """
     import os, glob
-    if sys.platform == "win32":
+    if _IS_WINDOWS:
         return None
     try:
         lines = []
@@ -689,8 +688,8 @@ def _amd_hwmon_linux() -> str | None:
             gpu_name = "AMD GPU"
             uevent = _read(f"{hwmon_dir}/device/uevent") or ""
             slot = next(
-                (l.split("=", 1)[1].lstrip("0000:") for l in uevent.splitlines()
-                 if l.startswith("PCI_SLOT_NAME=")),
+                (line.split("=", 1)[1].lstrip("0000:") for line in uevent.splitlines()
+                 if line.startswith("PCI_SLOT_NAME=")),
                 None,
             )
             if slot:
@@ -739,7 +738,7 @@ def _gpu_wmi_fallback() -> str | None:
         if vendor == "amd":
             # Check if pyadl is installed but ADL failed (RDNA3+ GPUs)
             try:
-                import pyadl as _pyadl_check  # noqa: F811
+                import pyadl as _pyadl_check  # noqa: F401,F811  (availability probe)
                 amd_smi_note = "  (ADL does not support this GPU — temp unavailable via WMI)"
             except ImportError:
                 amd_smi_note = "  (temp unavailable — run: pip install pyadl)"

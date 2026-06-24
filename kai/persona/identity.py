@@ -4,7 +4,6 @@ Builds the [IDENTITY] block injected into every system prompt.
 """
 import re
 from datetime import datetime
-from pathlib import Path
 
 from kai.config import PERSONA_PATH
 from kai.store.db import get_conn
@@ -181,14 +180,14 @@ def _extract_compact(persona_md: str) -> str:
 
         # "Never:" bullet list — concrete anti-patterns, not just abstract adjectives
         never_bullets = [
-            l.strip() for l in voice.splitlines()
-            if l.strip().startswith("- ") and "**Never:**" in voice[:voice.index(l)]
+            line.strip() for line in voice.splitlines()
+            if line.strip().startswith("- ") and "**Never:**" in voice[:voice.index(line)]
         ]
         if never_bullets:
             parts.append("Voice — never do this:\n" + "\n".join(never_bullets))
 
     if rules:
-        bullets = [l.strip() for l in rules.splitlines() if l.strip().startswith("-")]
+        bullets = [line.strip() for line in rules.splitlines() if line.strip().startswith("-")]
         if bullets:
             parts.append("Rules:\n" + "\n".join(bullets))
 

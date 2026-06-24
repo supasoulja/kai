@@ -17,7 +17,7 @@ Memory tiers:
   - RAG chunks: ROUTED — only searched when "documents" domain is active
 """
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from kai.config import MAX_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD
 from kai.persona.identity import build_identity_block
 from kai.memory import semantic, procedural, episodic

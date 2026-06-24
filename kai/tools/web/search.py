@@ -2,7 +2,6 @@
 search.web — DuckDuckGo search via the DDG HTML endpoint.
 No API key required. Returns top N result titles + snippets + URLs.
 """
-import json
 import urllib.request
 import urllib.parse
 import re

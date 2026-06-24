@@ -159,7 +159,7 @@ def traceroute(host: str) -> str:
     if not out:
         return f"Traceroute to {host} timed out."
     # Trim the header/footer and limit output
-    lines = [l.rstrip() for l in out.splitlines() if l.strip()]
+    lines = [line.rstrip() for line in out.splitlines() if line.strip()]
     return "\n".join(lines[:35])
 
 

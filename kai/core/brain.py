@@ -16,13 +16,12 @@ import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import kai.config as cfg
 from kai.config import (
     CHAT_MODEL,
-    TEMPERATURE_REASON, TEMPERATURE_FINAL,
-    HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
+    TEMPERATURE_REASON, HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
 )
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager

@@ -36,7 +36,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
         try:
             return filepath.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
-            raise ValueError(f"Could not read file: {e}")
+            raise ValueError(f"Could not read file: {e}") from e
 
     if suffix == ".pdf":
         try:
@@ -48,7 +48,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
                 pages.append(text)
             return "\n\n".join(pages)
         except Exception as e:
-            raise ValueError(f"Could not read PDF: {e}")
+            raise ValueError(f"Could not read PDF: {e}") from e
 
     if suffix in {".docx", ".doc"}:
         try:
@@ -56,7 +56,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
             doc = docx.Document(str(filepath))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception as e:
-            raise ValueError(f"Could not read Word document: {e}")
+            raise ValueError(f"Could not read Word document: {e}") from e
 
     raise ValueError(f"Unsupported file type: {suffix!r}")
 

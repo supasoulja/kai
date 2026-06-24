@@ -426,7 +426,7 @@ def _journalctl_errors(priority: str = "err", since: str = "24 hours ago", max_l
         lines = out.splitlines()
         # Filter kernel spam that's usually harmless
         _noise = {"microcode", "EDAC", "ACPI Warning", "pcie_aspm"}
-        lines = [l for l in lines if not any(n in l for n in _noise)]
+        lines = [line for line in lines if not any(n in line for n in _noise)]
         return "\n".join(lines[:max_lines]) if lines else f"No significant {priority}+ events."
     except FileNotFoundError:
         return "journalctl not found — not a systemd system?"
@@ -445,8 +445,8 @@ def _linux_gpu_crashes(days: int = 30) -> str:
             capture_output=True, text=True, timeout=10,
         )
         gpu_lines = [
-            l for l in r.stdout.splitlines()
-            if any(k in l.lower() for k in ("gpu", "amdgpu", "radeon", "nvidia", "drm", "reset", "hang", "timeout"))
+            line for line in r.stdout.splitlines()
+            if any(k in line.lower() for k in ("gpu", "amdgpu", "radeon", "nvidia", "drm", "reset", "hang", "timeout"))
         ]
         if gpu_lines:
             results.append("dmesg GPU errors:")
@@ -490,7 +490,7 @@ def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
                     if not game_name or game_name.lower() in content.lower():
                         results.append(f"Steam log: {fname}")
                         # Show last few crash lines
-                        crash_lines = [l for l in content.splitlines() if "crash" in l.lower() or "exception" in l.lower()]
+                        crash_lines = [line for line in content.splitlines() if "crash" in line.lower() or "exception" in line.lower()]
                         results.extend(crash_lines[-5:])
             except Exception:
                 pass
@@ -516,7 +516,7 @@ def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
         if out and out != "-- No entries --":
             lines = out.splitlines()
             if game_name:
-                lines = [l for l in lines if game_name.lower() in l.lower()]
+                lines = [line for line in lines if game_name.lower() in line.lower()]
             if lines:
                 results.append(f"\nJournal crashes (past {days} days):")
                 results.extend(lines[:15])

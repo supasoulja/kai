@@ -63,9 +63,9 @@ class OpenAIClient:
                 body = e.read().decode("utf-8")[:500]
             except Exception:
                 pass
-            raise ProviderError(f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code)
+            raise ProviderError(f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code) from e
         except Exception as e:
-            raise ProviderError(f"{self.base_url}{path} unreachable: {e}")
+            raise ProviderError(f"{self.base_url}{path} unreachable: {e}") from e
 
     def _post_json(self, path: str, payload: dict) -> dict:
         with self._open(path, payload, "POST", 120) as r:

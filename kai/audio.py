@@ -12,7 +12,6 @@ import logging
 import re
 import struct
 import threading
-from pathlib import Path
 from typing import Iterator
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")

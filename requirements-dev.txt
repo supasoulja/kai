@@ -1,0 +1,4 @@
+# ── Developer / test dependencies ─────────────────────────────────────
+# Not needed to run Kai — only to run the test suite. Install with:
+#   pip install -r requirements-dev.txt
+pytest

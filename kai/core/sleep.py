@@ -11,7 +11,6 @@ block so Kai has continuity — she wakes up knowing where she left off.
 The welcome-back message is stored as a plain text file in MEMORY_DIR.
 Human-readable, inspectable, ~1000 chars max.
 """
-from pathlib import Path
 from datetime import datetime
 
 from kai.config import MEMORY_DIR, CHAT_MODEL, TEMPERATURE_REASON

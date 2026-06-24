@@ -20,11 +20,10 @@ no semantic judgment required, just arithmetic over what's already in the tree.
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-import numpy as np
 
 from .tree import Node
 from .scorer import _cosine, _norm_frequency, MaybeArray
-from .state import UserState, RelationshipState
+from .state import UserState
 
 
 # ─── Flag structure ───────────────────────────────────────────────────────────

@@ -9,9 +9,6 @@ or pass any local image file or image URL directly.
 """
 import base64
 import json
-import tempfile
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import httpx
@@ -39,7 +36,7 @@ def _load_image_b64(source: str) -> tuple[str, str]:
             content_type = resp.headers.get("content-type", "image/png")
             mime = content_type.split(";")[0].strip()
         except Exception as e:
-            raise ValueError(f"Could not download image from {source}: {e}")
+            raise ValueError(f"Could not download image from {source}: {e}") from e
     else:
         # Local file path
         path = Path(source)

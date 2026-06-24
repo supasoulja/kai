@@ -4,7 +4,6 @@ Lightweight. Stored in SQLite. Accessible via :trace CLI command.
 """
 import json
 from dataclasses import dataclass
-from datetime import datetime
 
 from kai.store.db import get_conn
 

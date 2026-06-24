@@ -57,7 +57,7 @@ CHAT_MODEL      = "gemma4:26b"
 REASONING_MODEL = CHAT_MODEL             # unified — gemma4:26b handles both roles natively
 SUMMARY_MODEL   = CHAT_MODEL             # unified — see CHAT_MODEL note above
 MEMORY_MODEL    = CHAT_MODEL             # swap-loaded for the memory loop's semantic reads
-EMBED_MODEL     = "qwen3-embedding:4b"   # shutdown re-embed (alias for HQ_EMBED_MODEL)
+# EMBED_MODEL is an alias for HQ_EMBED_MODEL — defined just below it (single source of truth)
 
 # CPU embedding — live ops (no Ollama, no VRAM)
 # Uses the Xenova ONNX-optimized version of bge-small-en-v1.5
@@ -67,6 +67,7 @@ FAST_EMBED_DIM   = 384
 # GPU embedding — shutdown re-embed to shadow tables
 HQ_EMBED_MODEL   = "qwen3-embedding:4b"
 HQ_EMBED_DIM     = 2560
+EMBED_MODEL      = HQ_EMBED_MODEL   # shutdown re-embed alias — see note above
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
@@ -178,9 +179,9 @@ FLOW_TRACE           = False
 # Cap on flow_log rows — oldest rows are trimmed past this so the debug log can't
 # grow unbounded when FLOW_TRACE is left on.
 FLOW_LOG_MAX         = 5000
-import sys as _sys
+from kai.system.platform import IS_WINDOWS
 WORKSPACE_DIR      = (                     # only folder Kai can write files to
-    Path("C:/KaiFiles") if _sys.platform == "win32"
+    Path("C:/KaiFiles") if IS_WINDOWS
     else Path.home() / "KaiFiles"
 )
 

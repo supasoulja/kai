@@ -339,15 +339,15 @@ def _linux_startup_programs() -> str:
         lines = []
         if sys_out:
             lines.append("System services (enabled at boot):")
-            for l in sys_out.splitlines():
-                parts = l.split()
+            for line in sys_out.splitlines():
+                parts = line.split()
                 if parts:
                     lines.append(f"  • {parts[0]}")
 
         if user_out:
             lines.append("\nUser services (enabled at boot):")
-            for l in user_out.splitlines():
-                parts = l.split()
+            for line in user_out.splitlines():
+                parts = line.split()
                 if parts:
                     lines.append(f"  • {parts[0]}")
 
@@ -363,7 +363,7 @@ def _linux_startup_programs() -> str:
                 try:
                     with open(f) as fh:
                         content = fh.read()
-                    name_line = next((l for l in content.splitlines() if l.startswith("Name=")), "")
+                    name_line = next((line for line in content.splitlines() if line.startswith("Name=")), "")
                     name = name_line.split("=", 1)[1] if "=" in name_line else os.path.basename(f)
                     desktop_entries.append(f"  • {name}  ({os.path.basename(f)})")
                 except Exception:
@@ -389,7 +389,7 @@ def _linux_updates() -> str:
                 capture_output=True, text=True, timeout=30,
             )
             lines = r.stdout.splitlines()
-            upgraded = next((l for l in lines if "upgraded," in l), "")
+            upgraded = next((line for line in lines if "upgraded," in line), "")
             if upgraded:
                 return f"apt: {upgraded.strip()}"
             # Fallback: apt list --upgradable
@@ -398,7 +398,7 @@ def _linux_updates() -> str:
                 capture_output=True, text=True, timeout=15,
                 env={**__import__("os").environ, "LANG": "C"},
             )
-            pkgs = [l for l in r2.stdout.splitlines() if "/" in l]
+            pkgs = [line for line in r2.stdout.splitlines() if "/" in line]
             if pkgs:
                 return f"{len(pkgs)} package(s) can be upgraded:\n" + "\n".join(f"  • {p.split('/')[0]}" for p in pkgs[:20])
             return "System is up to date (apt)."
@@ -407,7 +407,7 @@ def _linux_updates() -> str:
 
     if shutil.which("dnf"):
         out = _run(["dnf", "check-update", "--quiet"], timeout=30)
-        pkgs = [l for l in out.splitlines() if l and not l.startswith("Last")]
+        pkgs = [line for line in out.splitlines() if line and not line.startswith("Last")]
         return f"{len(pkgs)} DNF update(s) available." if pkgs else "System is up to date (dnf)."
 
     if shutil.which("pacman"):
@@ -433,8 +433,8 @@ def _linux_network_info() -> str:
         gw = next((r.get("gateway", "") for r in routes if r.get("dst") == "default"), "")
 
         # DNS servers from resolv.conf
-        dns = [l.split()[1] for l in dns_out.splitlines()
-               if l.startswith("nameserver") and len(l.split()) >= 2]
+        dns = [line.split()[1] for line in dns_out.splitlines()
+               if line.startswith("nameserver") and len(line.split()) >= 2]
 
         lines = []
         for iface in addrs:
@@ -458,5 +458,3 @@ def _linux_network_info() -> str:
         return "\n\n".join(lines) if lines else "No active network interfaces found."
     except Exception as exc:
         return f"Network info error: {exc}"
-
-    return "\n\n".join(sections)
