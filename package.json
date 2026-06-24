@@ -1,0 +1,15 @@
+{
+  "name": "kai-ui-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tailwind CSS build for Kai's web UI. Produces kai/static/tailwind.css so the app no longer depends on the Tailwind Play CDN at runtime (works offline, keeps CSP tight — no 'unsafe-eval').",
+  "scripts": {
+    "build:css": "tailwindcss -i ./kai/static/tailwind.input.css -o ./kai/static/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./kai/static/tailwind.input.css -o ./kai/static/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.7",
+    "tailwindcss": "^3.4.0"
+  }
+}

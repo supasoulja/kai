@@ -5,16 +5,37 @@ psutil
 fastapi
 uvicorn[standard]
 python-multipart
-pytest
 onnxruntime>=1.20
 tokenizers
 numpy
 huggingface_hub
+httpx>=0.28          # HTTP client for the tool layer (vision / audio / researcher)
+requests>=2.31       # watchdog subsystem (agent.py / join.py / common.py)
+cryptography>=44     # self-signed TLS certs (web.py --https). >=44 avoids the
+                     # advisories in the system 41.x that bare imports resolve to.
+
+# ── Voice features (STT + TTS) — lazy-loaded; heavy but pip-installs cleanly ─
+faster-whisper>=1.0  # STT (local Whisper) — pulls av, ctranslate2, tokenizers
+kokoro-onnx>=0.5     # TTS (local Kokoro)  — pulls soundfile
+
+# ── Browser automation — afterward run: python -m playwright install chromium ─
+playwright>=1.40
 
 # ── Desktop app (optional — only needed for `python app.py`) ─────────
-# On Linux these require system packages (GTK, libappindicator, etc.).
-# If you only want the web UI (`python web.py`), skip these.
+# On Linux these need system packages (GTK, libappindicator, etc.) before
+# pip can install them, so they're gated to Windows here. For the native
+# desktop app on Linux/macOS, see requirements-desktop.txt.
 pywebview>=5.0; sys_platform == "win32"
 pystray; sys_platform == "win32"
 Pillow; sys_platform == "win32"
 keyboard; sys_platform == "win32"
+
+# ── Optional hardware sensors ─────────────────────────────────────────────────
+# AMD GPU temperature via the AMD Display Library (Windows-only). Guarded by
+# try/except in kai/tools/system/temps.py — Kai runs without it, GPU temp just
+# reports "unavailable". Uncomment / install to enable on an AMD Windows box.
+# pyadl; sys_platform == "win32"
+
+# ── Document ingest (PDF / DOCX upload + study library) ───────────────────────
+# Lives in its own file so it can be an installer checkbox: requirements-documents.txt
+#   pip install -r requirements-documents.txt

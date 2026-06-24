@@ -3,19 +3,19 @@ Kai — entry point.
 Usage:
     python cli.py
     python cli.py --debug
-    python cli.py --model heavy   (use qwen3:14b with thinking)
+    python cli.py --mode thinking   (modes: thinking | normal | creative | crazy)
 """
 import argparse
+import os
 import sys
 
 import kai.config as cfg
-from kai.brain import Brain, OllamaClient
+from kai.core import bootstrap
+from kai.core.brain import Brain
+from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
-from kai.memory.procedural import seed_defaults
-from kai.memory import semantic as _semantic
-from kai.identity import seed_founding_entry
 from kai.tools import registry as tool_registry
-from kai import trace as trace_log
+from kai.core import trace as trace_log
 
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
@@ -30,17 +30,7 @@ def check_ollama(ollama: OllamaClient) -> bool:
 
 
 def check_models(ollama: OllamaClient, required: list[str]) -> bool:
-    installed = ollama.installed_models()
-    # Normalize: strip tags for comparison
-    installed_base = {m.split(":")[0] for m in installed}
-    installed_full = set(installed)
-
-    missing = []
-    for model in required:
-        base = model.split(":")[0]
-        if model not in installed_full and base not in installed_base:
-            missing.append(model)
-
+    missing = [m for m in required if not bootstrap.is_model_installed(ollama, m)]
     if missing:
         print(f"[!] Missing models: {', '.join(missing)}")
         for m in missing:
@@ -51,7 +41,7 @@ def check_models(ollama: OllamaClient, required: list[str]) -> bool:
 
 def startup_report(memory: MemoryManager, model: str) -> str:
     """Build the brief status line shown on launch."""
-    from kai.sleep import load_welcome_back
+    from kai.core.sleep import load_welcome_back
 
     facts  = memory.list_facts()
     recent = memory.recent_episodes(limit=1)
@@ -89,16 +79,23 @@ Commands:
   :history      show last 10 episodic entries
   :sleep        show Kai's last welcome-back note
   :trace        show last 10 turn traces (timing, tools used)
+  :flow [id]    replay a turn step by step (model calls, thinking, tools)
+  :flowlive     toggle live flow — print every internal step as it happens
   :tools        list registered tools
   :vector       show vector table stats (episodic + RAG embeddings)
-  :model heavy  switch to reasoning model (thinking ON) for this session
-  :model fast   switch back to chat model
+  :mode <name>  set generation mode: thinking | normal | creative | crazy
+  :toollevel <name>  which model runs tool calls: light | balanced | deep | off
+  :temp <0-2>   set temperature for this session (overrides the mode)
   :model <name> switch to a user-added model (see :models)
   :models       list all configured models
   :debug        toggle debug mode
   :help         show this
   :quit / exit  exit
 """
+
+
+# :flowlive state — the currently-subscribed live printer (None = off)
+_flow_live_tap = None
 
 
 def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
@@ -139,7 +136,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
             print(f"\n  [{ep.timestamp.strftime('%b %d %H:%M')}] {ep.content[:120]}...")
 
     elif command == ":models":
-        from kai import models as _models
+        from kai.llm import models as _models
         all_models = _models.list_models()
         active_id = brain.model
         print("  Configured models:")
@@ -150,26 +147,97 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
             print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
         print(f"\n  Switch with :model <name>")
 
-    elif command == ":model":
-        from kai import models as _models
-        model = arg.strip().lower()
-        if model == "heavy":
-            brain.model = cfg.REASONING_MODEL
-            brain._think = True
-            print(f"  Switched to: {cfg.REASONING_MODEL} (thinking ON)")
-        elif model in ("fast", "default"):
-            brain.model = cfg.CHAT_MODEL
-            brain._think = False
-            print(f"  Switched to: {cfg.CHAT_MODEL} (thinking OFF)")
+    elif command == ":mode":
+        key = arg.strip().lower()
+        if key in cfg.GEN_PRESETS:
+            r = brain.apply_preset(key)
+            try:
+                memory.set_fact("gen_preset", key, source="user_setting")
+            except Exception:
+                pass
+            print(f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})")
         else:
-            entry = _models.get_model(arg.strip())
-            if entry:
-                brain.model = entry["ollama_id"]
-                brain._think = entry.get("think", False)
-                think_str = "ON" if brain._think else "OFF"
-                print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
+            print(f"  Usage: :mode <{' | '.join(cfg.GEN_PRESETS)}>")
+
+    elif command == ":temp":
+        try:
+            t = brain.set_temperature(float(arg.strip()))
+            print(f"  Temperature: {t:.2f} (this session)")
+        except ValueError:
+            print(f"  Usage: :temp <{cfg.TEMP_MIN}-{cfg.TEMP_MAX}>")
+
+    elif command == ":toollevel":
+        key = arg.strip().lower()
+        if key in cfg.TOOL_MODEL_LEVELS:
+            r = brain.apply_tool_level(key)
+            try:
+                memory.set_fact("tool_level", key, source="user_setting")
+            except Exception:
+                pass
+            note = ""
+            if r["model"] and not r["available"]:
+                note = (f"  (not installed — ollama pull {r['model']}; "
+                        "falling back to main model + thinking)")
+            print(f"  Tool level: {r['label']}{note}")
+        else:
+            print(f"  Usage: :toollevel <{' | '.join(cfg.TOOL_MODEL_LEVELS)}>")
+
+    elif command == ":model":
+        from kai.llm import models as _models
+        entry = _models.get_model(arg.strip())
+        if entry:
+            brain.model = entry["ollama_id"]
+            brain._think = entry.get("think", False)
+            think_str = "ON" if brain._think else "OFF"
+            print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
+        else:
+            print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
+
+    elif command == ":flow":
+        from kai.core import flow as _flow
+        tid = arg.strip()
+        if not tid:
+            turns = _flow.recent_turns(limit=5)
+            if not turns:
+                print("  No flow recorded yet (is FLOW_TRACE on in config.py?).")
             else:
-                print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
+                tid = turns[0]["trace_id"]
+                print("  Recent turns (showing the newest — :flow <id> for older):")
+                from datetime import datetime as _dt
+                for t in turns:
+                    when = _dt.fromtimestamp(t["ts"]).strftime("%H:%M:%S")
+                    print(f"    {t['trace_id']}  {when}  {t['steps']:3d} steps  {t['input']!r}")
+                print()
+        if tid:
+            steps = _flow.get_flow(tid)
+            if not steps:
+                print(f"  No flow recorded for {tid!r}.")
+            for s in steps:
+                kind = s.pop("kind", "?")
+                s.pop("ts", None)
+                detail = "  ".join(
+                    f"{k}={str(v)[:160]!r}" for k, v in s.items()
+                    if v not in (None, "", "none")
+                )
+                print(f"  [{kind}] {detail}")
+
+    elif command == ":flowlive":
+        global _flow_live_tap
+        from kai.core import flow as _flow
+        if _flow_live_tap is None:
+            def _tap(tid, kind, data):
+                detail = "  ".join(
+                    f"{k}={str(v)[:100]!r}" for k, v in data.items()
+                    if v not in (None, "", "none")
+                )
+                print(f"\n  ⚡[{kind}] {detail}")
+            _flow_live_tap = _tap
+            _flow.subscribe(_tap)
+            print("  Live flow ON — every internal step prints as it happens. :flowlive to stop.")
+        else:
+            _flow.unsubscribe(_flow_live_tap)
+            _flow_live_tap = None
+            print("  Live flow OFF.")
 
     elif command == ":trace":
         entries = trace_log.recent(limit=10)
@@ -197,7 +265,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         _show_vector_stats()
 
     elif command == ":sleep":
-        from kai.sleep import load_welcome_back
+        from kai.core.sleep import load_welcome_back
         from kai.config import MEMORY_DIR
         wb = load_welcome_back()
         if wb:
@@ -257,7 +325,7 @@ def _show_memory(memory: MemoryManager) -> None:
 
 def _show_vector_stats() -> None:
     """Display stats about all vector tables (episodic + RAG)."""
-    from kai.db import get_conn, sqlite_vec_available
+    from kai.store.db import get_conn, sqlite_vec_available
 
     if not sqlite_vec_available():
         print("  sqlite-vec is not installed — no vector tables available.")
@@ -362,16 +430,17 @@ def _show_vector_stats() -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    os.environ.setdefault("KAI_ENTRYPOINT", "cli")
     parser = argparse.ArgumentParser(description="Kai — local AI agent")
     parser.add_argument("--debug",  action="store_true", help="Enable debug output")
-    parser.add_argument("--model",  choices=["fast", "heavy"], default="fast",
-                        help=f"Model to use: fast ({cfg.CHAT_MODEL}) or heavy ({cfg.REASONING_MODEL}, thinking ON)")
+    parser.add_argument("--mode", choices=list(cfg.GEN_PRESETS), default=cfg.DEFAULT_PRESET,
+                        help="Generation mode: thinking | normal | creative | crazy")
     args = parser.parse_args()
 
     if args.debug:
         cfg.DEBUG = True
 
-    active_model = cfg.REASONING_MODEL if args.model == "heavy" else cfg.CHAT_MODEL
+    active_model = cfg.CHAT_MODEL
     # Embed model is CPU-based now — only need the chat model in Ollama
     required_models = [active_model]
 
@@ -386,51 +455,60 @@ def main() -> None:
         sys.exit(1)
 
     # ── Fast CPU embedding ────────────────────────────────────────────────────
-    from kai.embed import embed as fast_embed, warm_up as _warm_embed
+    from kai.llm.embed import embed as fast_embed, warm_up as _warm_embed
     _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
 
     # ── Initialize memory + identity ───────────────────────────────────────────
     memory   = MemoryManager(embed_fn=fast_embed)
-    _semantic.migrate()    # remove stale volatile sys_* keys from previous sessions
-
-    seed_defaults()        # set procedural rules if first run
-    seed_founding_entry()  # log the founding conversation if first run
+    bootstrap.run_migrations_and_seed()   # migrate stale keys + seed procedural rules
 
     # ── Initialize brain ───────────────────────────────────────────────────────
     brain = Brain(memory=memory, model=active_model, ollama=ollama,
                   tool_registry=tool_registry)
+    # Apply generation mode: CLI flag overrides the saved preference.
+    _preset = args.mode if args.mode != cfg.DEFAULT_PRESET else (
+        memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET)
+    if _preset not in cfg.GEN_PRESETS:
+        _preset = cfg.DEFAULT_PRESET
+    brain.apply_preset(_preset)
+    # Restore the saved tool-model level (which model runs tool rounds).
+    _tl = memory.get_fact("tool_level") or cfg.DEFAULT_TOOL_LEVEL
+    if _tl not in cfg.TOOL_MODEL_LEVELS:
+        _tl = cfg.DEFAULT_TOOL_LEVEL
+    brain.apply_tool_level(_tl)
 
     # ── Pre-warm: build indexes now so the first message has zero cold-start ──
     brain._ensure_memory_router()
     brain._ensure_tool_index()
 
     # ── Upgrade awareness ──────────────────────────────────────────────────────
-    from kai.upgrade import check_for_upgrade
+    from kai.system.upgrade import check_for_upgrade
     upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
         print(f"\n  [upgrade] {upgrade_msg[:100]}")
 
     # Register shutdown hook: sleep cycle + HQ re-embed
     import atexit
-    def _on_shutdown():
-        from kai.sleep import run_sleep_cycle
-        try:
-            run_sleep_cycle(ollama, brain)
-        except Exception as exc:
-            print(f"[!] Sleep cycle failed: {exc}")
-
-        print("[~] Running HQ re-embed with Qwen...")
-        try:
-            from kai.embed import shutdown_reembed
-            shutdown_reembed()
-        except Exception as exc:
-            print(f"[!] HQ re-embed failed: {exc}")
-    atexit.register(_on_shutdown)
+    atexit.register(lambda: bootstrap.run_shutdown(ollama, [brain]))
 
     # ── Startup report ─────────────────────────────────────────────────────────
     print()
     print(startup_report(memory, active_model))
     print("Type :help for commands. Ctrl+C or 'exit' to quit.\n")
+
+    # ── Kai opens the conversation herself (cold open: uses her welcome-back note) ──
+    try:
+        print("Kai: ", end="", flush=True)
+        got = False
+        for token, done, _ in brain.generate_greeting(fresh=False):
+            if not done:
+                got = True
+                print(token, end="", flush=True)
+        print("\n" if got else "\r", end="", flush=True)
+        if got:
+            print()
+    except Exception:
+        print()  # never let a greeting failure block startup
 
     # ── REPL ───────────────────────────────────────────────────────────────────
     while True:

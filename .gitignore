@@ -1,5 +1,6 @@
-# ── Kai's learned memory (private — never commit) ──────────────────────────────
-kai/memory/kai's memory/
+# ── Kai's private runtime data (DBs, per-user facts / state / knowledge — never commit) ───
+# All mutable runtime data lives in var/ (outside the kai/ source package).
+var/
 
 # ── Dev docs (personal context, not for public repo) ───────────────────────────
 HISTORY_AND_VISION.md
@@ -41,12 +42,27 @@ Thumbs.db
 # ── Misc data ───────────────────────────────────────────────────────────────────
 data/
 *.db
+# SQLite write-ahead/journal sidecars — hold uncommitted private data, and *.db
+# does NOT match them (different suffix). The tree/ WAL files were the leak.
+*.db-shm
+*.db-wal
+*.db-journal
 *.bak
+
+# ── Model weights (large binaries — download on first run, never commit) ─────────
+/models/
+*.onnx
+*.bin
 
 # ── Environment / secrets ────────────────────────────────────────────────────────
 .env
 .env.*
 
+# ── Claude Code local config (machine-specific permissions + local prompts) ─────
+.claude/
+
 # ── Kai workspace output (files Kai writes — user data, not source) ─────────────
 KaiFiles/
-/tests
+
+# Node / Tailwind build
+node_modules/

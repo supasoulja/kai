@@ -16,7 +16,8 @@ from typing import Callable
 
 from kai.memory import semantic, procedural, episodic, extractor, context
 from kai.memory import router
-from kai.schema import SemanticFact, ProceduralRule, EpisodicEntry, ContextBlock
+from kai.memory.knowledge import KnowledgeStore
+from kai.store.schema import SemanticFact, ProceduralRule, EpisodicEntry, ContextBlock
 
 EmbedFn = Callable[[str], list[float]] | None
 
@@ -29,6 +30,8 @@ class MemoryManager:
         self._session_state: dict[str, str] = {}
         # Memory router domain index — built once via init_router()
         self._domain_index: dict[str, list[float]] = {}
+        # Per-user knowledge store (researcher-learned facts)
+        self._knowledge: KnowledgeStore = KnowledgeStore(user_id)
 
     # ── Router ────────────────────────────────────────────────────────────────
 
@@ -128,28 +131,53 @@ class MemoryManager:
     def build_context(
         self,
         query: str = "",
-        dm_mode: bool = False,
         query_embedding: list[float] | None = None,
+        include_welcome_back: bool = True,
     ) -> ContextBlock:
         return context.build(
             query=query,
             embed_fn=self.embed_fn,
             session_state=self._session_state,
-            dm_mode=dm_mode,
             query_embedding=query_embedding,
             domain_index=self._domain_index or None,
             user_id=self.user_id,
+            include_welcome_back=include_welcome_back,
         )
 
     def render_context(
         self,
         query: str = "",
-        dm_mode: bool = False,
         query_embedding: list[float] | None = None,
+        include_welcome_back: bool = True,
     ) -> str:
         return self.build_context(
-            query, dm_mode=dm_mode, query_embedding=query_embedding
+            query, query_embedding=query_embedding,
+            include_welcome_back=include_welcome_back,
         ).render()
+
+    # ── Knowledge store (researcher-learned facts) ─────────────────────────────
+
+    def learn_knowledge(
+        self, content: str, source: str = "researcher", topic: str | None = None
+    ) -> None:
+        """Save a fact the researcher discovered to this user's knowledge store."""
+        self._knowledge.learn(content, embed_fn=self.embed_fn, source=source, topic=topic)
+
+    def search_knowledge(self, query: str, top_k: int = 5,
+                         query_embedding: list[float] | None = None) -> list[dict]:
+        """Vector search the user's learned knowledge store.
+
+        `query_embedding` (if given) reuses an embedding already computed this
+        turn instead of re-embedding the query.
+        """
+        return self._knowledge.search(query, embed_fn=self.embed_fn, top_k=top_k,
+                                      query_embedding=query_embedding)
+
+    def knowledge_count(self) -> int:
+        return self._knowledge.count()
+
+    def recent_knowledge(self, limit: int = 10) -> list[dict]:
+        return self._knowledge.recent(limit=limit)
 
     # ── Commit a conversation turn ─────────────────────────────────────────────
 

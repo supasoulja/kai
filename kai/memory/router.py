@@ -15,11 +15,12 @@ The Memory Directory is a tiny always-injected block (~200 chars) that tells
 Kai what data exists in each store — the "sign at the entrance" — so she
 knows what's available even when the actual data isn't loaded.
 """
-import math
 from typing import Callable
 
+from kai.llm.vecmath import cosine as _cosine
+
 from kai.config import MEMORY_ROUTER_TOP_K, MEMORY_ROUTER_THRESHOLD
-from kai.schema import SemanticFact
+from kai.store.schema import SemanticFact
 
 
 # ── Domain definitions ────────────────────────────────────────────────────────
@@ -74,29 +75,10 @@ _MEMORY_DOMAINS: dict[str, dict] = {
         "fact_prefixes": ["note"],
         "stores": ["semantic"],
     },
-    "campaign": {
-        "description": (
-            "D&D campaign, NPCs, quests, events, dungeon master, "
-            "roleplaying game, character sheet"
-        ),
-        "stores": ["campaign"],
-    },
 }
 
 
 # ── Cosine similarity ─────────────────────────────────────────────────────────
-# Same implementation as kai/tools/registry.py._cosine — duplicated here to
-# avoid a cross-layer import from tools into memory.
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    mag_a = math.sqrt(sum(x * x for x in a))
-    mag_b = math.sqrt(sum(y * y for y in b))
-    if mag_a == 0 or mag_b == 0:
-        return 0.0
-    return dot / (mag_a * mag_b)
-
-
 # ── Startup: build domain index ──────────────────────────────────────────────
 
 def build_domain_index(
@@ -206,7 +188,6 @@ def build_directory(
     doc_inventory: list[dict],
     episodic_count: int,
     learned_count: int = 0,
-    campaign_name: str | None = None,
     session_keys: list[str] | None = None,
 ) -> str:
     """
@@ -269,10 +250,6 @@ def build_directory(
     if session_keys:
         lines.append(f"- Session: live system stats available ({', '.join(session_keys[:4])})")
 
-    # Campaign
-    if campaign_name:
-        lines.append(f"- Campaign: \"{campaign_name}\" (active)")
-
     if not lines:
         return ""  # no data anywhere — skip the block entirely
 
@@ -281,49 +258,31 @@ def build_directory(
 
 # ── Episodic count (lightweight query) ───────────────────────────────────────
 
-def get_episodic_count(user_id: int = 0) -> int:
-    """Count archive/summary episodic entries (excludes turns and learned). Cheap DB query."""
+def get_episodic_and_learned_counts(user_id: int = 0) -> tuple[int, int]:
+    """Both episodic-archive and learned counts in a single scan of
+    episodic_entries. Returns (episodic_count, learned_count)."""
     try:
-        from kai.db import get_conn
+        from kai.store.db import get_conn
         conn = get_conn()
         row = conn.execute(
-            "SELECT COUNT(*) FROM episodic_entries "
-            "WHERE user_id = ? AND entry_type NOT IN ('turn', 'learned')",
+            "SELECT "
+            "  SUM(CASE WHEN entry_type NOT IN ('turn', 'learned') THEN 1 ELSE 0 END), "
+            "  SUM(CASE WHEN entry_type = 'learned' THEN 1 ELSE 0 END) "
+            "FROM episodic_entries WHERE user_id = ?",
             (user_id,)
         ).fetchone()
-        return row[0] if row else 0
+        if not row:
+            return 0, 0
+        return int(row[0] or 0), int(row[1] or 0)
     except Exception:
-        return 0
+        return 0, 0
+
+
+def get_episodic_count(user_id: int = 0) -> int:
+    """Count archive/summary episodic entries (excludes turns and learned)."""
+    return get_episodic_and_learned_counts(user_id)[0]
 
 
 def get_learned_count(user_id: int = 0) -> int:
-    """Count knowledge entries extracted from conversations. Cheap DB query."""
-    try:
-        from kai.db import get_conn
-        conn = get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM episodic_entries "
-            "WHERE user_id = ? AND entry_type = 'learned'",
-            (user_id,)
-        ).fetchone()
-        return row[0] if row else 0
-    except Exception:
-        return 0
-
-
-# ── Campaign name (lightweight query) ────────────────────────────────────────
-
-def get_active_campaign_name(user_id: int = 0) -> str | None:
-    """Return the user's active campaign name, or None. Cheap DB query."""
-    try:
-        from kai.db import get_conn
-        conn = get_conn()
-        row = conn.execute(
-            "SELECT c.name FROM campaigns c "
-            "JOIN user_active_campaigns uac ON uac.campaign_id = c.id "
-            "WHERE uac.user_id = ? LIMIT 1",
-            (user_id,)
-        ).fetchone()
-        return row[0] if row else None
-    except Exception:
-        return None
+    """Count knowledge entries extracted from conversations."""
+    return get_episodic_and_learned_counts(user_id)[1]

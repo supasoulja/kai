@@ -9,32 +9,57 @@ Two extraction modes:
 """
 import re
 from kai.memory import semantic
+from kai.memory import tree as _tree
 
 
 # ── User message patterns ──────────────────────────────────────────────────────
 # Extracted from things the USER says. (pattern, key_name, capture_group)
 
-_USER_PATTERNS: list[tuple[re.Pattern, str, int]] = [
-    # "my name is X" / "call me X"
-    (re.compile(r"\b(?:my name is|call me)\s+([A-Za-z]+)", re.I),          "user_name",    1),
+# (pattern, key_name, capture_group, confidence). Confidence is the trust we put
+# in the capture — loose, greedy patterns score low so a casual phrase can never
+# overwrite a confident singleton fact (see _singleton_should_write).
+_USER_PATTERNS: list[tuple[re.Pattern, str, int, float]] = [
+    # "my name is X" / "call me X" — explicit self-statement, full trust
+    (re.compile(r"\b(?:my name is|call me)\s+([A-Za-z]+)", re.I),          "user_name",   1, 1.0),
     # "I prefer X" / "I like X" / "I love X" / "I hate X"
-    (re.compile(r"\bI (?:prefer|like|love|hate|dislike)\s+(.+?)(?:\s*[.,!?]|$)", re.I), "preference", 1),
-    # "from now on, X"
-    (re.compile(r"\bfrom now on[,\s]+(.+?)(?:\s*[.,!?]|$)", re.I),         "instruction",  1),
-    # "remember that X" / "remember X"
-    (re.compile(r"\bremember (?:that\s+)?(.+?)(?:\s*[.,!?]|$)", re.I),     "note",         1),
-    # "I'm a/an X" / "I am a/an X"
-    (re.compile(r"\bI(?:'m| am) an?\s+([A-Za-z ]+?)(?:\s*[.,!?]|$)", re.I),"user_role",    1),
+    (re.compile(r"\bI (?:prefer|like|love|hate|dislike)\s+(.+?)(?:\s*[.,!?]|$)", re.I), "preference", 1, 0.7),
+    # "from now on, X" — explicit directive, full trust
+    (re.compile(r"\bfrom now on[,\s]+(.+?)(?:\s*[.,!?]|$)", re.I),         "instruction", 1, 1.0),
+    # "remember that X" / "remember X" — anchored to the start of the message
+    # (optionally after a short greeting) so conversational mentions of
+    # "remember" ("I don't know if you'll remember any of this tomorrow",
+    # "so you can remember your whole convo with Claude") don't get captured
+    # as if they were save-this-note commands. Explicit save command, full trust.
+    (re.compile(r"^\s*(?:hey[,!]?\s*)?(?:please\s+)?remember (?:that\s+)?(.+?)(?:\s*[.,!?]|$)", re.I), "note", 1, 1.0),
+    # "I'm a/an X" / "I am a/an X" — greedy; catches transient states
+    # ("I'm a bit tired" → "bit tired"), so low trust + state-word filtering.
+    (re.compile(r"\bI(?:'m| am) an?\s+([A-Za-z ]+?)(?:\s*[.,!?]|$)", re.I),"user_role",   1, 0.5),
     # "I use X" (tools, languages, hardware)
-    (re.compile(r"\bI use\s+([A-Za-z0-9_+# ]+?)(?:\s*[.,!?]|$)", re.I),   "uses",         1),
+    (re.compile(r"\bI use\s+([A-Za-z0-9_+# ]+?)(?:\s*[.,!?]|$)", re.I),   "uses",        1, 0.6),
     # "I'm based in X" / "I live in X"
-    (re.compile(r"\bI(?:'m| am) (?:based |located )?in\s+([A-Za-z ,]+?)(?:\s*[.,!?]|$)", re.I), "location", 1),
+    (re.compile(r"\bI(?:'m| am) (?:based |located )?in\s+([A-Za-z ,]+?)(?:\s*[.,!?]|$)", re.I), "location", 1, 0.7),
     # "I play X" / "I game on X"
-    (re.compile(r"\bI (?:play|mainly play|mostly play)\s+(.+?)(?:\s*[.,!?]|$)", re.I), "gaming", 1),
+    (re.compile(r"\bI (?:play|mainly play|mostly play)\s+(.+?)(?:\s*[.,!?]|$)", re.I), "gaming", 1, 0.6),
 ]
 
 # Keys where only one value makes sense — overwrite rather than append _1, _2
 _SINGLETON_KEYS = {"user_name", "user_role", "location"}
+
+# A singleton capture below this confidence may SET the fact when none exists,
+# but may never OVERWRITE an existing one. This is what stops casual phrasing
+# ("I'm a bit tired", confidence 0.5) from clobbering user_role=developer.
+_SINGLETON_OVERWRITE_MIN = 0.7
+
+# "I'm a/an X" is greedy and snags transient moods/states rather than identity.
+# Reject any singleton capture containing one of these so a mood never lands as a
+# profession. Not exhaustive — the confidence guard is the general backstop.
+_STATE_WORDS = {
+    "bit", "little", "lot", "tad",  # degree hedges that precede an adjective
+    "tired", "exhausted", "sleepy", "hungry", "thirsty", "bored", "busy",
+    "sick", "ill", "happy", "sad", "angry", "upset", "excited", "nervous",
+    "scared", "afraid", "fine", "okay", "ok", "good", "great", "bad", "sure",
+    "ready", "done", "lost", "confused", "stuck", "curious", "worried", "fan",
+}
 
 # Values that regex captures but aren't real facts — pronouns, filler, etc.
 _JUNK_VALUES = {
@@ -83,6 +108,49 @@ VOLATILE_DB_KEYS = {
 }
 
 
+# ── Memory tree mirroring ────────────────────────────────────────────────────
+# Bridges facts found above into kai/memory/tree.py so the memory model loop
+# (gather -> rank -> flag -> render in memory/loop.py) has real nodes to draw
+# on. Full conversational extraction into the tree is still future work (see
+# BRAIN_DESIGN "Open Questions") — this mirrors only the facts the regex
+# patterns above already find with reasonable confidence.
+_TREE_PATHS: dict[str, tuple[str, float, float]] = {
+    # base key -> (path / path template using {key}, importance, specificity)
+    "user_name":        ("user/identity/name", 0.6, 0.9),
+    "user_role":        ("user/identity/profession", 0.8, 0.7),
+    "location":         ("user/identity/location", 0.5, 0.7),
+    "instruction":      ("user/identity/critical/{key}", 0.9, 0.8),
+    "note":             ("user/identity/critical/{key}", 0.85, 0.7),
+    "preference":       ("user/preferences/{key}", 0.5, 0.6),
+    "gaming":           ("user/preferences/gaming/{key}", 0.5, 0.6),
+    "uses":             ("user/knowledge/{key}", 0.5, 0.6),
+    "sys_ram_total_gb": ("user/identity/hardware/ram_total_gb", 0.6, 0.9),
+}
+
+# Per-process guard so the skeleton seed runs at most once per user.
+_TREE_SEEDED: set[str] = set()
+
+
+def _mirror_to_tree(saved: list[tuple[str, str]], user_id: int, source: str) -> None:
+    """Write extracted facts into the matching tree paths, if any."""
+    if not saved:
+        return
+    uid = str(user_id)
+    if uid not in _TREE_SEEDED:
+        _tree.seed_skeleton(uid)
+        _TREE_SEEDED.add(uid)
+    for key, value in saved:
+        base = re.sub(r"_\d+$", "", key)
+        entry = _TREE_PATHS.get(base)
+        if not entry:
+            continue
+        template, importance, specificity = entry
+        _tree.write(uid, _tree.Node(
+            path=template.format(key=key), value=value, confidence=0.85,
+            importance=importance, specificity=specificity, source=source,
+        ))
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def extract_and_save(text: str, user_id: int = 0) -> list[tuple[str, str]]:
@@ -91,17 +159,28 @@ def extract_and_save(text: str, user_id: int = 0) -> list[tuple[str, str]]:
     Returns list of (key, value) pairs saved.
     """
     saved = []
-    for pattern, key_name, group in _USER_PATTERNS:
+    # One read of the existing facts, reused for the singleton overwrite guard
+    # and the accumulating-slot dedup below.
+    existing = {f.key: f for f in semantic.list_facts(user_id=user_id)}
+    for pattern, key_name, group, confidence in _USER_PATTERNS:
         match = pattern.search(text)
-        if match:
-            value = match.group(group).strip()
-            if len(value) < _MIN_VALUE_LEN:
+        if not match:
+            continue
+        value = match.group(group).strip()
+        if len(value) < _MIN_VALUE_LEN or value.lower() in _JUNK_VALUES:
+            continue
+        if key_name in _SINGLETON_KEYS:
+            if _looks_like_state(value):
+                continue  # a transient mood/state, not a stable identity fact
+            key = key_name
+            if not _singleton_should_write(existing.get(key_name), value, confidence):
                 continue
-            if value.lower() in _JUNK_VALUES:
-                continue
-            key = key_name if key_name in _SINGLETON_KEYS else _next_slot(key_name, value, user_id)
-            semantic.set_fact(key, value, source="user_message", user_id=user_id)
-            saved.append((key, value))
+        else:
+            key = _next_slot(key_name, value, user_id, existing)
+        semantic.set_fact(key, value, source="user_message",
+                          confidence=confidence, user_id=user_id)
+        saved.append((key, value))
+    _mirror_to_tree(saved, user_id, source="stated")
     return saved
 
 
@@ -117,6 +196,7 @@ def extract_stable_observations(text: str, user_id: int = 0) -> list[tuple[str, 
             value = match.group(1).strip()
             semantic.set_fact(key, value, source="observation", user_id=user_id)
             saved.append((key, value))
+    _mirror_to_tree(saved, user_id, source="stated")
     return saved
 
 
@@ -135,17 +215,41 @@ def extract_volatile_observations(text: str) -> dict[str, str]:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _next_slot(base_key: str, value: str, user_id: int = 0) -> str:
+def _looks_like_state(value: str) -> bool:
+    """True if a singleton capture contains a transient-state word — a guard for
+    the greedy 'I'm a/an X' pattern so a mood isn't saved as identity."""
+    return any(tok in _STATE_WORDS for tok in re.findall(r"[a-z]+", value.lower()))
+
+
+def _singleton_should_write(prior, value: str, confidence: float) -> bool:
+    """Whether a singleton capture should be written.
+
+    First capture wins (sets the fact when none exists). An existing fact is only
+    overwritten by a *different* value whose confidence clears the overwrite floor
+    AND is at least as high as what's already stored — so a casual, low-trust
+    phrase can't clobber a known name/role/location.
+    """
+    if prior is None:
+        return True
+    if prior.value.strip().lower() == value.strip().lower():
+        return False  # already stored — no-op
+    return confidence >= _SINGLETON_OVERWRITE_MIN and confidence >= prior.confidence
+
+
+def _next_slot(base_key: str, value: str, user_id: int = 0, existing=None) -> str:
     """
     For accumulating keys (preference_1, preference_2, ...):
     - If this exact value already stored, return same key (no duplicate).
     - Otherwise find the next free numbered slot.
+
+    `existing` (dict of key -> SemanticFact) is reused when the caller already
+    loaded the fact list; otherwise it's fetched here.
     """
-    existing = semantic.list_facts(user_id=user_id)
-    for f in existing:
+    facts = list(existing.values()) if existing is not None else semantic.list_facts(user_id=user_id)
+    for f in facts:
         if f.key.startswith(base_key) and f.value.lower().strip() == value.lower().strip():
             return f.key  # already have it
-    existing_keys = {f.key for f in existing}
+    existing_keys = {f.key for f in facts}
     i = 1
     while f"{base_key}_{i}" in existing_keys:
         i += 1

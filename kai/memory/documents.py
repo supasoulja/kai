@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from kai.config import DEBUG
-from kai.db import get_conn, sqlite_vec_available
+from kai.store.db import get_conn, sqlite_vec_available, like_escape, vec_knn
 
 EmbedFn = Callable[[str], list[float]]
 
@@ -36,7 +36,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
         try:
             return filepath.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
-            raise ValueError(f"Could not read file: {e}")
+            raise ValueError(f"Could not read file: {e}") from e
 
     if suffix == ".pdf":
         try:
@@ -48,7 +48,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
                 pages.append(text)
             return "\n\n".join(pages)
         except Exception as e:
-            raise ValueError(f"Could not read PDF: {e}")
+            raise ValueError(f"Could not read PDF: {e}") from e
 
     if suffix in {".docx", ".doc"}:
         try:
@@ -56,7 +56,7 @@ def _extract_text(filepath: Path, original_name: str) -> str:
             doc = docx.Document(str(filepath))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception as e:
-            raise ValueError(f"Could not read Word document: {e}")
+            raise ValueError(f"Could not read Word document: {e}") from e
 
     raise ValueError(f"Unsupported file type: {suffix!r}")
 
@@ -142,7 +142,7 @@ def ingest(
 
             # Embed in one batch call for speed (CPU, no VRAM)
             texts = list(chunks)
-            from kai.embed import embed_batch as _fast_embed_batch
+            from kai.llm.embed import embed_batch as _fast_embed_batch
             embeddings = _fast_embed_batch(texts)
 
             for (rowid, _chunk_id), emb in zip(rows, embeddings):
@@ -188,16 +188,11 @@ def _vector_search(
     query_embedding: list[float] | None = None,
     user_id: int = 0,
 ) -> list[dict]:
-    import sqlite_vec
     embedding = query_embedding or embed_fn(query)
     conn = get_conn()
 
-    # Step 1: pure KNN — no JOINs inside the MATCH query
-    knn_rows = conn.execute(
-        "SELECT rowid, distance FROM rag_chunks_vec "
-        "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-        (sqlite_vec.serialize_float32(embedding), int(top_k * 3)),
-    ).fetchall()
+    # Step 1: pure KNN — over-fetch since the ownership filter comes later.
+    knn_rows = vec_knn(conn, "rag_chunks_vec", embedding, top_k * 3)
     if not knn_rows:
         return []
     rowid_to_dist = {r[0]: r[1] for r in knn_rows}
@@ -226,7 +221,7 @@ def _vector_search(
 
 def _text_search(query: str, top_k: int, user_id: int = 0) -> list[dict]:
     conn = get_conn()
-    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = like_escape(query)
     rows = conn.execute(
         "SELECT c.doc_id, c.chunk_index, c.content, d.filename "
         "FROM rag_chunks c "

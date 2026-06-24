@@ -13,15 +13,21 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import ollama
-import sqlite_vec
+try:
+    import ollama
+    import sqlite_vec
+except ImportError as exc:
+    sys.exit(
+        f"This migration script needs '{exc.name}'. Install the dev/script deps "
+        f"first:\n    pip install ollama sqlite-vec"
+    )
 
 
 NEW_DIM   = 2560
 NEW_MODEL = "qwen3-embedding:4b"
 
 DB_PATHS = [
-    Path("kai/memory/kai's memory/kai.db"),
+    Path("var/memory/kai.db"),
     Path("C:/newB-roof/kai/memory/roof memory/roof.db"),
 ]
 
