@@ -70,9 +70,7 @@ def get_or_create_brain(user_id: int) -> Brain:
             think=True,
             user_id=user_id,
         )
-        brain._tool_index = dict(shared_tool_index)
-        brain._tool_index_ready = bool(shared_tool_index)
-        brain._memory_router_ready = bool(shared_domain_index)
+        brain.prime_indexes(shared_tool_index, router_ready=bool(shared_domain_index))
         # Restore the user's saved generation preset (think + temperature).
         _active = memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET
         if _active not in cfg.GEN_PRESETS:

@@ -603,6 +603,31 @@ class Brain:
         with self._history_lock:
             return list(self._session_history)
 
+    # ── Public surface for collaborators (api/state, web, sleep) ──────────────
+    # These let external code drive the Brain without reaching into its private
+    # state, so internals (history storage, the tool index, temp handling) can be
+    # refactored without a ripple across the app.
+
+    @property
+    def final_temperature(self) -> float:
+        """The temperature used for the final answer this session."""
+        return self._final_temp
+
+    def prime_indexes(self, tool_index: dict[str, list[float]] | None = None,
+                      router_ready: bool = False) -> None:
+        """Seed the per-user tool index + readiness flags from shared, already-built
+        indexes so a freshly-created Brain skips re-embedding them."""
+        if tool_index is not None:
+            self._tool_index = dict(tool_index)
+            self._tool_index_ready = bool(tool_index)
+        self._memory_router_ready = bool(router_ready)
+
+    def append_external_turn(self, role: str, content: str) -> None:
+        """Append a turn produced outside the chat loop (e.g. a document-upload
+        note) to the session history, taking the history lock internally."""
+        with self._history_lock:
+            self._session_history.append({"role": role, "content": content})
+
     def load_session(self, session_id: str, messages: list[dict]) -> int:
         """Replace in-memory history with a saved session. Returns message count."""
         with self._history_lock:

@@ -57,6 +57,36 @@ def make_brain(response_text: str = "Hello.", tool_calls=None):
     return Brain(memory=memory, ollama=ollama), memory
 
 
+# ── Public surface (no private poking) ───────────────────────────────────────
+
+def test_final_temperature_property_reflects_internal():
+    brain, _ = make_brain()
+    brain._final_temp = 0.42
+    assert brain.final_temperature == 0.42
+
+
+def test_prime_indexes_seeds_tool_index_and_flags():
+    brain, _ = make_brain()
+    brain.prime_indexes({"system.temps": [0.1, 0.2]}, router_ready=True)
+    assert brain._tool_index == {"system.temps": [0.1, 0.2]}
+    assert brain._tool_index_ready is True
+    assert brain._memory_router_ready is True
+
+
+def test_prime_indexes_none_leaves_index_but_sets_router_flag():
+    brain, _ = make_brain()
+    brain.prime_indexes(None, router_ready=False)
+    assert brain._tool_index_ready is False
+    assert brain._memory_router_ready is False
+
+
+def test_append_external_turn_adds_to_history():
+    brain, _ = make_brain()
+    brain.append_external_turn("user", "[Document uploaded: notes.pdf]")
+    hist = brain.snapshot_history()
+    assert hist[-1] == {"role": "user", "content": "[Document uploaded: notes.pdf]"}
+
+
 # ── _strip_thinking ──────────────────────────────────────────────────────────────
 
 def test_strip_thinking_extracts_think_tags():
