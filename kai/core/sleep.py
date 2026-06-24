@@ -127,6 +127,18 @@ def run_sleep_cycle(ollama, brain) -> None:
     """
     print("[~] Kai is going to sleep...")
 
+    # Fact review runs regardless of whether there was a conversation — it's
+    # time-based maintenance (decay un-reconfirmed guesses, prune the faded ones,
+    # cap runaway preference_N accumulation).
+    if brain:
+        try:
+            from kai.memory import semantic as _semantic
+            stats = _semantic.review_facts(user_id=brain.user_id)
+            if stats["decayed"] or stats["purged"]:
+                print(f"[~] Fact review: decayed {stats['decayed']}, purged {stats['purged']}")
+        except Exception:
+            pass
+
     session_history = brain._session_history if brain else []
 
     if not session_history:

@@ -69,3 +69,55 @@ def list_facts(user_id: int = 0) -> list[SemanticFact]:
         )
         for row in rows
     ]
+
+
+def _cap_numbered(conn, user_id: int, base_key: str, cap: int) -> int:
+    """Keep only the `cap` most-recently-updated `base_key_N` facts; delete the
+    rest. Returns how many were deleted."""
+    rows = conn.execute(
+        "SELECT key FROM semantic_facts "
+        "WHERE user_id = ? AND key LIKE ? ESCAPE '\\' "
+        "ORDER BY updated_at DESC",
+        (user_id, base_key + "\\_%"),
+    ).fetchall()
+    stale = [r[0] for r in rows[cap:]]
+    for key in stale:
+        conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
+                     (user_id, key))
+    return len(stale)
+
+
+def review_facts(user_id: int = 0, decay: float = 0.1, purge_below: float = 0.3,
+                 pref_cap: int = 20, stale_days: int = 30) -> dict:
+    """Sleep-time fact maintenance — 'use it or lose it' for low-trust facts.
+
+    - Decay: facts below confidence 1.0 (the inferred regex guesses; explicit
+      and observed facts sit at 1.0 and are left alone) that haven't been
+      re-confirmed in `stale_days` lose `decay` confidence. Re-stating a fact
+      refreshes its updated_at and restores the pattern confidence, so active
+      facts never decay.
+    - Purge: once a decayed fact drops below `purge_below`, it's deleted.
+    - Cap: accumulated preference_N is trimmed to the `pref_cap` most recent.
+
+    Returns {"decayed": n, "purged": n}.
+    """
+    conn = get_conn()
+    now = datetime.now()
+    decayed = purged = 0
+    for f in list_facts(user_id=user_id):
+        if f.confidence >= 1.0:
+            continue  # explicit / observed facts are permanent
+        if (now - f.updated_at).days < stale_days:
+            continue  # recently confirmed — leave it
+        new_conf = round(f.confidence - decay, 4)
+        if new_conf < purge_below:
+            conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
+                         (user_id, f.key))
+            purged += 1
+        else:
+            conn.execute("UPDATE semantic_facts SET confidence = ? "
+                         "WHERE user_id = ? AND key = ?", (new_conf, user_id, f.key))
+            decayed += 1
+    purged += _cap_numbered(conn, user_id, "preference", pref_cap)
+    conn.commit()
+    return {"decayed": decayed, "purged": purged}
