@@ -248,7 +248,8 @@ _TRUST_FACTOR = {
 }
 
 
-def compute_context_modifier(user_id: str) -> float:
+def compute_context_modifier(user_id: str, rel: "RelationshipState | None" = None,
+                             kai: "KaiState | None" = None) -> float:
     """
     Combine all three state stores into the single scalar the scorer multiplies in.
 
@@ -257,9 +258,14 @@ def compute_context_modifier(user_id: str) -> float:
     - kai's own self_confidence this session pulls the ceiling down when she's been wrong a lot
 
     Range is roughly 0.3–1.0. Never zero — Kai always has *some* basis to act on.
+
+    Pass already-loaded `rel`/`kai` to avoid reloading them — gather_context
+    loads both for rendering, so it hands them through instead of re-reading.
     """
-    rel = load_relationship_state(user_id)
-    kai = load_kai_state(user_id)
+    if rel is None:
+        rel = load_relationship_state(user_id)
+    if kai is None:
+        kai = load_kai_state(user_id)
 
     # Low depth compresses toward 0.5 (cautious); high depth allows full range up to 1.0
     depth_factor = 0.5 + (rel.relationship_depth * 0.5)         # ranges 0.5–1.0

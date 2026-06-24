@@ -90,11 +90,12 @@ def build(
             pass  # graceful degradation — missing context is better than a crash
 
     # ── Memory directory: always built, always injected ───────────────────────
+    _episodic_count, _learned_count = router.get_episodic_and_learned_counts(user_id=user_id)
     directory = router.build_directory(
         semantic_facts=all_facts,
         doc_inventory=doc_inv,
-        episodic_count=router.get_episodic_count(user_id=user_id),
-        learned_count=router.get_learned_count(user_id=user_id),
+        episodic_count=_episodic_count,
+        learned_count=_learned_count,
         session_keys=list((session_state or {}).keys()),
     )
 

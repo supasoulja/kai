@@ -258,31 +258,31 @@ def build_directory(
 
 # ── Episodic count (lightweight query) ───────────────────────────────────────
 
-def get_episodic_count(user_id: int = 0) -> int:
-    """Count archive/summary episodic entries (excludes turns and learned). Cheap DB query."""
+def get_episodic_and_learned_counts(user_id: int = 0) -> tuple[int, int]:
+    """Both episodic-archive and learned counts in a single scan of
+    episodic_entries. Returns (episodic_count, learned_count)."""
     try:
         from kai.store.db import get_conn
         conn = get_conn()
         row = conn.execute(
-            "SELECT COUNT(*) FROM episodic_entries "
-            "WHERE user_id = ? AND entry_type NOT IN ('turn', 'learned')",
+            "SELECT "
+            "  SUM(CASE WHEN entry_type NOT IN ('turn', 'learned') THEN 1 ELSE 0 END), "
+            "  SUM(CASE WHEN entry_type = 'learned' THEN 1 ELSE 0 END) "
+            "FROM episodic_entries WHERE user_id = ?",
             (user_id,)
         ).fetchone()
-        return row[0] if row else 0
+        if not row:
+            return 0, 0
+        return int(row[0] or 0), int(row[1] or 0)
     except Exception:
-        return 0
+        return 0, 0
+
+
+def get_episodic_count(user_id: int = 0) -> int:
+    """Count archive/summary episodic entries (excludes turns and learned)."""
+    return get_episodic_and_learned_counts(user_id)[0]
 
 
 def get_learned_count(user_id: int = 0) -> int:
-    """Count knowledge entries extracted from conversations. Cheap DB query."""
-    try:
-        from kai.store.db import get_conn
-        conn = get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM episodic_entries "
-            "WHERE user_id = ? AND entry_type = 'learned'",
-            (user_id,)
-        ).fetchone()
-        return row[0] if row else 0
-    except Exception:
-        return 0
+    """Count knowledge entries extracted from conversations."""
+    return get_episodic_and_learned_counts(user_id)[1]

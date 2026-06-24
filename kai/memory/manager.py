@@ -163,9 +163,15 @@ class MemoryManager:
         """Save a fact the researcher discovered to this user's knowledge store."""
         self._knowledge.learn(content, embed_fn=self.embed_fn, source=source, topic=topic)
 
-    def search_knowledge(self, query: str, top_k: int = 5) -> list[dict]:
-        """Vector search the user's learned knowledge store."""
-        return self._knowledge.search(query, embed_fn=self.embed_fn, top_k=top_k)
+    def search_knowledge(self, query: str, top_k: int = 5,
+                         query_embedding: list[float] | None = None) -> list[dict]:
+        """Vector search the user's learned knowledge store.
+
+        `query_embedding` (if given) reuses an embedding already computed this
+        turn instead of re-embedding the query.
+        """
+        return self._knowledge.search(query, embed_fn=self.embed_fn, top_k=top_k,
+                                      query_embedding=query_embedding)
 
     def knowledge_count(self) -> int:
         return self._knowledge.count()

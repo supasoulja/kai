@@ -337,16 +337,21 @@ class KnowledgeStore:
         embed_fn: EmbedFn,
         top_k: int = 5,
         threshold: float = 0.6,
+        query_embedding: list[float] | None = None,
     ) -> list[dict]:
         """
         Vector search for relevant knowledge.
         Returns list of {content, source, topic, similarity} dicts,
         filtered to entries with similarity >= threshold.
+
+        Pass `query_embedding` (same FAST_EMBED space) to reuse an embedding the
+        caller already computed this turn and skip the redundant embed_fn call.
         """
         try:
             import sqlite_vec
             conn = self._conn()
-            query_bytes = sqlite_vec.serialize_float32(embed_fn(query))
+            vec = query_embedding if query_embedding is not None else embed_fn(query)
+            query_bytes = sqlite_vec.serialize_float32(vec)
 
             # Idiom note: vec_distance_cosine inline JOIN, *not* db.vec_knn's vec0
             # MATCH two-step — we need k.content/source/topic alongside the score

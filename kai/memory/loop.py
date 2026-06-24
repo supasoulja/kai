@@ -121,7 +121,11 @@ def gather_context(
     user_state = _state.load_user_state(user_id)
     kai_state = _state.load_kai_state(user_id)
 
-    context_modifier = _state.compute_context_modifier(user_id)
+    # Reuse the states just loaded — compute_context_modifier would otherwise
+    # re-read relationship + kai from disk a second time this turn.
+    context_modifier = _state.compute_context_modifier(
+        user_id, rel=relationship, kai=kai_state
+    )
 
     ranked = scorer.select_for_context(
         user_id, query_embedding,

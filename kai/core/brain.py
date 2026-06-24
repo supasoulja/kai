@@ -1186,7 +1186,7 @@ class Brain:
         # Runs for all modes — learned knowledge is always useful when it matches.
         try:
             if self.memory.knowledge_count() > 0:
-                hits = self.memory.search_knowledge(user_input)
+                hits = self.memory.search_knowledge(user_input, query_embedding=query_emb)
                 if hits:
                     lines = [
                         f"[{h['topic'] or 'general'}] {h['content']}"
