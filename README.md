@@ -5,218 +5,412 @@ Local AI agent. No cloud. No API keys. Runs entirely on your hardware.
 **Stack:** Python + Ollama + SQLite. No LangChain. No frameworks.
 
 > **Warning:** This is a solo developer project. Kai is an AI agent that can run system
-> commands, modify files, and suggest changes to your PC. **Do not blindly follow her advice.**
-> Always review what she's proposing before approving destructive actions — especially system
-> repairs, service changes, file deletions, and registry edits. She can be wrong. She can
-> hallucinate. She has safety rails, but they are not bulletproof. Use at your own risk.
+> commands, modify files, and interact with your PC. **Do not blindly follow her advice. Please for the love of God**
+> Always review what she's proposing before approving destructive actions — especially file
+> deletions and system changes. She can be wrong. She can hallucinate. She has safety rails,
+> but they are not bulletproof. Use at your own risk.
 
 ---
 
 ## What Kai Is
 
 Kai is an agent, not a chatbot. She observes, plans, acts, and remembers across sessions.
-She owns a domain — your machine — and proactively uses tools to diagnose, monitor, and fix things.
+She owns a domain — your machine — and uses tools to diagnose, search, research, and help you.
 
 Edit `kai/persona.md` to change her behavior. No code changes needed.
 
 ---
 
+## What's New
+
+- **Native Linux desktop app** — pywebview window with system tray, single-instance lock, and `Ctrl+Shift+K` global hotkey. `bash scripts/install-desktop.sh` adds it to your app menu.
+- **Filesystem tree memory** — hierarchical memory store with paths like `user/identity/profession`. Version C probabilistic scoring: recency × confidence × similarity × importance. Hardcoded prefixes (health, hardware, profession) are always surfaced first.
+- **Cerebellum** — execution validation layer that runs pre/post every tool call. Detects intent drift, scope creep, loop repetition, and output incoherence. Returns CLEAR / FLAG / STOP without touching the main LLM (~5ms, CPU-only).
+- **Intuition flags** — five detectors (contradiction, pattern break, emotional incongruence, accumulation, escalation approach) that override the scoring equation when something feels off. Sit outside the math so edge cases the equation misses still get caught.
+- **Three state stores** — UserState (emotional register, session intent, terseness), KaiState, RelationshipState. Relationship depth scales every memory score — Kai asserts less when you're new, more when she knows you.
+- **Daily briefing** — LLM-free morning summary assembled from watchdog alerts, cluster node status, and stale goals. Generated in <100ms, delivered at the start of the next session.
+- **Usage pattern tracking** — async log of every tool call by time of day. After enough samples, proactive one-line suggestions appear in context ("You usually check temps around this time").
+- **Goals system** — persistent multi-session tasks with ordered steps. Active goals are injected into every context block so they're never forgotten across conversations.
+- **Study tools** — open academic search across arXiv, Semantic Scholar, PubMed, CORE, SciELO, Unpaywall, Open Access Button, Open Library, and Project Gutenberg. Local study library with vector search.
+- **Cluster / watchdog system** — register remote PCs with a one-time join code. `cluster.*` tools scan nodes, broadcast diagnostics, and queue commands. `watchdog/agent.py` runs on any machine (stdlib + requests only, no Kai install needed) and sends events back when something's worth a look.
+- **Scheduler** — lightweight background thread for daily jobs at configurable HH:MM times. Powers the morning briefing; extensible for any recurring task.
+
+---
+
 ## Features
 
-- **Native desktop app** — pywebview (Edge WebView2), system tray, global hotkey (Ctrl+Shift+K), single-instance lock, startup-on-login toggle
-- **Kai's Computer** — a simulated Ubuntu/GNOME desktop that visualizes Kai's behind-the-scenes activity in real time. Every tool call becomes a window: web searches open a browser, file ops open a file manager, system commands run in a terminal. Pure downstream projection — Kai never reads the event log.
-- **Kaomoji face system** — 640-combination ASCII face (8 eyes x 8 mouths x 10 flairs) with 15 named presets, 3-stage blink transitions, and idle animation. Kai controls her expression via `<face:annoyed>` tags in her response stream.
-- **Event bus** — SQLite-backed event log with real-time WebSocket streaming. Every tool call, reasoning chunk, and status change is recorded and broadcastable.
-- **60 tools** — system diagnostics, sandboxed file management, web search, notes, network tools, crash analysis, self-inspection, and D&D campaign management
-- **4-tier memory** — semantic facts, episodic summaries, procedural rules, session cache. All SQLite, all local, all per-user isolated.
-- **Dual embedding** — fast CPU-only ONNX (384-dim, ~5 ms) for live search, optional GPU re-embed at shutdown (2560-dim) for higher quality
+- **Multi-model routing** — fast CPU embedding classifies every user turn and routes to chat, reasoning (thinking mode), tool use, or researcher. Seeds from built-in patterns and grows dynamically from usage.
+- **88 tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, cluster monitoring, self-inspection, and more
+- **Filesystem tree memory** — hierarchical key-value nodes at paths like `user/preferences/gaming/fps`. Version C scoring (recency × confidence × similarity × importance). Hardcoded prefixes always surface first. Three state stores modulate every score.
+- **Cerebellum validation** — pre/post execution checks on every tool call. Intent drift, scope, loop detection, and output coherence. CPU-only ONNX, ~5ms per check.
+- **Intuition flags** — five detectors override scoring when the equation misses something. Surfaced in a `[FLAGS]` block the chat model can reason about.
+- **5-tier memory** — semantic facts, episodic summaries, procedural rules, session cache, and per-user knowledge store. All SQLite, all local, all per-user isolated.
+- **Dual embedding** — fast CPU-only ONNX (384-dim, ~5ms) for live routing and search; optional GPU re-embed at shutdown (2560-dim) for higher quality
+- **Voice interface** — Web Audio API mic capture (16kHz WAV), faster-whisper STT, kokoro-onnx TTS with 20+ voices. Tap-to-toggle or hold for push-to-talk.
 - **Document RAG** — upload PDFs and text files, chunked and embedded for vector search
 - **Multi-user auth** — name + PIN + machine-bound certificate. Session cookies, per-user memory isolation.
-- **ReAct tool loop** — non-streaming tool rounds with error escalation, JSON repair for broken tool calls, fact extraction and grounding
+- **ReAct tool loop** — non-streaming tool rounds with error escalation, JSON repair for broken tool calls, fact extraction and grounding, dangerous-tool confirmation gate
 - **Streaming responses** — SSE streaming with markdown rendering, thinking block display, and activity logging
+- **Kaomoji face system** — 640-combination ASCII face with 15 named presets and idle animation
+- **LAN / phone access** — `python web.py --lan` serves over self-signed TLS for same-network phone access. PWA-ready with home screen install support.
+- **Generation presets** — Thinking / Normal / Creative / Crazy modes adjust temperature and chain-of-thought
+- **Daily briefing** — LLM-free morning summary delivered at session start. Covers watchdog alerts, cluster node health, and stale goals.
+- **Usage pattern proactives** — Kai notices when you do the same thing at the same time and offers to do it before you ask.
 
 ---
 
 ## Requirements
 
 - Python 3.12+
-- [Ollama](https://ollama.com) installed (Kai auto-starts it if not running)
-- AMD or NVIDIA GPU recommended (CPU works, just slower)
-- 8 GB VRAM minimum
+- [Ollama](https://ollama.com) installed and running
+- 16 GB VRAM recommended (RTX 4080 or similar)
+- ffmpeg installed (for audio transcription tool)
+- Chromium downloaded via Playwright (for browser automation tool)
+
+CPU-only works but reasoning and tool-call speed will be significantly slower.
 
 ---
 
 ## Setup
 
-### Windows
-
 ```bash
 # 1. Clone the repo
-git clone https://github.com/supasoulja/newb_agent
-cd newb_agent
-
-# 2. Create a virtual environment
-python -m venv .venv
-.venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Pull required models
-ollama pull qwen3.5:9b            # primary model (~6.3 GB)
-
-# Optional:
-ollama pull qwen3:8b              # reasoning model (~6.0 GB)
-ollama pull qwen3-embedding:4b    # HQ embedding for shutdown re-embed (~2.5 GB)
-
-# 5. Run
-python app.py     # desktop app (recommended — requires desktop extras)
-python web.py     # browser-based web UI
-python cli.py     # terminal REPL
-```
-
-Or double-click `start.bat` — it auto-detects the venv and pulls models if needed.
-
-For the desktop app (`python app.py`), also install desktop extras:
-```bash
-pip install -r requirements-desktop.txt
-```
-
-### Linux
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/supasoulja/newb_agent
-cd newb_agent
+git clone <your-repo-url>
+cd newB2_kai
 
 # 2. Create a virtual environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 3. Install dependencies
+# 3. Install dependencies (one command — covers core, voice, browser, and watchdog)
 pip install -r requirements.txt
 
-# 4. Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+# 4. Download the Chromium browser binary for the browser-automation tool
+#    (the playwright package itself is already installed by step 3)
+python -m playwright install chromium
 
-# 5. Pull required models
-ollama pull qwen3.5:9b            # primary model (~6.3 GB)
+# 5. Install ffmpeg (for audio transcription)
+# Ubuntu/Debian:
+sudo apt-get install ffmpeg
+# Windows: download from https://ffmpeg.org
 
-# Optional:
-ollama pull qwen3:8b              # reasoning model (~6.0 GB)
-ollama pull qwen3-embedding:4b    # HQ embedding for shutdown re-embed (~2.5 GB)
+# 6. Pull required models
+ollama pull gemma4:12b              # primary model — always resident (~8 GB)
+ollama pull gemma4:26b              # reasoning model — loaded on demand (~14 GB)
+ollama pull qwen3-embedding:4b      # HQ embedding for shutdown re-embed (~2.5 GB)
 
-# 6. Run
-python web.py     # browser-based web UI (recommended on Linux)
-python cli.py     # terminal REPL
+# 7. Run
+python web.py       # browser-based web UI at http://localhost:7860
+python cli.py       # terminal REPL
+python app.py       # native desktop window (see Desktop App below)
 ```
 
-Or run `./start.sh` — it auto-detects the venv, installs deps, and pulls models if needed.
-
-> **Note:** On Linux, some tools (crash logs, Windows updates, startup programs, restore
-> points, disk cleanup) are Windows-specific and will report "only available on Windows."
-> Core tools (system info, file operations, network diagnostics, web search, notes,
-> memory) work fully on both platforms.
-
 First run downloads a small (~25 MB) ONNX embedding model and prompts you to register an account.
+
+On first voice use, faster-whisper downloads the Whisper `small` model (~462 MB) automatically.
+
+### Optional feature groups
+
+Some features are gated behind extra dependencies so you only install what you
+use (and a future installer can offer them as checkboxes). Each is guarded by
+`try/except` in code — Kai runs fine without them; the feature just stays off.
+
+| Feature | Install | Enables |
+|---------|---------|---------|
+| **Document ingest** | `pip install -r requirements-documents.txt` | Upload PDFs/Word docs for RAG; index downloaded study material (uses `pypdf` + `python-docx`) |
+| **Native desktop app** | `pip install -r requirements-desktop.txt` | `python app.py` window + tray (see [Desktop App](#desktop-app-linux--windows)) |
+| **HTTPS / LAN** | `pip install cryptography` | Self-signed TLS for `python web.py --https` / `--lan` (already in core requirements) |
+| **AMD GPU temps (Windows)** | `pip install pyadl` | GPU temperature readout on AMD cards via the AMD Display Library |
 
 ---
 
 ## Running Modes
 
-| Mode | Command | Platform | What you get |
-|------|---------|----------|-------------|
-| **Desktop app** | `python app.py` | Windows | Native window, system tray, hotkey, close-to-tray dialog |
-| **Web UI** | `python web.py` | Windows + Linux | Browser at `http://localhost:7860`, same full UI |
-| **CLI** | `python cli.py` | Windows + Linux | Terminal REPL with `:commands` |
+| Mode | Command | What you get |
+|------|---------|-------------|
+| **Web UI** | `python web.py` | Browser at `http://localhost:7860` |
+| **LAN / Phone** | `python web.py --lan` | HTTPS on your local IP, phone-accessible PWA |
+| **CLI** | `python cli.py` | Terminal REPL with `:commands` |
+| **Desktop App** | `python app.py` | Native window, system tray, global hotkey |
 
 ---
 
-## Kai's Computer
+## Desktop App (Linux / Windows)
 
-A simulated Ubuntu/GNOME desktop that shows what Kai is doing behind the scenes.
+A pywebview window wraps the same web UI without a browser. Features:
 
-**How it works:**
-- Click the **Computer** button in the top bar of the main chat UI
-- A new window opens with a boot sequence (BIOS → splash → login → desktop)
-- Every tool Kai uses spawns a corresponding window on the desktop:
-  - `search.web` → browser window with search results
-  - `system.*`, `pc.*`, `network.*` → terminal window with command output
-  - `files.*` → file manager or text editor
-  - `<think>` reasoning → text editor showing thought process
-- Window manager supports drag, resize, minimize, maximize, close
-- Top bar shows clock, connection status, and current activity
-- Dock shows which window types are active
+- **System tray** — minimize to tray, restore from tray or `Ctrl+Shift+K`
+- **Close dialog** — choose "minimize to tray" or "quit completely" with a "remember my choice" checkbox
+- **Single-instance lock** — launching a second copy brings the existing window to front
+- **Autostart** — enable/disable via the app settings; writes to `~/.config/autostart/` on Linux, Windows Startup folder on Windows
 
-**Architecture:** The event bus (`kai/events.py`) records every tool call, thinking chunk, and status change to SQLite. Kai's Computer connects via WebSocket and renders events as desktop windows. This is a pure downstream projection — Kai's brain never reads the event log and behaves identically whether the desktop is open or not.
+**Linux setup (one-time):**
 
----
+```bash
+# Install system packages (Ubuntu/Debian)
+sudo apt install python3-gi gir1.2-webkit2-4.1
 
-## Face System
+# pywebview renders via the system GTK/PyGObject (`gi`), which lives outside
+# the venv. Your venv must be allowed to see system packages, or you'll get
+# "No module named 'gi'". Either create it that way:
+#     python3 -m venv --system-site-packages .venv
+# or flip the flag on an existing venv:
+#     sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
 
-Kai has a visible ASCII face in the chat window that reflects her emotional state.
+# Install Python desktop dependencies (into your project venv —
+# activate it first, or pip will hit PEP 668 "externally-managed-environment")
+source .venv/bin/activate
+pip install -r requirements-desktop.txt
 
-**Part library:** 8 eyes x 8 mouths x 10 flairs = 640 unique combinations.
+# Add to app menu (and optionally autostart)
+bash scripts/install-desktop.sh
 
-**15 named presets:** idle, thinking, working, focused, happy, amused, proud, excited, annoyed, confused, surprised, sympathetic, tired, sleepy, error.
-
-**Three-tier system:**
-1. **Auto-preset** — brain state drives idle/thinking/working automatically
-2. **Named shortcuts** — Kai writes `<face:annoyed>` in her response (tag stripped before display)
-3. **Compositional** — `<face eyes=smug mouth=smirk flair=sparkle>` for custom expressions
-
-All face changes use a 3-stage blink transition (current → eyes-closed → new face). Idle blinking runs every 3-7 seconds.
+# Run
+python app.py
+```
 
 ---
 
 ## Models
 
-Sized for 8 GB VRAM. Ollama swaps models so only one is loaded at a time.
+| Model | Role | VRAM | Notes |
+|-------|------|------|-------|
+| `gemma4:12b` | Chat, tools, vision — always resident | ~8 GB | Multimodal, native function calling |
+| `gemma4:26b` | Deep reasoning — loaded on demand | ~14 GB | MoE: 4B active params, 26B total |
+| `Xenova/bge-small-en-v1.5` | Live embedding (CPU, ONNX) | 0 — CPU only | ~5 ms per embed |
+| `qwen3-embedding:4b` | HQ re-embed at shutdown | ~2.5 GB (optional) | 2560-dim vectors |
 
-| Model | Role | VRAM |
-|-------|------|------|
-| `qwen3.5:9b` | Chat, tools, summarization | ~6.3 GB |
-| `qwen3:8b` | Reasoning / heavy tasks | ~6.0 GB |
-| `Xenova/bge-small-en-v1.5` | Live embedding (CPU, ONNX) | 0 — CPU only |
-| `qwen3-embedding:4b` | HQ re-embed at shutdown | ~2.5 GB (optional) |
+Ollama swaps models as needed. The 12B stays resident; the 26B is loaded when the handoff router
+classifies a turn as requiring deep reasoning, then released after.
 
 Set `OLLAMA_KV_CACHE_TYPE=q8_0` in your environment to halve KV-cache VRAM usage.
 
 ---
 
-## Tools
+## Multi-Model Routing
 
-Kai picks the right tool automatically. 40 tools across 10 namespaces:
+Every user turn is embedded and compared against a vector index of routing patterns to decide
+which mode handles it — all in ~5 ms using the CPU-only ONNX embedder, zero GPU cost.
 
-| Namespace | Tools | Purpose |
-|-----------|-------|---------|
-| `system.*` | info, temps, crashes, gpu_crashes, game_crashes, create_restore_point, clear_temp_files, disable_startup_program, run_disk_cleanup | System diagnostics and maintenance |
-| `pc.*` | startup_programs, event_logs, network_info, windows_updates, deep_scan | Hardware and OS inspection |
-| `files.*` | disk_usage, find_large, find_old, recent, read, list, write, append, edit | File system operations |
-| `network.*` | ping, traceroute, full_diagnostic | Network diagnostics |
-| `search.*` | web | DuckDuckGo web search |
-| `workspace.*` | git_clone, git_pull, git_list_allowed | Git repository management |
-| `notes.*` | save, search, list | Personal note taking |
-| `weather.*` | current | Weather via DuckDuckGo |
-| `time.*` | now | Current date and time |
-| `campaign.*` | npc_save, event_log, quest_update, recall, status | D&D campaign management (WIP) |
+| Mode | Trigger examples | What changes |
+|------|-----------------|-------------|
+| `chat` | Greetings, personal questions, memory recall | Normal response |
+| `reasoning` | "think through this", "explain why", complex analysis | Gemma 4 thinking mode forced on |
+| `tool` | "debug this", "run a command", "write code" | Tool definitions prioritized |
+| `researcher` | "search for", "look this up", "what is" | Knowledge store searched, researcher prompt injected |
+
+The router starts with seed patterns and grows from real usage — call `HandoffRouter.learn()` to
+teach it new patterns from successful interactions.
 
 ---
 
 ## Memory
 
-Four tiers — all SQLite, all local:
+### Tree memory
 
-| Tier | What it stores | Persists? |
-|------|---------------|-----------|
-| **Semantic** | Stable facts: user name, preferences, hardware | Yes — forever |
-| **Episodic** | Session summaries (compressed from raw turns) | Yes — across sessions |
-| **Procedural** | Behavioral rules (tone, response style) | Yes — set at startup |
-| **Session** | Runtime stats: CPU%, temps, disk% | No — current session only |
+Hierarchical key-value nodes at filesystem-style paths:
+
+```
+user/identity/profession        → "software developer"
+user/preferences/gaming/fps     → ["CS2", "Apex"]
+user/health/allergies           → "penicillin"
+```
+
+Every node is scored on retrieval using the **Version C equation**:
+
+```
+score = P(still_true) × P(correct) × P(relevant_now) × boost(importance, frequency)
+         recency_decay   confidence   cosine_similarity   importance × specificity + freq_lift
+```
+
+Hardcoded prefixes (`user/health`, `user/identity/hardware`, `user/identity/profession`, `user/identity/critical`) bypass scoring and always surface first.
+
+### Scoring modifiers
+
+Three state stores produce a `context_modifier` scalar that scales every node score:
+
+- **UserState** — emotional register, session intent, terseness, recent override rate
+- **KaiState** — Kai's own current mode and confidence
+- **RelationshipState** — depth (0.0–1.0), trust, conversation count
+
+Low relationship depth compresses scores toward neutral (Kai asserts less). High depth lets scores spread out.
+
+### Intuition flags
+
+Five detectors run every turn alongside the scoring equation:
+
+| Detector | What it catches |
+|----------|----------------|
+| `contradiction` | New statement conflicts with a stored node (needs semantic read) |
+| `pattern_break` | Behavior deviates sharply from established patterns (needs semantic read) |
+| `emotional_incongruence` | Stated emotion doesn't match conversation tone (needs semantic read) |
+| `accumulation` | Same node type queried too many times in one session (arithmetic only) |
+| `escalation_approach` | Conversation heading toward a topic Kai should slow down on (arithmetic only) |
+
+A flag produces a level (`soft` / `hard` / `alert`), an action (`hold` / `ask` / `soften` / `escalate`), and a plain-English reason surfaced in a `[FLAGS]` block. Dominant flag wins when several trip at once.
+
+### Cerebellum
+
+Execution validation layer sitting between the tool router and every tool call:
+
+- **pre_check** — before a tool fires: intent drift from the original request, scope boundary check, loop detection (same tool + similar args recently)
+- **post_check** — after a tool returns: output coherence check
+
+Verdicts: `CLEAR` (proceed), `FLAG` (inject warning into stream, Kai decides), `STOP` (abort chain, Kai explains). All checks use the 384-dim CPU ONNX embedder, ~5ms, zero LLM cost.
+
+### Flat tiers (alongside the tree)
+
+| Tier | What it stores | Persists? | Isolated? |
+|------|---------------|-----------|-----------|
+| **Semantic** | Stable facts: user name, preferences, hardware | Yes — forever | Per-user |
+| **Episodic** | Session summaries (compressed from raw turns) | Yes — across sessions | Per-user |
+| **Procedural** | Behavioral rules (tone, response style) | Yes — set at startup | Per-user |
+| **Session** | Runtime stats: CPU%, temps | No — current session only | Per-user |
+| **Knowledge** | Researcher-discovered facts (vector-searchable) | Yes — grows over time | Per-user (separate DB file) |
 
 - History auto-compresses when it exceeds ~3k tokens
-- Archives retrieved only when semantically relevant — not injected every turn
-- Per-user isolation — users never see each other's data
+- Memory router activates only relevant domains per query (embedding-based, 7 domains)
+- Knowledge store searched on every turn and injected as context when relevant
+
+---
+
+## Goals
+
+Persistent multi-session tasks with ordered steps:
+
+```
+goals.create  — create a new goal with optional step list
+goals.list    — show active goals and step progress
+goals.update  — mark a step complete, add notes
+goals.complete / goals.abandon
+```
+
+Active goals are injected into every context block. Stale goals (no progress in N days) appear in the daily briefing.
+
+---
+
+## Study Tools
+
+Open academic search — all sources are legitimately free, no paywall bypass:
+
+| Source | Coverage |
+|--------|---------|
+| arXiv | Preprints: physics, math, CS, economics, biology |
+| Semantic Scholar | 200M+ papers, PDF links, citation graph |
+| PubMed/NCBI | NIH-funded research |
+| CORE | 200M+ full-text open-access papers |
+| SciELO | Latin America's scientific output |
+| Unpaywall | Legal free copy of any paper by DOI |
+| Open Access Button | Unpaywall + author request fallback |
+| Open Library | Internet Archive digital lending + public domain |
+| Project Gutenberg | 70k public-domain epub books |
+
+Also includes `study.ask_library` — vector search over locally indexed study items.
+
+Set `UNPAYWALL_EMAIL` and optionally `CORE_API_KEY` (free at core.ac.uk) in `kai/config.py`.
+
+---
+
+## Cluster / Watchdog
+
+Monitor multiple PCs from Kai's chat interface.
+
+**How it works:**
+
+1. Kai generates a one-time join code (`cluster.generate_join_code`)
+2. Run `python watchdog/agent.py --server http://kai-host:7860 --join-code <code> --label "my-vm"` on any other machine
+3. The agent is now registered with a unique device ID + secret key (key is hashed in the DB)
+4. `cluster.node_scan` / `cluster.broadcast_scan` queue commands → agent polls every 15s → results come back to Kai
+
+**Cluster tools:**
+
+```
+cluster.node_scan       — run full diagnostics on one node (cpu, ram, disk, temps)
+cluster.broadcast_scan  — scan all registered nodes simultaneously
+cluster.list_nodes      — show registered nodes and last-seen timestamps
+cluster.node_status     — current status of one node
+```
+
+**Watchdog agents** (`watchdog/` folder):
+
+Self-contained — stdlib + `requests` only, no `kai` package, no models. Deploy to any PC. Events (alerts, warnings) are queued in SQLite and surfaced in the next chat session, same delivery channel as welcome-back notes.
+
+---
+
+## Daily Briefing
+
+Runs at `BRIEFING_TIME` (configurable in `kai/config.py`). Assembles:
+
+- Pending watchdog alerts since last delivery
+- Cluster node status (offline nodes, long-since-seen)
+- Active goals with no progress in `GOAL_STALE_DAYS`
+
+LLM-free — structured fact assembly only. Runs in <100ms, zero VRAM. Delivered at the start of the next chat session.
+
+---
+
+## Usage Patterns
+
+Every tool call is logged asynchronously (tool name × hour of day × day of week). After `PATTERN_MIN_SAMPLES` observations for a `(user, tool, hour)` cluster, a one-line proactive suggestion is injected into context:
+
+> `[PATTERN] You usually check temps around this time — want a quick scan?`
+
+All detection is a fast DB aggregate query. No LLM, no embeddings.
+
+---
+
+## Tools
+
+Kai picks the right tool automatically. 84 tools across 17 namespaces:
+
+| Namespace | Key tools | Purpose |
+|-----------|-----------|---------|
+| `research.*` | `fetch_url` | Fetch + strip HTML from any URL |
+| `browser.*` | `read_page`, `screenshot` | JS-rendered pages via headless Chromium |
+| `vision.*` | `describe` | Analyze images with Gemma 4 multimodal |
+| `audio.*` | `transcribe` | Transcribe audio/video files via ffmpeg + Whisper |
+| `search.*` | `web` | DuckDuckGo web search |
+| `system.*` | `info`, `temps`, `crashes`, `gpu_crashes` | System diagnostics |
+| `files.*` | `read`, `write`, `edit`, `find_large`, `recent` | File operations |
+| `network.*` | `ping`, `traceroute`, `full_diagnostic` | Network diagnostics |
+| `notes.*` | `save`, `search`, `list` | Personal note taking |
+| `goals.*` | `create`, `list`, `update`, `complete`, `abandon` | Multi-session goal tracking |
+| `study.*` | `search_papers`, `find_free`, `search_books`, `ask_library` | Open academic search + local library |
+| `cluster.*` | `node_scan`, `broadcast_scan`, `list_nodes`, `node_status` | Remote PC monitoring |
+| `workspace.*` | `git_clone`, `git_pull` | Git operations |
+| `docs.*` | `search`, `list`, `delete` | Document RAG |
+| `memory.*` | `search_history`, `reflect` | Memory inspection |
+| `self.*` | `inspect`, `check_persona`, `propose_persona_update` | Self-inspection and persona management |
+
+---
+
+## Knowledge Store
+
+Two-layer system built on SQLite + sqlite-vec:
+
+**Handoff patterns** (`kai.db` — shared, no user data) — routing signals. Every pattern has a
+target mode and a use count. Patterns grow dynamically as Kai learns which requests go where.
+
+**User knowledge** (`kai/memory/knowledge/users/{user_id}.db` — per-user, fully isolated) —
+facts the researcher discovers. Stored as vector-searchable entries, injected into context when
+relevant. Deleting a user's file removes all their learned data with no risk to other users.
+
+---
+
+## Voice Interface
+
+**Listening (STT):**
+- Click the mic button to toggle recording, or hold it for push-to-talk
+- Browser captures 16kHz mono audio and encodes to WAV client-side (no ffmpeg needed)
+- WAV sent to `/voice/transcribe` → faster-whisper `small` model → text filled into input → auto-sent
+
+**Speaking (TTS):**
+- After each Kai response, `POST /voice/tts` fetches synthesized audio from kokoro-onnx
+- Plays automatically in the browser via the Web Audio API
+- Toggle with the speaker button next to the mic (state saved in localStorage)
+- Default voice: `af_heart` — configurable in `kai/config.py` (`TTS_VOICE`)
+
+Both STT and TTS are fully local — no network calls, no API keys.
 
 ---
 
@@ -227,6 +421,22 @@ Three-factor local auth:
 1. **Name** — identifies the account (case-insensitive)
 2. **PIN** — 4+ digits, stored as SHA-256 hash
 3. **Machine certificate** — 30-byte random key generated once per installation. A copied database is useless on another machine.
+
+Phone access via `--lan` only requires name + PIN (no machine certificate check on remote devices).
+
+---
+
+## LAN / Phone Access
+
+```bash
+python web.py --lan
+```
+
+- Detects your LAN IP automatically
+- Generates a self-signed TLS cert with the LAN IP in the SANs
+- Prints `[✓] Phone URL: https://192.168.x.x:7860` on startup
+- Open the URL on your phone, accept the cert once, log in with name + PIN
+- PWA-ready — "Add to Home Screen" for a native app feel
 
 ---
 
@@ -241,131 +451,128 @@ Three-factor local auth:
 | `:history` | Show last 10 episodic entries |
 | `:trace` | Show last 10 turn traces |
 | `:tools` | List registered tools |
-| `:model heavy` | Switch to reasoning model |
-| `:model fast` | Switch back to chat model |
-| `:models` | List all configured models |
 | `:debug` | Toggle debug output |
 | `exit` | Quit |
+
+---
+
+## Configuration
+
+Key settings in `kai/config.py`:
+
+```python
+CHAT_MODEL          = "gemma4:12b"                # always-resident chat + tools model
+WHISPER_MODEL       = "small"                     # STT model size
+TTS_VOICE           = "af_heart"                  # Kokoro TTS voice
+CONTEXT_WINDOW      = 8192                        # tokens passed to Ollama
+FAST_EMBED_MODEL    = "Xenova/bge-small-en-v1.5"  # CPU embedding (ONNX)
+HANDOFF_THRESHOLD   = 0.55                        # routing confidence cutoff
+KNOWLEDGE_TOP_K     = 5                           # knowledge entries injected per turn
+BRIEFING_ENABLED    = True                        # daily morning briefing
+BRIEFING_TIME       = "09:00"                     # HH:MM local time
+GOAL_STALE_DAYS     = 3                           # days before a goal appears in briefing
+PATTERN_ENABLED     = True                        # usage pattern tracking
+PATTERN_MIN_SAMPLES = 5                           # observations before proactive suggestion fires
+UNPAYWALL_EMAIL     = ""                          # email for Unpaywall rate limiting (no account needed)
+CORE_API_KEY        = ""                          # free at core.ac.uk, raises rate limits
+```
 
 ---
 
 ## Project Structure
 
 ```
-newb_agent/
-├── app.py                    <- native desktop app (pywebview + pystray)
-├── web.py                    <- FastAPI server + SSE streaming + WebSocket
-├── cli.py                    <- terminal REPL
-├── start.bat                 <- Windows launcher (auto-detects venv)
-├── start.sh                  <- Linux launcher (auto-detects venv)
-├── requirements.txt          <- core deps (all platforms)
-├── requirements-desktop.txt  <- extras for desktop app (pywebview, pystray)
-├── scripts/                  <- one-off maintenance scripts (migrate_embeddings.py)
-├── user_skills/              <- user-authored .md skills (e.g. quick-cleanup.md)
+newB2_kai/
+├── web.py                      <- FastAPI server + SSE streaming + voice endpoints
+├── app.py                      <- native desktop app (pywebview + pystray, Linux + Windows)
+├── cli.py                      <- terminal REPL
+├── scripts/
+│   ├── start.sh / start.bat    <- launcher: checks deps/Ollama/models, then runs the app
+│   ├── install-desktop.sh      <- adds Kai to Linux app menu, optional autostart
+│   ├── kai.desktop             <- XDG desktop entry for the project directory
+│   └── migrate_embeddings.py   <- one-off embedding migration
 ├── kai/
-│   ├── persona.md            <- edit this to change behavior
-│   ├── brain.py              <- Ollama client + ReAct loop + event emissions
-│   ├── events.py             <- event bus (SQLite + pub/sub + WebSocket)
-│   ├── config.py             <- all settings
-│   ├── identity.py           <- system prompt builder
-│   ├── embed.py              <- CPU embedding (ONNX) + shutdown HQ re-embed
-│   ├── models.py             <- model registry
-│   ├── sessions.py           <- conversation history persistence
-│   ├── users.py              <- auth + machine-bound certificates
-│   ├── device.py             <- machine certificate generation
+│   ├── config.py               <- all settings (single source of truth for data paths)
+│   ├── audio.py                <- STT (faster-whisper) + TTS (kokoro-onnx)
+│   ├── watchdog_queue.py       <- device registry, event intake, bidirectional command queue
+│   ├── core/                   <- turn engine + app lifecycle
+│   │   ├── brain.py            <- Ollama client + ReAct loop + handoff routing
+│   │   ├── tool_gate.py        <- per-turn tool/reasoning gating
+│   │   ├── flow.py             <- turn-flow recorder
+│   │   ├── events.py           <- event bus (brain → UI)
+│   │   ├── bootstrap.py        <- shared startup/shutdown
+│   │   ├── sleep.py            <- shutdown consolidation + welcome-back
+│   │   └── trace.py            <- per-turn trace log
+│   ├── llm/                    <- model inference plumbing
+│   │   ├── ollama.py           <- Ollama HTTP client
+│   │   ├── embed.py            <- CPU embedding (ONNX) + shutdown HQ re-embed
+│   │   ├── models.py           <- user-configurable model registry
+│   │   └── vecmath.py          <- cosine similarity/distance
+│   ├── store/                  <- SQLite persistence layer
+│   │   ├── db.py               <- connection mgmt (WAL, thread-local)
+│   │   ├── schema.py           <- shared dataclasses
+│   │   ├── sessions.py         <- conversation history
+│   │   └── users.py            <- user management + auth
+│   ├── system/                 <- host / OS concerns
+│   │   ├── platform.py         <- OS detection (single source of truth)
+│   │   ├── device.py           <- machine certificate
+│   │   ├── hwinfo.py           <- HWiNFO64 sensor reads (Windows)
+│   │   └── upgrade.py          <- version-change awareness
+│   ├── persona/                <- identity + persona assets
+│   │   ├── identity.py         <- system prompt builder
+│   │   ├── persona.md          <- edit this to change behavior
+│   │   └── changelog.json      <- version history Kai remembers
+│   ├── util/                   <- text.py, log.py (small shared helpers)
 │   ├── memory/
-│   │   ├── manager.py        <- unified interface over all memory tiers
-│   │   ├── semantic.py       <- long-term key-value facts
-│   │   ├── procedural.py     <- behavioral rules
-│   │   ├── episodic.py       <- session summaries + vector search
-│   │   ├── documents.py      <- document RAG
-│   │   ├── context.py        <- system prompt context assembly
-│   │   └── router.py         <- memory domain routing via embeddings
-│   ├── tools/
-│   │   ├── registry.py       <- tool router + schema declarations
-│   │   ├── system_info.py    <- CPU, RAM, disk
-│   │   ├── temps.py          <- GPU/CPU temperatures
-│   │   ├── pc_tools.py       <- startup programs, event logs, deep scan
-│   │   ├── system_ops.py     <- restore points, cleanup
-│   │   ├── file_tools.py     <- file search + read/write
-│   │   ├── workspace_tools.py<- git clone/pull + file edit
-│   │   ├── network.py        <- ping, traceroute, diagnostics
-│   │   ├── crash_logs.py     <- Windows error event parsing
-│   │   ├── search.py         <- DuckDuckGo web search
-│   │   ├── weather.py        <- weather
-│   │   ├── notes.py          <- note save/search
-│   │   └── ...
+│   │   ├── tree.py             <- filesystem-style hierarchical memory (path-addressed nodes)
+│   │   ├── scorer.py           <- Version C probabilistic scoring equation
+│   │   ├── state.py            <- three state stores: UserState, KaiState, RelationshipState
+│   │   ├── intuition.py        <- five detectors that override scoring on edge cases
+│   │   ├── cerebellum.py       <- tool execution validation (pre/post checks, CLEAR/FLAG/STOP)
+│   │   └── ...                 <- loop, briefing, scheduler, patterns, manager, knowledge,
+│   │                              semantic, episodic, router, documents, context
+│   ├── tools/                  <- grouped by domain (registry.py + _shell.py at root)
+│   │   ├── system/             <- pc, system_info, system_ops, temps, crash_logs, self_inspect, time
+│   │   ├── files/              <- file_tools, workspace_tools
+│   │   ├── web/                <- network, browser, search, weather, researcher
+│   │   ├── knowledge/          <- rag, study, notes
+│   │   ├── memory/             <- memory_tools
+│   │   ├── media/              <- audio_tools, vision
+│   │   ├── compute/            <- cluster, lxc, sandbox
+│   │   └── agent/              <- goals
+│   ├── api/                    <- FastAPI routers (voice, study, models, deps)
+│   ├── skills/                 <- skill definitions
 │   └── static/
-│       ├── app.html          <- main chat UI (Tailwind + Material Design)
-│       ├── app.js            <- chat streaming, face system, all UI logic
-│       ├── computer.html     <- Kai's Computer (simulated GNOME desktop)
-│       ├── login.html        <- login/register page
-│       └── style.css         <- shared styles
-└── tests/
-    ├── test_memory.py
-    ├── test_brain.py
-    ├── test_tools.py
-    └── test_integration.py
+│       ├── app.html            <- main chat UI
+│       ├── app.js              <- chat SSE, face system, voice recording, TTS playback
+│       ├── login.html          <- login/register page
+│       ├── icon-192.png        <- PWA + desktop icon
+│       └── manifest.json       <- PWA manifest
+├── var/                        <- runtime data (gitignored): live DBs, knowledge, state, tree
+├── models/                     <- Kokoro TTS model files (gitignored, downloaded on first run)
+├── data/                       <- study library / seed content
+├── watchdog/
+│   ├── agent.py                <- standalone polling agent for remote machines
+│   ├── common.py               <- shared config helpers
+│   ├── join.py                 <- pairing flow (join code → device_id + key)
+│   └── README.md               <- deployment instructions
+└── docs/
+    ├── HISTORY_AND_VISION.md   <- 18-month build history
+    └── BRAIN_DESIGN.md         <- full memory architecture spec
 ```
 
 ---
 
 ## Known Issues
 
-- **Desktop shortcut may not launch correctly** — `pythonw.exe` swallows errors silently. Use `python app.py` from the terminal to debug. May need to kill stale Python processes on port 7860 first.
-- **Session end/clear buttons not responding** — the New Chat / clear session buttons in the sidebar don't fire their click handlers. Under investigation.
-- **Kai's Computer windows don't populate on first load** — the WebSocket connection requires an active session ID passed via URL parameter. Opening Kai's Computer before starting a chat session shows an empty desktop.
-- **Model slow on large persona context** — the face system instructions in `persona.md` add to the system prompt. On 8 GB VRAM, this can add 1-2 seconds to first response. Keep persona additions minimal.
-- **DM mode incomplete** — campaign tools exist but the full D&D hosting experience is still under development.
-
----
-
-## Build Plan
-
-Kai is under active development. Here's the roadmap:
-
-### Completed
-- **Phase 1 — App Shell:** Native desktop app with pywebview, system tray, single-instance lock, global hotkey, close-to-tray dialog, startup shortcut management
-- **Phase 2a — Event Bus:** SQLite-backed event log with real-time WebSocket streaming, wired into brain.py at all tool/thinking/streaming hook points
-- **Phase 2b — Kai's Computer:** Simulated Ubuntu desktop with 4 window types, boot sequence, window manager, event-to-window mapping with real tool output
-- **Phase 2c — Face System:** 640-combination kaomoji face with part library, 15 presets, composition engine, face tag parser, blink transitions
-
-### In Progress
-- **Phase 3 — Data Collection:** Use Kai daily for 1-2 weeks to collect event bus data. This data informs the tool audit and provides training data for fine-tuning.
-
-### Planned
-- **Phase 4 — Tool Audit & Distillation:** Analyze event data to identify which tools are used, which overlap, and which can be merged. Goal: trim 40 tools down to ~25 high-quality tools.
-- **Phase 5 — Model System Overhaul:** Merge chat and reasoning into one model. Dynamic embedding model selection by VRAM (0.6b/4b/8b). Structured JSON output for tool calls to replace regex parsing.
-- **Phase 6 — Fine-Tuning:** QLoRA fine-tune of qwen3.5:9b using real conversation data, tool call patterns, face expressions, and structured output. Training via unsloth, deployed as a custom Ollama model.
-- **Phase 7 — Fun Features:** Backlog of quality-of-life improvements and experimental features.
-
----
-
-## Configuration
-
-All settings are in `kai/config.py`:
-
-```python
-CHAT_MODEL       = "qwen3.5:9b"               # chat + tools + summarization
-REASONING_MODEL  = "qwen3:8b"                  # heavy tasks
-CONTEXT_WINDOW   = 8192                        # tokens passed to Ollama
-FAST_EMBED_MODEL = "Xenova/bge-small-en-v1.5"  # CPU embedding (ONNX)
-```
-
----
-
-## Running Tests
-
-```bash
-# Unit tests — no Ollama needed
-python -m pytest tests/test_memory.py tests/test_brain.py tests/test_tools.py -v
-
-# Integration tests — requires Ollama + models
-python -m pytest tests/test_integration.py -v -s
-```
+- **Whisper model downloads on first voice use** (~462 MB for `small`). This happens once and is cached. Expect a delay on the first STT request.
+- **Kokoro + Whisper in the same process** — loading both simultaneously can cause ONNX runtime contention. Both are lazy-loaded with threading locks; in practice they load on separate threads and work correctly.
+- **Browser automation is slow** (~3-5s) — by design. `browser.read_page` is the fallback for JS-rendered pages; `research.fetch_url` is used first.
+- **Global hotkey on Linux** — the `keyboard` package requires root or udev rules on Linux. The hotkey is silently disabled if permissions are missing; everything else works normally.
+- **Windows-specific tools** (crash logs, Windows Updates, restore points, startup programs) report "only available on Windows" on Linux. Core tools work fully on both platforms.
 
 ---
 
 ## License
 
-MIT
+AGPLv3

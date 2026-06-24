@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from kai.config import DEBUG
-from kai.db import get_conn, sqlite_vec_available
+from kai.store.db import get_conn, sqlite_vec_available
 
 EmbedFn = Callable[[str], list[float]]
 
@@ -142,7 +142,7 @@ def ingest(
 
             # Embed in one batch call for speed (CPU, no VRAM)
             texts = list(chunks)
-            from kai.embed import embed_batch as _fast_embed_batch
+            from kai.llm.embed import embed_batch as _fast_embed_batch
             embeddings = _fast_embed_batch(texts)
 
             for (rowid, _chunk_id), emb in zip(rows, embeddings):

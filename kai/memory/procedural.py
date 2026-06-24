@@ -4,8 +4,8 @@ Examples: tone=direct, response_length=brief, swearing=contextual_ok
 """
 from datetime import datetime
 
-from kai.db import get_conn
-from kai.schema import ProceduralRule
+from kai.store.db import get_conn
+from kai.store.schema import ProceduralRule
 
 
 def set_rule(key: str, value: str, user_id: int = 0) -> None:

@@ -1,0 +1,169 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, ClassVar
+from pydantic import BaseModel
+
+
+# ── Memory types ───────────────────────────────────────────────────────────────
+
+@dataclass
+class SemanticFact:
+    key: str
+    value: str
+    source: str = "conversation"      # how it was learned
+    confidence: float = 1.0
+    updated_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class ProceduralRule:
+    key: str
+    value: str
+    updated_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class EpisodicEntry:
+    id: str                           # UUID
+    content: str                      # the text that was embedded
+    timestamp: datetime
+    entry_type: str                   # "turn", "summary", "event"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
+
+
+@dataclass
+class RelationshipEntry:
+    id: str
+    timestamp: datetime
+    entry_type: str                   # "milestone", "tone_shift", "founding"
+    content: str
+
+
+# ── Context block ──────────────────────────────────────────────────────────────
+
+@dataclass
+class ContextBlock:
+    identity: str
+    procedural: list[ProceduralRule]
+    semantic: list[SemanticFact]
+    episodic: list[EpisodicEntry]
+    # Volatile session stats — in-memory only, never persisted
+    session_state: dict[str, str] = field(default_factory=dict)
+    # Relevant document chunks from uploaded files (RAG)
+    rag_chunks: list[dict] = field(default_factory=list)
+    # Brief inventory of all uploaded docs — always injected so Kai knows they exist
+    doc_inventory: list[dict] = field(default_factory=list)
+    # Memory directory — tiny always-injected summary of what data exists
+    memory_directory: str = ""
+    # Welcome-back message — written by Kai at shutdown, read on first turn
+    welcome_back: str = ""
+    # [TOOLS] index — one line per tool, pointing at its tree doc. Empty until
+    # tool-doc sync has populated tools/* (see kai/memory/tool_docs.py).
+    tool_index: str = ""
+
+    # Class-level constant: human-readable labels for session state keys
+    _SESSION_LABELS: ClassVar[dict[str, str]] = {
+        "cpu_pct":       "CPU",
+        "ram_pct":       "RAM",
+        "disk_pct":      "Disk",
+        "gpu_temp_c":    "GPU temp",
+        "cpu_temp_c":    "CPU temp",
+        "startup_count": "Startup programs",
+        "disk_free_gb":  "Disk free",
+    }
+    _SESSION_UNITS: ClassVar[dict[str, str]] = {
+        "cpu_pct":    "%",
+        "ram_pct":    "% used",
+        "disk_pct":   "% used",
+        "gpu_temp_c": "°C",
+        "cpu_temp_c": "°C",
+        "disk_free_gb": " GB free",
+    }
+
+    def render(self) -> str:
+        from datetime import datetime
+        parts = []
+
+        now = datetime.now()
+        parts.append(f"[CLOCK] {now.strftime('%A, %B %d %Y — %I:%M %p')}")
+
+        if self.identity:
+            parts.append(f"[IDENTITY]\n{self.identity.strip()}")
+
+        if self.welcome_back:
+            parts.append(f"[WELCOME BACK — Your note to yourself from last session]\n{self.welcome_back.strip()}")
+
+        if self.memory_directory:
+            parts.append(self.memory_directory)
+
+        if self.procedural:
+            lines = "\n".join(f"{r.key}={r.value}" for r in self.procedural)
+            parts.append(f"[PROCEDURAL]\n{lines}")
+
+        if self.tool_index:
+            parts.append(self.tool_index)
+
+        if self.semantic:
+            lines = "\n".join(f"- {f.key}: {f.value}" for f in self.semantic)
+            parts.append(f"[SEMANTIC — Your long-term memory. Every entry here is a fact you know.]\n{lines}")
+
+        if self.episodic:
+            lines = "\n".join(
+                f"{e.timestamp.strftime('%Y-%m-%d %H:%M')}: {e.content}"
+                for e in self.episodic
+            )
+            parts.append(f"[EPISODIC]\n{lines}")
+
+        if self.session_state:
+            pairs = []
+            for k, v in self.session_state.items():
+                label = self._SESSION_LABELS.get(k, k)
+                unit  = self._SESSION_UNITS.get(k, "")
+                pairs.append(f"{label}: {v}{unit}")
+            parts.append(f"[SESSION]\n{', '.join(pairs)}")
+
+        if self.rag_chunks:
+            sections = []
+            for chunk in self.rag_chunks:
+                sections.append(f"[{chunk['doc_name']}]\n{chunk['content']}")
+            parts.append("[DOCUMENTS]\n" + "\n\n---\n\n".join(sections))
+
+        # Doc inventory: only show when the query is document-related
+        # (i.e. RAG chunks were retrieved). Otherwise the model mentions
+        # filenames unprompted which confuses users.
+        if self.doc_inventory and self.rag_chunks:
+            lines = []
+            for doc in self.doc_inventory:
+                lines.append(f"- {doc['filename']} ({doc['file_type']}, {doc['chunk_count']} chunks)")
+            parts.append(
+                "[UPLOADED FILES]\n" + "\n".join(lines)
+            )
+
+        return "\n\n".join(parts)
+
+
+# ── Brain I/O ──────────────────────────────────────────────────────────────────
+
+class BrainResponse(BaseModel):
+    type: str           # "final" | "tool"
+    text: str = ""      # set when type == "final"
+    tool_name: str = "" # set when type == "tool"
+    tool_args: dict[str, Any] = {}
+
+
+@dataclass
+class ToolCall:
+    trace_id: str
+    tool_name: str
+    args: dict[str, Any]
+
+
+@dataclass
+class ToolResult:
+    trace_id: str
+    tool_name: str
+    success: bool
+    output: Any
+    error: str = ""

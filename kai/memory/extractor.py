@@ -9,6 +9,7 @@ Two extraction modes:
 """
 import re
 from kai.memory import semantic
+from kai.memory import tree as _tree
 
 
 # ── User message patterns ──────────────────────────────────────────────────────
@@ -21,8 +22,12 @@ _USER_PATTERNS: list[tuple[re.Pattern, str, int]] = [
     (re.compile(r"\bI (?:prefer|like|love|hate|dislike)\s+(.+?)(?:\s*[.,!?]|$)", re.I), "preference", 1),
     # "from now on, X"
     (re.compile(r"\bfrom now on[,\s]+(.+?)(?:\s*[.,!?]|$)", re.I),         "instruction",  1),
-    # "remember that X" / "remember X"
-    (re.compile(r"\bremember (?:that\s+)?(.+?)(?:\s*[.,!?]|$)", re.I),     "note",         1),
+    # "remember that X" / "remember X" — anchored to the start of the message
+    # (optionally after a short greeting) so conversational mentions of
+    # "remember" ("I don't know if you'll remember any of this tomorrow",
+    # "so you can remember your whole convo with Claude") don't get captured
+    # as if they were save-this-note commands.
+    (re.compile(r"^\s*(?:hey[,!]?\s*)?(?:please\s+)?remember (?:that\s+)?(.+?)(?:\s*[.,!?]|$)", re.I), "note", 1),
     # "I'm a/an X" / "I am a/an X"
     (re.compile(r"\bI(?:'m| am) an?\s+([A-Za-z ]+?)(?:\s*[.,!?]|$)", re.I),"user_role",    1),
     # "I use X" (tools, languages, hardware)
@@ -83,6 +88,49 @@ VOLATILE_DB_KEYS = {
 }
 
 
+# ── Memory tree mirroring ────────────────────────────────────────────────────
+# Bridges facts found above into kai/memory/tree.py so the memory model loop
+# (gather -> rank -> flag -> render in memory/loop.py) has real nodes to draw
+# on. Full conversational extraction into the tree is still future work (see
+# BRAIN_DESIGN "Open Questions") — this mirrors only the facts the regex
+# patterns above already find with reasonable confidence.
+_TREE_PATHS: dict[str, tuple[str, float, float]] = {
+    # base key -> (path / path template using {key}, importance, specificity)
+    "user_name":        ("user/identity/name", 0.6, 0.9),
+    "user_role":        ("user/identity/profession", 0.8, 0.7),
+    "location":         ("user/identity/location", 0.5, 0.7),
+    "instruction":      ("user/identity/critical/{key}", 0.9, 0.8),
+    "note":             ("user/identity/critical/{key}", 0.85, 0.7),
+    "preference":       ("user/preferences/{key}", 0.5, 0.6),
+    "gaming":           ("user/preferences/gaming/{key}", 0.5, 0.6),
+    "uses":             ("user/knowledge/{key}", 0.5, 0.6),
+    "sys_ram_total_gb": ("user/identity/hardware/ram_total_gb", 0.6, 0.9),
+}
+
+# Per-process guard so the skeleton seed runs at most once per user.
+_TREE_SEEDED: set[str] = set()
+
+
+def _mirror_to_tree(saved: list[tuple[str, str]], user_id: int, source: str) -> None:
+    """Write extracted facts into the matching tree paths, if any."""
+    if not saved:
+        return
+    uid = str(user_id)
+    if uid not in _TREE_SEEDED:
+        _tree.seed_skeleton(uid)
+        _TREE_SEEDED.add(uid)
+    for key, value in saved:
+        base = re.sub(r"_\d+$", "", key)
+        entry = _TREE_PATHS.get(base)
+        if not entry:
+            continue
+        template, importance, specificity = entry
+        _tree.write(uid, _tree.Node(
+            path=template.format(key=key), value=value, confidence=0.85,
+            importance=importance, specificity=specificity, source=source,
+        ))
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def extract_and_save(text: str, user_id: int = 0) -> list[tuple[str, str]]:
@@ -102,6 +150,7 @@ def extract_and_save(text: str, user_id: int = 0) -> list[tuple[str, str]]:
             key = key_name if key_name in _SINGLETON_KEYS else _next_slot(key_name, value, user_id)
             semantic.set_fact(key, value, source="user_message", user_id=user_id)
             saved.append((key, value))
+    _mirror_to_tree(saved, user_id, source="stated")
     return saved
 
 
@@ -117,6 +166,7 @@ def extract_stable_observations(text: str, user_id: int = 0) -> list[tuple[str, 
             value = match.group(1).strip()
             semantic.set_fact(key, value, source="observation", user_id=user_id)
             saved.append((key, value))
+    _mirror_to_tree(saved, user_id, source="stated")
     return saved
 
 

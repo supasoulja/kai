@@ -1,6 +1,6 @@
 """
 Assembles the full context block injected into every LLM call.
-Format: [IDENTITY] [MEMORY DIRECTORY] [PROCEDURAL] [SEMANTIC] [EPISODIC] [SESSION] [UPLOADED FILES] [CAMPAIGN]
+Format: [IDENTITY] [MEMORY DIRECTORY] [PROCEDURAL] [SEMANTIC] [EPISODIC] [SESSION] [UPLOADED FILES]
 
 Memory routing ("parking garage directory"):
   The router classifies each query and activates only relevant memory domains.
@@ -15,29 +15,29 @@ Memory tiers:
   - Session: always injected (tiny, volatile runtime stats)
   - Uploaded files: always injected (tiny inventory)
   - RAG chunks: ROUTED — only searched when "documents" domain is active
-  - Campaign: only injected when DM mode + "campaign" domain active
 """
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from kai.config import MAX_CONTEXT_CHARS, DM_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD
-from kai.identity import build_identity_block
+from kai.config import MAX_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD
+from kai.persona.identity import build_identity_block
 from kai.memory import semantic, procedural, episodic
 from kai.memory import router
-from kai.schema import ContextBlock
-from kai.sleep import load_welcome_back, clear_welcome_back
+from kai.store.schema import ContextBlock
+from kai.core.sleep import load_welcome_back, clear_welcome_back
 from typing import Callable
 
-# Shared pool for parallel retrieval — 3 workers covers episodic + RAG + campaign.
-_retrieval_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-retrieve")
+# Shared pool for parallel retrieval — 2 workers covers episodic + RAG.
+_retrieval_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kai-retrieve")
 
 
 def build(
     query: str = "",
     embed_fn: Callable[[str], list[float]] | None = None,
     session_state: dict[str, str] | None = None,
-    dm_mode: bool = False,
     query_embedding: list[float] | None = None,
     domain_index: dict[str, list[float]] | None = None,
     user_id: int = 0,
+    include_welcome_back: bool = True,
 ) -> ContextBlock:
     """
     Build a ContextBlock for the given query.
@@ -54,6 +54,7 @@ def build(
     proc_rules    = procedural.list_rules(user_id=user_id)
     all_facts     = semantic.list_facts(user_id=user_id)
     doc_inv       = _fetch_doc_inventory(user_id=user_id)
+    tool_index    = _render_tool_index(user_id=user_id)
 
     # ── Route: classify query → active domains ────────────────────────────────
     if query_embedding and domain_index:
@@ -61,17 +62,12 @@ def build(
     else:
         active = set(router._MEMORY_DOMAINS.keys())  # fallback: everything
 
-    # DM mode always activates campaign domain
-    if dm_mode:
-        active.add("campaign")
-
     # ── Semantic facts: filtered by active domains ────────────────────────────
     sem_facts = router.filter_facts(all_facts, active)
 
-    # ── Parallel retrieval: episodic + RAG + campaign run concurrently ────────
+    # ── Parallel retrieval: episodic + RAG run concurrently ───────────────────
     episodes: list = []
     rag_chunks: list[dict] = []
-    campaign_text: str = ""
 
     futures: dict = {}
     if "history" in active:
@@ -82,10 +78,6 @@ def build(
         futures["rag"] = _retrieval_pool.submit(
             _fetch_rag_chunks, query, embed_fn, query_embedding, user_id,
         )
-    if dm_mode and "campaign" in active:
-        futures["campaign"] = _retrieval_pool.submit(
-            _fetch_campaign, query, embed_fn, user_id,
-        )
 
     for key, fut in futures.items():
         try:
@@ -94,8 +86,6 @@ def build(
                 episodes = result
             elif key == "rag":
                 rag_chunks = result
-            elif key == "campaign":
-                campaign_text = result
         except Exception:
             pass  # graceful degradation — missing context is better than a crash
 
@@ -105,12 +95,30 @@ def build(
         doc_inventory=doc_inv,
         episodic_count=router.get_episodic_count(user_id=user_id),
         learned_count=router.get_learned_count(user_id=user_id),
-        campaign_name=router.get_active_campaign_name(user_id=user_id) if dm_mode else None,
         session_keys=list((session_state or {}).keys()),
     )
 
-    # Welcome-back message — injected once on first turn, then cleared
-    welcome_back = _get_and_clear_welcome_back()
+    # Welcome-back message — injected once on first turn, then cleared.
+    # New-chat greetings opt out so they don't consume/show the morning note.
+    welcome_back = _get_and_clear_welcome_back() if include_welcome_back else ""
+    if include_welcome_back:
+        watchdog_note = _get_and_clear_watchdog_events()
+        if watchdog_note:
+            welcome_back = f"{welcome_back}\n\n{watchdog_note}" if welcome_back else watchdog_note
+        briefing = _get_and_clear_briefing(user_id=user_id)
+        if briefing:
+            welcome_back = f"{welcome_back}\n\n{briefing}" if welcome_back else briefing
+
+    # Active goals — always injected so Kai never forgets ongoing tasks
+    goals_block = _get_active_goals(user_id=user_id)
+    # Proactive pattern suggestion (time-of-day patterns)
+    pattern_note = _get_pattern_suggestion(user_id=user_id) if include_welcome_back else ""
+
+    merged_state = dict(session_state or {})
+    if goals_block:
+        merged_state["active_goals"] = goals_block
+    if pattern_note:
+        merged_state["proactive"] = pattern_note
 
     block = ContextBlock(
         identity=identity_text,
@@ -118,15 +126,14 @@ def build(
         procedural=proc_rules,
         semantic=sem_facts,
         episodic=episodes,
-        session_state=session_state or {},
-        campaign=campaign_text,
+        session_state=merged_state,
         rag_chunks=rag_chunks,
         doc_inventory=doc_inv,
         welcome_back=welcome_back,
+        tool_index=tool_index,
     )
 
-    # Use a larger budget in DM mode — campaigns need more context
-    budget = DM_CONTEXT_CHARS if dm_mode else MAX_CONTEXT_CHARS
+    budget = MAX_CONTEXT_CHARS
 
     # Trim if over budget — drop oldest episodic first, then RAG chunks.
     # Compute rendered length once and estimate savings to avoid O(n^2) re-renders.
@@ -154,15 +161,13 @@ def _get_and_clear_welcome_back() -> str:
     if _welcome_back_used:
         return ""
     _welcome_back_used = True
-    parts = []
+    # NOTE: no persona "gap" check here. Tools are auto-documented in the memory
+    # tree (tool_docs.sync_tool_docs) and injected as the [TOOLS] block every turn
+    # — persona.md is identity/voice, not a tool catalog. New capabilities are
+    # surfaced as an awareness bubble (see kai/memory/capabilities.py), not nagged
+    # into the cold-open greeting.
     msg = load_welcome_back()
-    if msg:
-        parts.append(msg)
-    # One-shot persona gap check
-    gaps = _check_persona_gaps()
-    if gaps:
-        parts.append(gaps)
-    return "\n\n".join(parts)
+    return msg or ""
 
 
 def mark_welcome_back_delivered():
@@ -175,19 +180,51 @@ def mark_welcome_back_delivered():
         pass
 
 
-def _check_persona_gaps() -> str:
-    """Check for undocumented tools on first boot. Returns a note or empty string."""
+_watchdog_events_used = False
+_pending_watchdog_ids: list[int] = []
+
+def _get_and_clear_watchdog_events() -> str:
+    """
+    Load any pending watchdog reports on first call this session, return empty
+    after. Mirrors _get_and_clear_welcome_back: doesn't mark them delivered
+    here — call mark_watchdog_events_delivered() after a successful response
+    so a report survives a crash/timeout and gets surfaced again next time.
+    """
+    global _watchdog_events_used, _pending_watchdog_ids
+    if _watchdog_events_used:
+        return ""
+    _watchdog_events_used = True
     try:
-        from kai.tools.self_inspect import check_persona
-        result = check_persona()
-        if "not mentioned in persona.md" in result:
-            return (
-                "[PERSONA GAP DETECTED] " + result.split("\n")[0] +
-                " Consider asking the user if they'd like you to propose an update."
-            )
+        from kai import watchdog_queue
+        events = watchdog_queue.get_pending_events()
+    except Exception:
+        return ""
+    if not events:
+        return ""
+
+    _pending_watchdog_ids = [e["id"] for e in events]
+    lines = ["[WATCHDOG REPORTS — from monitoring scripts on the network]"]
+    for e in events:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["ts"]))
+        lines.append(
+            f"- [{e['severity']}] {e['label']}/{e['script_id']} at {when}: "
+            f"{e['message']} — {e['suggestion']}"
+        )
+    return "\n".join(lines)
+
+
+def mark_watchdog_events_delivered():
+    """Mark this session's surfaced watchdog reports delivered after a successful
+    first response — mirrors mark_welcome_back_delivered's crash-survival semantics."""
+    global _pending_watchdog_ids
+    if not _pending_watchdog_ids:
+        return
+    try:
+        from kai import watchdog_queue
+        watchdog_queue.mark_delivered(_pending_watchdog_ids)
+        _pending_watchdog_ids = []
     except Exception:
         pass
-    return ""
 
 
 def _fetch_episodic(
@@ -201,7 +238,15 @@ def _fetch_episodic(
     Prefers archived summaries (non-turn entries) — they are concise and cross-session.
     Falls back to raw turns if no summaries exist yet (e.g. first session before any
     compression or clear-chat has fired).
+
+    Semantic recall needs a real query. Cold-open greetings build context with an
+    empty query and no embedding; embedding "" and KNN-searching it returns the same
+    arbitrary "nearest to nothing" archives on every boot — recall that ignores
+    context and reliably resurfaces stale topics. Skip it (mirrors _fetch_rag_chunks);
+    cold-open continuity comes from the welcome-back note, not similarity search.
     """
+    if not query.strip():
+        return []
     results = episodic.search_non_turns(
         query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K,
         query_embedding=query_embedding, user_id=user_id,
@@ -248,6 +293,15 @@ def _fetch_rag_chunks(
         return []
 
 
+def _render_tool_index(user_id: int = 0) -> str:
+    """[TOOLS] index — one line per documented tool. Empty if sync hasn't run."""
+    try:
+        from kai.memory.tool_docs import render_tool_index
+        return render_tool_index(user_id)
+    except Exception:
+        return ""
+
+
 def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
     """
     Return a brief list of all uploaded documents (filename + type + chunk count).
@@ -263,21 +317,60 @@ def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
         return []
 
 
-def _fetch_campaign(
-    query: str,
-    embed_fn: Callable[[str], list[float]] | None,
-    user_id: int = 0,
-) -> str:
-    """Fetch the active campaign's context block (NPCs, quests, events)."""
+_briefing_used = False
+
+def _get_and_clear_briefing(user_id: int = 0) -> str:
+    """Load the pending daily briefing once per session."""
+    global _briefing_used
+    if _briefing_used:
+        return ""
+    _briefing_used = True
     try:
-        from kai import campaign as _camp
-        active = _camp.get_active_campaign(user_id=user_id)
-        if not active:
+        from kai.memory.briefing import get_pending
+        return get_pending(user_id=user_id)
+    except Exception:
+        return ""
+
+
+def mark_briefing_delivered(user_id: int = 0) -> None:
+    """Mark pending briefings delivered after a successful first response."""
+    try:
+        from kai.memory.briefing import mark_delivered
+        mark_delivered(user_id=user_id)
+    except Exception:
+        pass
+
+
+def _get_active_goals(user_id: int = 0) -> str:
+    """Return a compact goals block for context injection. Empty if no active goals."""
+    try:
+        from kai.store.db import get_conn
+        import json as _json
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT title, steps_json, current_step FROM goals "
+            "WHERE user_id = ? AND status = 'active' ORDER BY last_active DESC LIMIT 5",
+            (user_id,),
+        ).fetchall()
+        if not rows:
             return ""
-        return _camp.build_campaign_context(
-            campaign_id=active["id"],
-            query=query,
-            embed_fn=embed_fn,
-        )
+        lines = ["[ACTIVE GOALS]"]
+        for title, steps_json, current_step in rows:
+            steps = _json.loads(steps_json) if steps_json else []
+            if steps and current_step < len(steps):
+                next_step = steps[current_step]
+                lines.append(f"- {title} → next: {next_step}")
+            else:
+                lines.append(f"- {title} (in progress)")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _get_pattern_suggestion(user_id: int = 0) -> str:
+    """Return a proactive pattern suggestion if one matches the current time."""
+    try:
+        from kai.memory.patterns import get_proactive_suggestion
+        return get_proactive_suggestion(user_id=user_id)
     except Exception:
         return ""

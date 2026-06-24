@@ -1,11 +1,11 @@
 """
 Semantic memory — key/value facts about the user and world.
-Examples: name=Alex, preferred_language=Python, timezone=EST
+Examples: name=<user's name>, preferred_language=Python, timezone=EST
 """
 from datetime import datetime
 
-from kai.db import get_conn
-from kai.schema import SemanticFact
+from kai.store.db import get_conn
+from kai.store.schema import SemanticFact
 
 
 def set_fact(key: str, value: str, source: str = "conversation",

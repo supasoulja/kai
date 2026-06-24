@@ -14,10 +14,10 @@ Alias learning:
 from __future__ import annotations
 import copy
 import difflib
-import math
 from datetime import datetime
 from typing import Any, Callable
 import kai.config as cfg
+from kai.llm.vecmath import cosine as _cosine
 
 
 class ToolRegistry:
@@ -34,7 +34,7 @@ class ToolRegistry:
             return
         self._aliases_loaded = True
         try:
-            from kai.db import get_conn
+            from kai.store.db import get_conn
             conn = get_conn()
             rows = conn.execute("SELECT alias, target FROM tool_aliases").fetchall()
             for alias, target in rows:
@@ -45,7 +45,7 @@ class ToolRegistry:
 
     def _persist_alias(self, alias: str, target: str, similarity: float) -> None:
         try:
-            from kai.db import get_conn
+            from kai.store.db import get_conn
             conn = get_conn()
             conn.execute("""
                 INSERT INTO tool_aliases (alias, target, similarity, seen_count, created_at)
@@ -59,11 +59,19 @@ class ToolRegistry:
 
     # ── Alias learning ────────────────────────────────────────────────────────
 
-    def learn_alias(self, hallucinated_name: str, threshold: float = 0.55) -> str | None:
+    def learn_alias(self, hallucinated_name: str, threshold: float = 0.55,
+                    args: dict | None = None) -> str | None:
         """
         Find the closest real tool to hallucinated_name by string similarity.
         Prefers tools in the same namespace (same prefix before the dot).
         If similarity >= threshold, register and persist the alias.
+
+        When `args` is given, the target must also accept them: every provided
+        argument name has to exist in the target's schema. A close name with
+        incompatible args is a different intent, not a misspelling — e.g. a
+        hallucinated "system.execute_command" must not redirect to
+        system.temps. Rejected matches are never persisted.
+
         Returns the target tool name on success, None otherwise.
         """
         self._ensure_aliases_loaded()
@@ -73,7 +81,7 @@ class ToolRegistry:
 
         if hallucinated_name in self._aliases:
             target = self._aliases[hallucinated_name]
-            if target in self._tools:
+            if target in self._tools and self._args_fit(target, args):
                 self._persist_alias(hallucinated_name, target, 1.0)  # bump seen_count
                 return target
 
@@ -89,6 +97,11 @@ class ToolRegistry:
                 best_score, best_name = score, candidate
 
         if best_name and best_score >= threshold:
+            if not self._args_fit(best_name, args):
+                if cfg.DEBUG:
+                    print(f"[alias] rejected {hallucinated_name!r} → {best_name!r} "
+                          f"(score={best_score:.2f}) — args don't fit the target schema")
+                return None
             self._aliases[hallucinated_name] = best_name
             self._persist_alias(hallucinated_name, best_name, best_score)
             if cfg.DEBUG:
@@ -100,6 +113,14 @@ class ToolRegistry:
             print(f"[alias] no match for {hallucinated_name!r} "
                   f"(best={best_name!r}, score={best_score:.2f})")
         return None
+
+    def _args_fit(self, tool_name: str, args: dict | None) -> bool:
+        """True when every provided argument name exists in the tool's schema."""
+        if not args:
+            return True
+        props = (self._tools[tool_name]["schema"]["function"]
+                 .get("parameters", {}).get("properties", {}))
+        return all(k in props for k in args)
 
     # ── Alias schema helpers ──────────────────────────────────────────────────
 
@@ -156,6 +177,45 @@ class ToolRegistry:
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
 
+    # ── Tool metadata (labels + categories) ────────────────────────────────────
+
+    def risk_for(self, name: str) -> str:
+        """Risk tier for a tool — 'safe', 'caution', or 'destructive'.
+
+        Resolves aliases to their target first, so a hallucinated alias inherits
+        the real tool's tier. Unlisted tools are 'safe' (the read-only default).
+        """
+        real = name if name in self._tools else self._aliases.get(name, name)
+        return _TOOL_RISK.get(real, _RISK_DEFAULT)
+
+    def label_for(self, name: str) -> str:
+        """UI status label for a tool. Falls back to a humanized name."""
+        if name in TOOL_LABELS:
+            return TOOL_LABELS[name]
+        # e.g. "system.kill_process" → "Kill process"
+        leaf = name.split(".")[-1].replace("_", " ").strip()
+        return leaf.capitalize() if leaf else name
+
+    def audit_metadata(self) -> dict[str, list[str]]:
+        """Report registered tools that are missing a label or a category.
+
+        Returns {"missing_label": [...], "uncategorized": [...]}. Both empty means
+        every tool has UI + routing metadata — call this at startup (and in the
+        tools test) so adding a tool without its metadata fails loudly instead of
+        silently degrading.
+        """
+        categorized: set[str] = set()
+        for cat in _TOOL_CATEGORIES.values():
+            categorized.update(cat.get("tools", []))
+        registered = set(self._tools)
+        return {
+            "missing_label": sorted(n for n in registered if n not in TOOL_LABELS),
+            "uncategorized": sorted(n for n in registered if n not in categorized),
+            # Risk tiers default to "safe", so missing entries aren't an error —
+            # but a risk key naming a tool that no longer exists is drift worth flagging.
+            "stale_risk": sorted(n for n in _TOOL_RISK if n not in registered),
+        }
+
     def build_category_index(
         self, embed_batch_fn: Callable[[list[str]], list[list[float]]]
     ) -> dict[str, list[float]]:
@@ -207,19 +267,11 @@ class ToolRegistry:
         return schemas
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    mag_a = math.sqrt(sum(x * x for x in a))
-    mag_b = math.sqrt(sum(y * y for y in b))
-    if mag_a == 0 or mag_b == 0:
-        return 0.0
-    return dot / (mag_a * mag_b)
-
-
 # ── Tool categories ────────────────────────────────────────────────────────
 # Descriptions are written in user-query language so embeddings match what people ask,
-# not sysadmin jargon. Brain embeds these (10 calls) instead of all 43 tool descriptions.
-# top_k=2 categories covers most queries; error escalation handles edge cases.
+# not sysadmin jargon. Brain embeds one vector per category (a handful of calls)
+# instead of one per tool. top_k=2 categories covers most queries; error escalation
+# handles edge cases.
 _TOOL_CATEGORIES: dict[str, dict] = {
     "system_health": {
         "description": (
@@ -266,10 +318,14 @@ _TOOL_CATEGORIES: dict[str, dict] = {
         "description": (
             "Read, write, create, edit, append to, and list files and folders. "
             "Open a file, view its contents, modify a script or config file, "
-            "browse a directory, save text output to a file."
+            "browse a directory, save text output to a file. "
+            "Also move, copy, rename, delete, and organize files (proposed first, "
+            "then approved before they run), and review what file changes were made."
         ),
         "tools": [
             "files.read", "files.write", "files.append", "files.edit", "files.list",
+            "sandbox.copy_to_workspace", "sandbox.propose_move", "sandbox.propose_delete",
+            "sandbox.propose_rename", "sandbox.approve", "sandbox.history",
         ],
     },
     "network": {
@@ -294,13 +350,17 @@ _TOOL_CATEGORIES: dict[str, dict] = {
         "description": (
             "Save, find, and read personal notes and reminders. "
             "Look up things I asked Kai to remember across sessions. "
+            "Remember durable facts about me — who I am, my hardware, health, "
+            "preferences, habits, decisions — in the long-term memory tree. "
+            "What do you know about me, remember this, don't forget. "
             "Read full transcripts of past conversations. "
             "Search past conversation history. Self-reflection journal."
         ),
         "tools": [
+            "tree.save", "tree.browse", "tree.read", "tree.find",
             "notes.save", "notes.search", "notes.list",
-            "memory.get_detail", "memory.search_history",
-            "memory.reflect", "memory.read_reflections",
+            "memory.get_detail", "memory.search_history", "memory.recent_sessions",
+            "memory.reflect", "memory.read_reflections", "memory.sleep_notes",
         ],
     },
     "workspace_and_code": {
@@ -320,17 +380,219 @@ _TOOL_CATEGORIES: dict[str, dict] = {
         ),
         "tools": ["docs.search", "docs.list", "docs.delete"],
     },
-    "campaign_dm": {
+    "goals_and_tasks": {
         "description": (
-            "D&D campaign and dungeon master mode: save NPCs, log session events, "
-            "update quests, recall campaign lore and history, check active campaign status."
+            "Track ongoing goals and multi-step tasks across sessions: start a new goal, "
+            "list what I'm working on, log progress, mark a goal done, or drop one. "
+            "What am I working on, remind me of my goals, I finished that."
         ),
         "tools": [
-            "campaign.npc_save", "campaign.event_log", "campaign.quest_update",
-            "campaign.recall", "campaign.status",
+            "goals.create", "goals.list", "goals.update", "goals.complete", "goals.abandon",
         ],
     },
+    "self_inspection": {
+        "description": (
+            "Look at my own source code, tools, and persona: read how I work internally, "
+            "check my persona for gaps, draft and apply updates to my own identity, "
+            "and review what changed about me recently. How do you work, update your persona."
+        ),
+        "tools": [
+            "self.inspect", "self.list_tools", "self.check_persona",
+            "self.propose_persona_update", "self.apply_persona_update",
+            "self.recent_changes",
+        ],
+    },
+    "remote_cluster": {
+        "description": (
+            "Check on other paired machines (the cluster): list connected nodes, "
+            "see a node's status, run a diagnostic scan on one node or broadcast a scan "
+            "to all of them, and fetch the results. How is my other PC, scan the server."
+        ),
+        "tools": [
+            "cluster.list_nodes", "cluster.node_status", "cluster.node_scan",
+            "cluster.broadcast_scan", "cluster.get_result",
+        ],
+    },
+    "study_library": {
+        "description": (
+            "Find and study academic papers and books: search for research papers, "
+            "search for books, find a free legal open-access copy, get a download link, "
+            "and ask questions about what's saved in my study library."
+        ),
+        "tools": [
+            "study.search_papers", "study.search_books", "study.find_free",
+            "study.get_book_url", "study.ask_library",
+        ],
+    },
+    "web_content": {
+        "description": (
+            "Open and read a specific web page or URL, take a screenshot of a page, "
+            "or fetch the raw contents of a link the user gave me. "
+            "Read this page, what does this URL say, grab that article."
+        ),
+        "tools": ["browser.read_page", "browser.screenshot", "research.fetch_url"],
+    },
+    "containers": {
+        "description": (
+            "Manage LXD/Incus system containers and virtual machines on this Linux box: "
+            "list containers, see their status and IP, create a new container or VM, "
+            "start, stop, and delete them. Spin up a VM, make a container, tear it down."
+        ),
+        "tools": [
+            "lxc.list", "lxc.info", "lxc.create",
+            "lxc.start", "lxc.stop", "lxc.delete",
+        ],
+    },
+    "media_understanding": {
+        "description": (
+            "Understand images and audio: describe what's in a picture or screenshot, "
+            "and transcribe spoken audio into text. What's in this image, transcribe this."
+        ),
+        "tools": ["vision.describe", "audio.transcribe"],
+    },
 }
+
+
+# ── Tool status labels ──────────────────────────────────────────────────────
+# Short present-tense labels shown in the web UI while a tool runs. Co-located
+# with the categories above so all per-tool metadata lives in one module. Keep
+# in sync with the registered tools — audit_metadata() / the tools test enforce
+# that every tool has both a label and a category.
+TOOL_LABELS: dict[str, str] = {
+    "system.info":          "Checking system stats",
+    "system.temps":         "Checking temperatures",
+    "system.crashes":       "Checking crash logs",
+    "system.gpu_crashes":   "Checking GPU crash history",
+    "system.game_crashes":  "Searching for game crash logs",
+    "pc.startup_programs":  "Checking startup programs",
+    "pc.event_logs":        "Scanning event logs",
+    "pc.network_info":      "Checking network",
+    "pc.windows_updates":   "Checking for updates",
+    "files.disk_usage":     "Analyzing disk usage",
+    "files.find_large":     "Finding large files",
+    "files.find_old":       "Finding old files",
+    "files.recent":         "Finding recent files",
+    "search.web":           "Searching the web",
+    "weather.current":      "Checking weather",
+    "notes.save":           "Saving a note",
+    "notes.search":         "Looking up notes",
+    "notes.list":           "Reading notes",
+    "time.now":             "Checking the time",
+    "network.ping":                  "Pinging host",
+    "network.traceroute":            "Tracing route",
+    "network.full_diagnostic":       "Running network diagnostic",
+    "pc.deep_scan":                  "Running full system scan (~2 min)",
+    "system.create_restore_point":   "Creating restore point",
+    "system.clear_temp_files":       "Clearing temp files",
+    "system.disable_startup_program":"Disabling startup program",
+    "system.run_disk_cleanup":       "Running disk cleanup",
+    "system.repair_files":           "Running system file repair (sfc /scannow)",
+    "system.kill_process":           "Killing process",
+    "files.read":                    "Reading file",
+    "files.list":                    "Listing directory",
+    "files.write":                   "Writing file",
+    "files.append":                  "Appending to file",
+    "files.edit":                    "Editing file",
+    "workspace.git_clone":           "Cloning repository",
+    "workspace.git_pull":            "Updating repository",
+    "workspace.git_list_allowed":    "Listing allowed repos",
+    "memory.get_detail":             "Reading full memory transcript",
+    "memory.search_history":         "Searching past conversations",
+    "memory.recent_sessions":        "Recalling recent sessions",
+    "memory.reflect":                "Writing a reflection",
+    "memory.read_reflections":       "Reading past reflections",
+    "memory.sleep_notes":            "Reading sleep journal",
+    "tree.save":                     "Filing a memory",
+    "tree.browse":                   "Browsing memory tree",
+    "tree.read":                     "Reading memory branch",
+    "tree.find":                     "Searching memory tree",
+    "docs.search":                   "Searching documents",
+    "docs.list":                     "Listing documents",
+    "self.inspect":                  "Reading my own source code",
+    "self.list_tools":               "Listing my tools",
+    "self.check_persona":            "Reviewing my self-knowledge",
+    "self.propose_persona_update":   "Drafting persona update",
+    "self.apply_persona_update":     "Updating persona",
+    "docs.delete":                   "Removing document",
+    "sandbox.copy_to_workspace":     "Copying file to workspace",
+    "sandbox.propose_move":          "Proposing file move",
+    "sandbox.propose_delete":        "Proposing file deletion",
+    "sandbox.propose_rename":        "Proposing file rename",
+    "sandbox.approve":               "Executing approved operation",
+    "sandbox.history":               "Checking sandbox history",
+    "goals.create":                  "Creating goal",
+    "goals.list":                    "Loading active goals",
+    "goals.update":                  "Updating goal progress",
+    "goals.complete":                "Completing goal",
+    "goals.abandon":                 "Abandoning goal",
+    # ── Backfilled: newer tools that previously had no UI label ──
+    "audio.transcribe":              "Transcribing audio",
+    "browser.read_page":             "Reading web page",
+    "browser.screenshot":            "Taking screenshot",
+    "cluster.list_nodes":            "Listing cluster nodes",
+    "cluster.node_status":           "Checking node status",
+    "cluster.node_scan":             "Scanning remote node",
+    "cluster.broadcast_scan":        "Scanning all nodes",
+    "cluster.get_result":            "Fetching node result",
+    "research.fetch_url":            "Fetching URL",
+    "self.recent_changes":           "Reviewing recent changes",
+    "study.search_papers":           "Searching papers",
+    "study.search_books":            "Searching books",
+    "study.find_free":               "Finding a free copy",
+    "study.get_book_url":            "Getting book link",
+    "study.ask_library":             "Asking the study library",
+    "vision.describe":               "Looking at the image",
+    "lxc.list":                      "Listing containers",
+    "lxc.info":                      "Checking container status",
+    "lxc.create":                    "Creating container",
+    "lxc.start":                     "Starting container",
+    "lxc.stop":                      "Stopping container",
+    "lxc.delete":                    "Deleting container",
+}
+
+
+# ── Tool risk tiers ───────────────────────────────────────────────────────────
+# How much trust a tool needs before it runs unprompted. This is the single
+# source of truth for the confirm gate (brain.py derives its set from here).
+#   safe        → read-only / no side effects → Kai runs it without asking.
+#   caution     → makes a change that's cheap to undo → run, but announce it.
+#   destructive → irreversible OR high-impact (heavy/expensive) → confirm first.
+# Anything not listed defaults to "safe" — the read-only majority. Only the risky
+# minority is enumerated, so this stays small and auditable.
+_RISK_DEFAULT = "safe"
+_TOOL_RISK: dict[str, str] = {
+    # ── destructive: irreversible, or heavy enough the user should opt in ──
+    "pc.deep_scan":                  "destructive",  # ~2 min full scan
+    "system.clear_temp_files":       "destructive",
+    "system.run_disk_cleanup":       "destructive",
+    "system.create_restore_point":   "destructive",
+    "system.repair_files":           "destructive",
+    "system.disable_startup_program":"destructive",
+    "system.kill_process":           "destructive",  # ends a running process
+    "lxc.delete":                    "destructive",  # tears down an instance + storage
+    "docs.delete":                   "destructive",  # removes an indexed document
+    "self.apply_persona_update":     "destructive",  # rewrites Kai's OWN identity —
+    # self-modification must never apply silently; gate it behind explicit user OK.
+    # (Full fix: a diff-preview window — see docs/BACKLOG.md top-priority item.)
+    # ── caution: real changes, but reversible ──
+    "files.write":                   "caution",
+    "files.edit":                    "caution",
+    "files.append":                  "caution",
+    "lxc.create":                    "caution",
+    "lxc.start":                     "caution",
+    "lxc.stop":                      "caution",
+    "workspace.git_clone":           "caution",
+    "workspace.git_pull":            "caution",
+}
+
+
+def confirm_tool_names() -> set[str]:
+    """Tools that must pass the confirm gate (destructive tier).
+
+    Reads the static risk table only — no registered tools required — so callers
+    can import it at module load without worrying about registration order.
+    """
+    return {name for name, tier in _TOOL_RISK.items() if tier == "destructive"}
 
 
 def _build_schema(name: str, description: str, parameters: dict) -> dict:

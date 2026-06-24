@@ -1,0 +1,17 @@
+{
+  "name": "Kai — Local AI Agent",
+  "short_name": "Kai",
+  "description": "Your local AI agent. Runs on your hardware, knows you personally.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12121d",
+  "theme_color": "#c1c1ff",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

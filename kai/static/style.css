@@ -1239,40 +1239,6 @@ details[open].think-block summary::before { content: '▼ '; }
   color: var(--accent);
 }
 
-/* DM mode toggle */
-.btn-dm-toggle {
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--surface2);
-  color: var(--muted);
-  font-size: 0.82em;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
-  margin-bottom: 14px;
-}
-
-.btn-dm-toggle:hover { border-color: var(--accent-dim); color: var(--text); }
-
-.btn-dm-toggle.active {
-  border-color: #9b4040;
-  background: rgba(155, 64, 64, 0.13);
-  color: #ff9090;
-}
-
-.dm-campaign-name {
-  font-size: 0.9em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 110px;
-}
-
 /* ============================================================
    SETTINGS
    ============================================================ */
@@ -2198,89 +2164,6 @@ details[open].think-block summary::before { content: '▼ '; }
   margin-top: 4px;
 }
 
-/* DM campaign name dialog (legacy IDs preserved) */
-#dm-dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 100;
-  display: none;
-  align-items: center;
-  justify-content: center;
-}
-
-#dm-dialog-overlay.open { display: flex; }
-
-.dm-dialog {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px 28px;
-  min-width: 320px;
-  max-width: 420px;
-  box-shadow: var(--shadow-lg);
-}
-
-.dm-dialog h3 {
-  font-size: 0.95em;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-
-.dm-dialog p {
-  font-size: 0.78em;
-  color: var(--muted);
-  margin-bottom: 14px;
-  line-height: 1.4;
-}
-
-.dm-dialog input {
-  width: 100%;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: var(--text);
-  font-size: 0.9em;
-  font-family: var(--font-sans);
-  outline: none;
-  margin-bottom: 14px;
-  transition: border-color var(--t-base);
-}
-
-.dm-dialog input:focus       { border-color: var(--accent); }
-.dm-dialog input::placeholder { color: var(--muted); }
-
-.dm-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
-
-.btn-dm-confirm {
-  padding: 7px 18px;
-  border-radius: 8px;
-  border: none;
-  background: #9b4040;
-  color: #ffc0c0;
-  font-size: 0.85em;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: opacity var(--t-base);
-}
-
-.btn-dm-confirm:hover { opacity: 0.85; }
-
-.btn-dm-cancel {
-  padding: 7px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--muted);
-  font-size: 0.85em;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: color var(--t-base), border-color var(--t-base);
-}
-
-.btn-dm-cancel:hover { color: var(--text); border-color: var(--accent-dim); }
-
 /* ============================================================
    NOTIFICATIONS / TOASTS
    ============================================================ */
@@ -2312,6 +2195,12 @@ details[open].think-block summary::before { content: '▼ '; }
 .toast.success { border-color: var(--success); color: var(--success); }
 .toast.error   { border-color: var(--error); color: var(--error); }
 .toast.warning { border-color: var(--warning); color: var(--warning); }
+
+.stream-error-note {
+  margin-top: 6px;
+  font-size: 0.82em;
+  color: var(--warning);
+}
 
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kai — Live Flow</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --text: #c9d1d9; --muted: #8b949e;
+    --route: #58a6ff; --round: #bc8cff; --tool: #3fb950; --memory: #39c5cf;
+    --final: #e6edf3; --warn: #d29922; --bad: #f85149; --gray: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; }
+  header { position: sticky; top: 0; background: var(--panel); padding: 10px 16px;
+           display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #21262d; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  #dot.on { background: var(--tool); }
+  header .spacer { flex: 1; }
+  header label { color: var(--muted); font-size: 12px; cursor: pointer; }
+  #log { padding: 10px 16px 60px; }
+  .step { padding: 4px 0; border-bottom: 1px solid #161b22; word-break: break-word; }
+  .badge { display: inline-block; min-width: 96px; text-align: center; padding: 1px 8px;
+           border-radius: 10px; font-size: 11px; font-weight: 600; margin-right: 8px;
+           background: #21262d; }
+  .turn-sep { margin: 14px 0 4px; color: var(--muted); font-size: 11px;
+              border-top: 1px dashed #30363d; padding-top: 6px; }
+  .kv { color: var(--muted); margin-right: 10px; }
+  .kv b { color: var(--text); font-weight: 500; }
+  details { margin: 2px 0 2px 104px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details pre { white-space: pre-wrap; background: var(--panel); padding: 8px;
+                border-radius: 6px; margin: 4px 0; color: var(--text); }
+  .c-route   .badge { color: var(--route); }
+  .c-round   .badge { color: var(--round); }
+  .c-tool    .badge { color: var(--tool); }
+  .c-memory_tree .badge { color: var(--memory); }
+  .c-grounding   .badge { color: var(--memory); }
+  .c-final_answer .badge, .c-retry_answer .badge { color: var(--final); }
+  .c-fallback .badge, .c-escalation .badge { color: var(--warn); }
+  .c-safety_stop .badge, .c-discarded_prose .badge, .c-duplicate_call .badge { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span>
+  <h1>Kai — Live Flow</h1>
+  <span id="status" style="color:var(--muted);font-size:12px">connecting…</span>
+  <span class="spacer"></span>
+  <label><input type="checkbox" id="follow" checked> follow</label>
+  <label style="margin-left:10px"><button onclick="document.getElementById('log').innerHTML=''"
+          style="background:#21262d;color:var(--text);border:1px solid #30363d;border-radius:6px;
+                 padding:2px 10px;cursor:pointer">clear</button></label>
+</header>
+<div id="log"></div>
+<script>
+  // Fields rendered as expandable blocks instead of inline key=value pairs.
+  const LONG_FIELDS = ["text", "content", "thinking", "block", "output", "facts",
+                       "input", "reason", "args"];
+  const log = document.getElementById("log");
+  const dot = document.getElementById("dot");
+  const status = document.getElementById("status");
+  let lastTrace = null;
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  }
+
+  function render(evt) {
+    if (evt.kind === "hello") return;
+    if (evt.trace_id && evt.trace_id !== lastTrace) {
+      lastTrace = evt.trace_id;
+      const sep = document.createElement("div");
+      sep.className = "turn-sep";
+      sep.textContent = `── turn ${evt.trace_id} ── ${new Date(evt.ts * 1000).toLocaleTimeString()}`;
+      log.appendChild(sep);
+    }
+    const div = document.createElement("div");
+    div.className = `step c-${evt.kind}`;
+    let inline = `<span class="badge">${esc(evt.kind)}</span>`;
+    let blocks = "";
+    for (const [k, v] of Object.entries(evt)) {
+      if (["kind", "ts", "trace_id"].includes(k) || v === null || v === "" || v === "none") continue;
+      const s = String(v);
+      if (LONG_FIELDS.includes(k) && s.length > 90) {
+        blocks += `<details><summary>${esc(k)} (${s.length} chars)</summary><pre>${esc(s)}</pre></details>`;
+      } else {
+        inline += `<span class="kv">${esc(k)}=<b>${esc(s.length > 160 ? s.slice(0, 160) + "…" : s)}</b></span>`;
+      }
+    }
+    div.innerHTML = inline + blocks;
+    log.appendChild(div);
+    if (document.getElementById("follow").checked) {
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+  }
+
+  function connect() {
+    const es = new EventSource("/debug/flow/live");
+    es.onopen = () => { dot.classList.add("on"); status.textContent = "live — watching every internal step"; };
+    es.onmessage = e => { try { render(JSON.parse(e.data)); } catch {} };
+    es.onerror = () => {
+      dot.classList.remove("on");
+      status.textContent = "disconnected — retrying (are you logged in to the main app?)";
+      es.close();
+      setTimeout(connect, 2000);
+    };
+  }
+  connect();
+</script>
+</body>
+</html>

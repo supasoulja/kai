@@ -1,0 +1,339 @@
+"""
+Unit tests for all tools — no Ollama, no network.
+Each tool is tested for its core logic, not model behavior.
+"""
+import os
+import json
+import tempfile
+import pytest
+from pathlib import Path
+from unittest.mock import patch
+
+os.environ.setdefault("KAI_TEST_MODE", "1")
+
+# Redirect DB to a temp file so tool tests don't touch real data
+import kai.config as cfg
+_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_tmp.close()
+cfg.DB_PATH = Path(_tmp.name)
+
+from kai.store.db import _reset_for_tests
+_reset_for_tests()
+
+from kai.tools.registry import ToolRegistry
+from kai.tools.system.time_tool import get_time
+from kai.tools.system.system_info import get_system_info
+from kai.tools.knowledge.notes import save_note, search_notes, list_notes
+from kai.tools.web.search import _ddg_search, _strip_tags, web_search
+
+
+# ── Registry ─────────────────────────────────────────────────────────────────
+
+def test_registry_registers_and_lists():
+    reg = ToolRegistry()
+
+    @reg.tool(name="test.ping", description="Ping tool.")
+    def ping():
+        return "pong"
+
+    assert "test.ping" in reg.list_tools()
+
+
+def test_every_tool_has_label_and_category():
+    """Each registered tool must have a UI label and belong to a category.
+
+    Guards the single-source metadata in kai/tools/registry.py: adding a tool
+    without a label/category should fail here, not silently degrade at runtime.
+    """
+    import kai.tools  # noqa: F401 — fires every @registry.tool decorator
+    from kai.tools.registry import registry
+
+    audit = registry.audit_metadata()
+    assert not audit["missing_label"], f"tools missing a label: {audit['missing_label']}"
+    assert not audit["uncategorized"], f"tools missing a category: {audit['uncategorized']}"
+
+
+def test_self_list_tools_reflects_live_registry():
+    """self.list_tools enumerates the real registry (so Kai stops hallucinating
+    tools). Its output must name actual registered tools, including itself."""
+    import kai.tools  # noqa: F401 — register every tool
+    from kai.tools.registry import registry
+    from kai.tools.system.self_inspect import list_tools
+
+    out = list_tools()
+    assert "self.list_tools" in out  # it lists itself
+    # Every namespace in the registry shows up in the rendered inventory.
+    namespaces = {n.split(".")[0] for n in registry.list_tools()}
+    for ns in namespaces:
+        assert f"{ns}.*" in out
+
+    # Namespace filter narrows the output and rejects unknowns gracefully.
+    only_self = list_tools(namespace="self")
+    assert "self.list_tools" in only_self and "system.*" not in only_self
+    assert "No tools in namespace" in list_tools(namespace="does_not_exist")
+
+
+def test_risk_tiers_are_consistent():
+    """Risk tiers are the single source of truth for the confirm gate.
+
+    Every risk-table entry must name a real tool (no drift), destructive tools
+    must include the genuinely irreversible ones, and read-only tools must stay
+    'safe' so Kai keeps running them without asking.
+    """
+    import kai.tools  # noqa: F401 — registers every tool
+    from kai.tools.registry import registry, confirm_tool_names
+
+    assert registry.audit_metadata()["stale_risk"] == [], "risk table names unknown tools"
+
+    confirm = confirm_tool_names()
+    # self.apply_persona_update is destructive: self-modification must be gated so
+    # Kai can never rewrite her own persona without explicit user approval.
+    for t in ("lxc.delete", "system.kill_process", "docs.delete", "system.repair_files",
+              "self.apply_persona_update"):
+        assert registry.risk_for(t) == "destructive"
+        assert t in confirm
+    # Read-only tools stay safe → they auto-run, never gated.
+    for t in ("weather.current", "system.temps", "lxc.list", "search.web"):
+        assert registry.risk_for(t) == "safe"
+        assert t not in confirm
+    # Reversible writes are 'caution', not gated.
+    assert registry.risk_for("lxc.create") == "caution"
+    assert "lxc.create" not in confirm
+
+
+def test_brain_confirm_gate_matches_registry():
+    """brain._CONFIRM_TOOLS must equal the registry's destructive set — no drift
+    between the gate and the single source of truth."""
+    import kai.tools  # noqa: F401
+    from kai.tools.registry import confirm_tool_names
+    from kai.core.brain import _CONFIRM_TOOLS
+    assert _CONFIRM_TOOLS == confirm_tool_names()
+
+
+def test_registry_execute_known_tool():
+    reg = ToolRegistry()
+
+    @reg.tool(name="test.double", description="Double a number.",
+              parameters={"n": {"type": "integer", "description": "number"}})
+    def double(n: int):
+        return n * 2
+
+    assert reg.execute("test.double", {"n": 5}) == 10
+
+
+def test_registry_execute_unknown_tool_raises():
+    reg = ToolRegistry()
+    with pytest.raises(KeyError, match="Unknown tool"):
+        reg.execute("does.not.exist", {})
+
+
+def test_registry_schema_format():
+    reg = ToolRegistry()
+
+    @reg.tool(name="test.greet", description="Says hello.",
+              parameters={"name": {"type": "string", "description": "The name."}})
+    def greet(name: str):
+        return f"Hello {name}"
+
+    schema = reg.get_schema()
+    assert len(schema) == 1
+    fn = schema[0]["function"]
+    assert fn["name"] == "test.greet"
+    assert "name" in fn["parameters"]["properties"]
+
+
+def test_alias_redirects_when_args_fit():
+    reg = ToolRegistry()
+
+    @reg.tool(name="pc.startup_programs", description="List startup programs.")
+    def startup():
+        return "ok"
+
+    assert reg.learn_alias("pc.startups") == "pc.startup_programs"
+
+
+def test_alias_rejects_incompatible_args():
+    """A hallucinated name must not redirect to a tool that can't take its
+    args — that's a different intent, not a misspelling (the
+    system.execute_command → system.temps incident)."""
+    reg = ToolRegistry()
+
+    @reg.tool(name="system.temps", description="Read temperatures.")
+    def temps():
+        return "ok"
+
+    assert reg.learn_alias("system.tempss", args={"command": "dir"}) is None
+    # Without conflicting args the same name redirects fine
+    assert reg.learn_alias("system.tempss") == "system.temps"
+
+
+# ── Memory tree ──────────────────────────────────────────────────────────────
+
+def test_tree_seed_is_idempotent(tmp_path, monkeypatch):
+    from kai.memory import tree as mtree
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    created = mtree.seed_skeleton("0")
+    assert created == len(mtree.SKELETON)
+    assert mtree.seed_skeleton("0") == 0  # second run touches nothing
+
+
+def test_tree_tools_save_browse_read(tmp_path, monkeypatch):
+    from kai.memory import tree as mtree
+    from kai.tools import memory_tools as mt
+    from kai.core._app_state import set_current_user_id
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    mt._TREE_SEEDED.clear()
+    set_current_user_id(0)
+
+    # Paths without the user/ root get rooted automatically
+    out = mt.tree_save("identity/profession", "stuntman")
+    assert "user/identity/profession" in out
+
+    listing = mt.tree_browse("")
+    assert "identity/" in listing
+
+    branch = mt.tree_read("user/identity")
+    assert "stuntman" in branch
+
+    # Saving over a seeded folder node replaces the index with the fact
+    node = mtree.read("0", "user/identity/profession")
+    assert node.value == "stuntman"
+    assert node.source == "stated"
+
+
+def test_seed_nodes_never_surface_in_scoring(tmp_path, monkeypatch):
+    """Folder scaffolding must stay invisible to retrieval — several seeded
+    folders sit on hardcoded paths and would otherwise appear in EVERY turn."""
+    from kai.memory import tree as mtree
+    from kai.memory import scorer
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    mtree.seed_skeleton("7")
+    assert mtree.count_facts("7") == 0
+    assert scorer.select_for_context("7", None) == []
+
+    mtree.write("7", mtree.Node(
+        path="user/identity/profession", value="stuntman",
+        source="stated", importance=0.6, specificity=0.6,
+    ))
+    assert mtree.count_facts("7") == 1
+    surfaced = scorer.select_for_context("7", None)
+    assert [n.path for n, _s in surfaced] == ["user/identity/profession"]
+
+
+# ── Time tool ────────────────────────────────────────────────────────────────
+
+def test_time_now_returns_string():
+    result = get_time()
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_time_now_contains_day():
+    result = get_time()
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    assert any(day in result for day in days)
+
+
+def test_time_now_contains_year():
+    result = get_time()
+    assert "2026" in result or "2025" in result  # reasonable range
+
+
+# ── System info ──────────────────────────────────────────────────────────────
+
+def test_system_info_returns_valid_json():
+    result = get_system_info()
+    data = json.loads(result)
+    assert "cpu" in data
+    assert "ram" in data
+    assert "disk" in data
+    assert "top_processes" in data
+
+
+def test_system_info_cpu_is_percentage():
+    result = json.loads(get_system_info())
+    assert result["cpu"].endswith("%")
+
+
+def test_system_info_top_processes_is_list():
+    result = json.loads(get_system_info())
+    assert isinstance(result["top_processes"], list)
+
+
+# ── Notes ────────────────────────────────────────────────────────────────────
+
+def test_notes_save_returns_confirmation():
+    result = save_note("Remember to buy milk", title="grocery")
+    assert "grocery" in result or "milk" in result
+
+
+def test_notes_search_finds_saved_note():
+    save_note("The launch is on Friday", title="schedule")
+    result = search_notes("Friday")
+    assert "Friday" in result
+
+
+def test_notes_search_no_match():
+    result = search_notes("xyzzy_nonexistent_query_12345")
+    assert "No notes found" in result
+
+
+def test_notes_list_returns_recent():
+    save_note("List test note")
+    result = list_notes()
+    assert "List test note" in result or len(result) > 0
+
+
+def test_notes_list_empty_when_no_notes():
+    # Use a user_id that has no notes to get the empty-state response
+    from kai.core._app_state import set_current_user_id
+    set_current_user_id(99999)  # unused user — guaranteed no notes
+    try:
+        result = list_notes()
+    finally:
+        set_current_user_id(0)
+    assert result == "No notes saved yet."
+
+
+# ── Search (HTML parsing, no network) ────────────────────────────────────────
+
+def test_strip_tags_removes_html():
+    assert _strip_tags("<b>Hello</b> world") == "Hello world"
+
+
+def test_strip_tags_decodes_entities():
+    assert _strip_tags("a &amp; b") == "a & b"
+    assert _strip_tags("it&#x27;s") == "it's"
+
+
+def test_ddg_search_returns_empty_on_bad_html():
+    results = _ddg_search.__wrapped__("anything") if hasattr(_ddg_search, "__wrapped__") else []
+    # Just testing the parser handles garbage HTML gracefully
+    from kai.tools.web.search import _parse_results
+    results = _parse_results("<html><body>no results here</body></html>", 5)
+    assert results == []
+
+
+def test_web_search_returns_no_results_message_on_empty():
+    with patch("kai.tools.web.search._ddg_search", return_value=[]):
+        result = web_search("something impossible xyzzy12345")
+    assert "No results found" in result
+
+
+def test_web_search_formats_results():
+    fake = [
+        {"title": "Python Docs", "snippet": "The official Python docs.", "url": "python.org"},
+    ]
+    with patch("kai.tools.web.search._ddg_search", return_value=fake):
+        result = web_search("python")
+    assert "Python Docs" in result
+    assert "python.org" in result
+
+
+# ── Cleanup ──────────────────────────────────────────────────────────────────
+
+def teardown_module(module):
+    try:
+        os.unlink(_tmp.name)
+    except Exception:
+        pass

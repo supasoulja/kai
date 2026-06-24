@@ -25,9 +25,16 @@ HOST = "127.0.0.1"
 URL  = f"http://{HOST}:{PORT}"
 
 _ROOT    = Path(__file__).parent
-_ICON    = _ROOT / "kai" / "static" / "kai.ico"
-_SETTINGS_DIR  = _ROOT / "kai" / "memory" / "kai's memory"
-_SETTINGS_FILE = _SETTINGS_DIR / "app_settings.json"
+import kai.config as cfg
+from kai.system.platform import IS_LINUX as _IS_LINUX
+from kai.util import log
+# Use PNG on Linux (no .ico support in GTK), .ico on Windows
+_ICON    = _ROOT / "kai" / "static" / ("icon-192.png" if _IS_LINUX else "kai.ico")
+# App settings now live under var/ (honors KAI_VAR_DIR) instead of the fragile
+# "kai's memory" path inside the source package.
+_SETTINGS_FILE = cfg.APP_SETTINGS_PATH
+_SETTINGS_DIR  = _SETTINGS_FILE.parent
+_OLD_SETTINGS_FILE = _ROOT / "kai" / "memory" / "kai's memory" / "app_settings.json"
 
 # ── Global state ──────────────────────────────────────────────────────────────
 _window = None          # pywebview window
@@ -38,6 +45,16 @@ _server_ready = threading.Event()
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 def _load_settings() -> dict:
+    # One-time migration from the old in-package location.
+    if not _SETTINGS_FILE.exists() and _OLD_SETTINGS_FILE.exists():
+        try:
+            _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            _SETTINGS_FILE.write_text(
+                _OLD_SETTINGS_FILE.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            _OLD_SETTINGS_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
     try:
         return json.loads(_SETTINGS_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
@@ -120,6 +137,14 @@ def _create_tray_icon():
 
 def _start_tray() -> None:
     """Start pystray in a background thread."""
+    # On Linux, pystray's default GTK/AppIndicator backend acquires the GLib
+    # default main context on THIS background thread, which then blocks
+    # pywebview's GTK/WebKit loop on the main thread (GLib-GIO-CRITICAL:
+    # g_application_run cannot acquire the default main context). The xorg
+    # backend uses pure Xlib with no GLib loop, so the two don't collide.
+    # Must be set before pystray is imported.
+    if _IS_LINUX:
+        os.environ.setdefault("PYSTRAY_BACKEND", "xorg")
     import pystray
 
     image = _create_tray_icon()
@@ -129,19 +154,23 @@ def _start_tray() -> None:
             _window.show()
             _window.restore()
 
-    def on_quit(_icon, _item):
-        _icon.stop()
+    def on_reload(_icon, _item):
         if _window:
-            _window.destroy()
-        os._exit(0)
+            _window.load_url(URL)
+
+    def on_quit(_icon, _item):
+        _clean_quit()
 
     menu = pystray.Menu(
         pystray.MenuItem("Show Kai", on_show, default=True),
+        pystray.MenuItem("Reload", on_reload),
         pystray.MenuItem("Quit", on_quit),
     )
 
     global _tray
-    _tray = pystray.Icon("Kai", image, "Kai \u2014 Local AI Agent", menu)
+    # Plain hyphen, not an em-dash: the X11 tray backend encodes the title as
+    # latin-1 via Xlib and \u2014 raises UnicodeEncodeError there.
+    _tray = pystray.Icon("Kai", image, "Kai - Local AI Agent", menu)
     _tray.run()
 
 
@@ -215,6 +244,65 @@ _CLOSE_DIALOG_JS = """
 """
 
 
+# ── Clean quit (run the end-of-session ritual before exiting) ────────────────
+
+# Shown while the shutdown ritual runs so the user knows not to force-kill while
+# Kai finishes writing the welcome-back note and embedding the session.
+_SAVING_OVERLAY_JS = """
+(function() {
+    var o = document.getElementById('kai-saving-overlay');
+    if (!o) {
+        o = document.createElement('div');
+        o.id = 'kai-saving-overlay';
+        o.style.cssText = `
+            position: fixed; inset: 0; z-index: 100000;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+            font-family: system-ui, sans-serif; color: #cdd6f4;
+        `;
+        o.innerHTML = `
+        <div style="background:#1e1e2e; border-radius:12px; padding:28px 36px;
+                    text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <div style="font-size:17px; font-weight:600; margin-bottom:8px;">Saving session…</div>
+            <div style="font-size:13px; color:#a6adc8;">Finishing embeddings — please don't force-quit.</div>
+        </div>`;
+        document.body.appendChild(o);
+    }
+    o.style.display = 'flex';
+})();
+"""
+
+_clean_quit_started = threading.Event()
+
+
+def _clean_quit() -> None:
+    """Run Kai's graceful shutdown, then exit. Idempotent across all quit paths."""
+    if _clean_quit_started.is_set():
+        return
+    _clean_quit_started.set()
+
+    def _worker():
+        try:
+            if _window:
+                try:
+                    _window.evaluate_js(_SAVING_OVERLAY_JS)
+                except Exception:
+                    pass
+            from kai.core import lifecycle
+            lifecycle.graceful_shutdown(reason="desktop quit")
+        except Exception as exc:
+            log.warn(f"Clean quit failed: {exc}")
+        finally:
+            try:
+                if _tray:
+                    _tray.stop()
+            except Exception:
+                pass
+            os._exit(0)
+
+    threading.Thread(target=_worker, name="kai-clean-quit", daemon=True).start()
+
+
 # ── JS bridge (exposed to the webview) ───────────────────────────────────────
 
 class _Api:
@@ -230,11 +318,7 @@ class _Api:
             if _window:
                 _window.hide()
         elif action == "quit":
-            if _tray:
-                _tray.stop()
-            if _window:
-                _window.destroy()
-            os._exit(0)
+            _clean_quit()
 
 
 # ── Closing handler ───────────────────────────────────────────────────────────
@@ -250,12 +334,9 @@ def _on_closing():
         return False  # prevent pywebview from closing
 
     if remembered == "quit":
-        # Let pywebview close, then exit
-        if _tray:
-            _tray.stop()
-        # Return True to allow the close
-        threading.Timer(0.2, lambda: os._exit(0)).start()
-        return True
+        # Keep the window up to show the "saving…" overlay; the worker exits.
+        _clean_quit()
+        return False  # prevent immediate close; _clean_quit handles exit
 
     # No remembered choice — show the dialog
     if _window:
@@ -271,35 +352,71 @@ def _setup_hotkey():
         keyboard.add_hotkey("ctrl+shift+k", lambda: (
             _window.show(), _window.restore()
         ) if _window else None)
+        keyboard.add_hotkey("ctrl+shift+r", lambda: (
+            _window.load_url(URL)
+        ) if _window else None)
     except ImportError:
-        print("[~] 'keyboard' package not installed — global hotkey disabled.")
+        log.info("'keyboard' package not installed — global hotkey disabled.")
     except Exception as exc:
-        print(f"[~] Global hotkey failed: {exc}")
+        log.info(f"Global hotkey failed: {exc}")
 
 
 # ── Startup shortcut ─────────────────────────────────────────────────────────
 
-def _get_startup_folder() -> Path:
-    return Path(os.environ.get(
-        "APPDATA", Path.home() / "AppData" / "Roaming"
-    )) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+def _linux_autostart_path() -> Path:
+    return Path.home() / ".config" / "autostart" / "kai.desktop"
+
+
+def _linux_autostart_content() -> str:
+    python = str(Path(sys.executable).resolve())
+    script = str(Path(__file__).resolve())
+    icon   = str(_ICON.resolve())
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Kai\n"
+        "Comment=Kai — Local AI Agent\n"
+        f"Exec={python} {script}\n"
+        f"Icon={icon}\n"
+        "Terminal=false\n"
+        "X-GNOME-Autostart-enabled=true\n"
+    )
 
 
 def is_startup_enabled() -> bool:
-    return (_get_startup_folder() / "Kai.lnk").exists()
+    if _IS_LINUX:
+        return _linux_autostart_path().exists()
+    lnk = (
+        Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        / "Kai.lnk"
+    )
+    return lnk.exists()
 
 
 def set_startup(enabled: bool) -> None:
-    lnk_path = _get_startup_folder() / "Kai.lnk"
+    if _IS_LINUX:
+        path = _linux_autostart_path()
+        if not enabled:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_linux_autostart_content())
+        return
+
+    # Windows: .lnk via PowerShell
+    startup = (
+        Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    )
+    lnk_path = startup / "Kai.lnk"
     if not enabled:
         lnk_path.unlink(missing_ok=True)
         return
 
-    # Create .lnk shortcut using PowerShell (no extra deps)
-    target = str(Path(sys.executable).parent / "pythonw.exe")
-    args = f'"{Path(__file__).resolve()}"'
+    target      = str(Path(sys.executable).parent / "pythonw.exe")
+    args        = f'"{Path(__file__).resolve()}"'
     working_dir = str(_ROOT)
-
     ps_script = (
         f'$ws = New-Object -ComObject WScript.Shell; '
         f'$sc = $ws.CreateShortcut("{lnk_path}"); '
@@ -316,6 +433,10 @@ def set_startup(enabled: bool) -> None:
 
 def main():
     global _window
+
+    # Record the entry point so a hard restart relaunches the desktop app
+    # (not a headless server). Set before the server thread calls setup_app.
+    os.environ["KAI_ENTRYPOINT"] = "app"
 
     # ── Single-instance lock ──────────────────────────────────────────
     if _is_already_running():
@@ -337,9 +458,9 @@ def main():
 
     # ── Wait for server ───────────────────────────────────────────────
     if not _wait_for_server(timeout=30):
-        print("[!] Server failed to start within 30 seconds.")
+        log.warn("Server failed to start within 30 seconds.")
         sys.exit(1)
-    print(f"[+] Server ready at {URL}")
+    log.ok(f"Server ready at {URL}")
 
     # ── Create pywebview window (must be on main thread) ──────────────
     import webview
@@ -358,11 +479,23 @@ def main():
     _window.events.closing += _on_closing
 
     # ── Start pywebview event loop (blocking) ─────────────────────────
-    webview.start()
+    # debug=True enables the WebKit inspector (right-click → Inspect Element).
+    # Set KAI_DEBUG=0 to disable once things are stable.
+    _debug = os.environ.get("KAI_DEBUG", "1").lower() not in ("0", "false", "no", "")
+    # private_mode=False gives WebKitGTK a PERSISTENT data store. In pywebview's
+    # default ephemeral/private mode, WebKitGTK does NOT expose localStorage — a
+    # bare reference throws "Can't find variable: localStorage", which aborts
+    # app.js on its first preference read and leaves the window dead. A persistent
+    # store also keeps the session cookie + theme across restarts (stay logged in).
+    _storage_dir = _SETTINGS_DIR / "webview"
+    _storage_dir.mkdir(parents=True, exist_ok=True)
+    webview.start(debug=_debug, private_mode=False, storage_path=str(_storage_dir))
 
-    # If we reach here, webview exited normally (e.g. quit via tray)
-    if _tray:
-        _tray.stop()
+    # If we reach here, webview exited normally — run the ritual as a backstop
+    # (idempotent: a no-op if a quit path already ran it).
+    _clean_quit()
+    # Give the worker a moment; it calls os._exit when done.
+    time.sleep(60)
     os._exit(0)
 
 

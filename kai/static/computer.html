@@ -4,7 +4,8 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Kai's Computer</title>
-<link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<!-- Ubuntu / Ubuntu Mono vendored locally — no phone-home to Google. -->
+<link rel="stylesheet" href="/static/fonts/fonts-computer.css"/>
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
    Kai's Computer — Simulated Ubuntu/GNOME Desktop
@@ -506,6 +507,31 @@ html, body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Network Hub ──────────────────────────────────────────────────────────── */
+.nh-body        { display: flex; height: 100%; }
+.nh-sidebar     { width: 190px; background: var(--gnome-surface); border-right: 1px solid var(--gnome-border); display: flex; flex-direction: column; overflow: hidden; }
+.nh-list        { flex: 1; overflow-y: auto; }
+.nh-list-header { padding: 10px 14px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gnome-muted); font-weight: 600; }
+.nh-node        { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 9px; font-size: 12px; transition: background 0.1s; border-left: 3px solid transparent; }
+.nh-node:hover  { background: var(--gnome-surface2); }
+.nh-node.active { background: rgba(233,84,32,0.12); border-left-color: var(--gnome-accent); }
+.nh-dot         { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.nh-dot.online  { background: #3eb34f; box-shadow: 0 0 5px #3eb34f99; }
+.nh-dot.offline { background: #484050; }
+.nh-node-label  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gnome-text); }
+.nh-node-age    { font-size: 10px; color: var(--gnome-muted); }
+.nh-footer      { padding: 10px; border-top: 1px solid var(--gnome-border); }
+.nh-scan-btn    { width: 100%; padding: 6px 0; background: rgba(233,84,32,0.12); border: 1px solid var(--gnome-accent); color: var(--gnome-accent); border-radius: 6px; cursor: pointer; font-size: 11px; font-family: var(--font-ui); transition: background 0.15s; }
+.nh-scan-btn:hover { background: rgba(233,84,32,0.25); }
+.nh-main        { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.nh-detail-head { padding: 12px 16px 8px; border-bottom: 1px solid var(--gnome-border); flex-shrink: 0; }
+.nh-detail-name { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.nh-detail-meta { font-size: 11px; color: var(--gnome-muted); }
+.nh-detail-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.nh-scan-out    { font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: #c8c0d4; white-space: pre-wrap; background: #0e0816; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--gnome-border); }
+.nh-empty       { color: var(--gnome-muted); text-align: center; padding: 48px 20px; font-size: 12px; line-height: 1.8; }
+.nh-no-nodes    { color: var(--gnome-muted); padding: 16px; font-size: 12px; line-height: 1.6; }
+
 /* ── Connection status badge ──────────────────────────────────────────── */
 .conn-badge {
   display: inline-flex;
@@ -521,6 +547,11 @@ html, body {
 }
 .conn-dot.connected { background: #3eb34f; }
 .conn-dot.connecting { background: #f4a523; animation: blink 1s step-end infinite; }
+
+.sysmon-widget { display: flex; align-items: center; gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.55); padding: 2px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; }
+.sysmon-stat { color: rgba(255,255,255,0.75); }
+.sysmon-sep { color: rgba(255,255,255,0.25); }
+.sysmon-age { color: rgba(255,255,255,0.3); font-size: 10px; margin-left: 2px; }
 
 </style>
 </head>
@@ -560,6 +591,14 @@ html, body {
     </div>
     <div class="topbar-center" id="topbar-clock"></div>
     <div class="topbar-right">
+      <span id="sysmon-widget" class="sysmon-widget" style="display:none" title="System stats — updates when system.info or system.temps runs">
+        <span id="sysmon-cpu" class="sysmon-stat"></span>
+        <span class="sysmon-sep">·</span>
+        <span id="sysmon-ram" class="sysmon-stat"></span>
+        <span class="sysmon-sep">·</span>
+        <span id="sysmon-temp" class="sysmon-stat"></span>
+        <span id="sysmon-age" class="sysmon-age"></span>
+      </span>
       <span class="conn-badge"><span class="conn-dot" id="conn-dot"></span> <span id="conn-label">offline</span></span>
       <span>&#x1F50A;</span>
       <span>&#x26A1;</span>
@@ -588,6 +627,10 @@ html, body {
     <div class="dock-item" data-type="editor" title="Text Editor">
       <span>&#x1F4DD;</span>
       <div class="dock-tooltip">Text Editor</div>
+    </div>
+    <div class="dock-item" data-type="network" title="Network Hub" id="dock-network">
+      <span>&#x2B21;</span>
+      <div class="dock-tooltip">Network Hub</div>
     </div>
   </div>
 </div>
@@ -938,8 +981,11 @@ document.querySelectorAll('.dock-item').forEach(d => {
       } else {
         focusWindow(id);
       }
+    } else if (type === 'network') {
+      // Network Hub is the only dock icon that creates its own window on demand
+      initNetworkHubWindow();
     }
-    // Don't create empty windows from dock — they're spawned by events
+    // Other types are spawned by tool events, not dock clicks
   });
 });
 
@@ -1068,6 +1114,40 @@ function appendEditorText(winId, text) {
 // 5. NOTIFICATIONS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── System monitor widget ─────────────────────────────────────────────────────
+let _sysmonTs = 0;
+let _sysmonAgeTimer = null;
+
+function _updateSysmon(output) {
+  // Parse CPU, RAM, Temp from plain-text system.info / system.temps output
+  const cpuMatch  = output.match(/CPU[^:]*?:\s*([\d.]+)\s*%/i);
+  const ramMatch  = output.match(/RAM[^:]*?:\s*([\d.]+)\s*(?:GB|GiB)/i) ||
+                    output.match(/Memory[^:]*?:\s*([\d.]+)\s*(?:GB|GiB)/i);
+  const tempMatch = output.match(/(?:CPU\s*)?[Tt]emp[^:]*?:\s*([\d.]+)\s*°?C/i) ||
+                    output.match(/([\d.]+)\s*°C/);
+
+  const widget = $('sysmon-widget');
+  if (!widget) return;
+
+  if (cpuMatch) { const el = $('sysmon-cpu'); if (el) el.textContent = `CPU ${parseFloat(cpuMatch[1]).toFixed(0)}%`; }
+  if (ramMatch) { const el = $('sysmon-ram'); if (el) el.textContent = `RAM ${parseFloat(ramMatch[1]).toFixed(1)}GB`; }
+  if (tempMatch) { const el = $('sysmon-temp'); if (el) el.textContent = `${parseFloat(tempMatch[1]).toFixed(0)}°C`; }
+
+  _sysmonTs = Date.now();
+  widget.style.display = 'flex';
+
+  // Age label — updates every 30s
+  if (_sysmonAgeTimer) clearInterval(_sysmonAgeTimer);
+  const ageEl = $('sysmon-age');
+  const _tick = () => {
+    if (!ageEl) return;
+    const mins = Math.floor((Date.now() - _sysmonTs) / 60000);
+    ageEl.textContent = mins < 1 ? '' : `${mins}m ago`;
+  };
+  _tick();
+  _sysmonAgeTimer = setInterval(_tick, 30000);
+}
+
 function showNotification(title, body, duration = 4000) {
   const area = $('notification-area');
   const el = document.createElement('div');
@@ -1119,6 +1199,12 @@ const TOOL_WINDOW_MAP = {
   'network.speedtest':     { type: 'terminal', title: 'Speed Test' },
   'weather.current':       { type: 'terminal', title: 'Weather' },
   'time.now':              { type: 'terminal', title: 'Clock' },
+  // Cluster / network tools → Network Hub
+  'cluster.list_nodes':    { type: 'network',  title: 'Network Hub' },
+  'cluster.node_status':   { type: 'network',  title: 'Network Hub' },
+  'cluster.node_scan':     { type: 'network',  title: 'Network Hub' },
+  'cluster.broadcast_scan':{ type: 'network',  title: 'Network Hub' },
+  'cluster.get_result':    { type: 'network',  title: 'Network Hub' },
 };
 
 // Track active tool windows so tool.end can update them
@@ -1193,6 +1279,16 @@ function handleEvent(evt) {
           if (titleEl) titleEl.textContent = 'Files — ' + path;
         } else {
           winId = initFileManagerWindow('Files', path);
+        }
+
+      } else if (type === 'network') {
+        // Open or focus the Network Hub
+        const existing = Object.entries(windows).find(([_, w]) => w.type === 'network');
+        if (existing) {
+          winId = existing[0];
+          focusWindow(winId);
+        } else {
+          winId = initNetworkHubWindow();
         }
 
       } else if (type === 'editor') {
@@ -1297,6 +1393,11 @@ function handleEvent(evt) {
             filesEl.innerHTML = html || filesEl.innerHTML;
           }
 
+        } else if (type === 'network') {
+          if (success && output) {
+            nhHandleScanResult(output);
+          }
+
         } else if (type === 'editor') {
           const editorEl = $(winId + '-editor');
           if (success && output && editorEl) {
@@ -1311,6 +1412,11 @@ function handleEvent(evt) {
             fnameEl.textContent = args.path.split(/[/\\]/).pop() || args.path;
           }
         }
+      }
+
+      // Update sysmon widget from system.info or system.temps output
+      if (success && output && (name === 'system.info' || name === 'system.temps')) {
+        _updateSysmon(output);
       }
 
       delete activeToolWindows[name];
@@ -1439,7 +1545,250 @@ async function loadExistingEvents() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 8. INIT
+// 8. NETWORK HUB
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Per-device state: { label, online, last_seen, scanOutput }
+const nodeRegistry = {};
+// Local LXD/Incus instances: { name, status, type, ipv4 }, keyed by name.
+const containerRegistry = {};
+let containerClientAvailable = false;
+let nhWinId        = null;   // active Network Hub window id
+let nhSelectedId   = null;   // selected device_id, or "vm:<name>" for a container
+let nhRefreshTimer = null;
+
+function relativeTime(ts) {
+  if (!ts) return 'never';
+  const secs = Math.floor(Date.now() / 1000 - ts);
+  if (secs < 5)   return 'just now';
+  if (secs < 60)  return secs + 's ago';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+  return Math.floor(secs / 3600) + 'h ago';
+}
+
+async function fetchClusterNodes() {
+  try {
+    const res = await fetch('/api/cluster/nodes');
+    if (!res.ok) return;
+    const data = await res.json();
+    for (const node of (data.nodes || [])) {
+      if (!nodeRegistry[node.device_id]) nodeRegistry[node.device_id] = {};
+      Object.assign(nodeRegistry[node.device_id], {
+        label:     node.label,
+        online:    node.online,
+        last_seen: node.last_seen,
+        device_id: node.device_id,
+      });
+    }
+  } catch (_) {}
+}
+
+async function fetchContainers() {
+  try {
+    const res = await fetch('/api/containers');
+    if (!res.ok) return;
+    const data = await res.json();
+    containerClientAvailable = !!data.available;
+    // Rebuild from scratch so deleted instances disappear.
+    for (const k of Object.keys(containerRegistry)) delete containerRegistry[k];
+    for (const c of (data.instances || [])) {
+      containerRegistry[c.name] = c;
+    }
+  } catch (_) {}
+}
+
+function renderNhSidebar(winId) {
+  const sidebar = document.querySelector(`#${winId} .nh-list`);
+  if (!sidebar) return;
+  const nodes = Object.values(nodeRegistry);
+  const containers = Object.values(containerRegistry);
+
+  let html = '';
+
+  // ── Cluster nodes ──
+  if (nodes.length) {
+    html += `<div class="nh-list-header">Nodes (${nodes.length})</div>` +
+      nodes.map(n => {
+        const online = n.online ? 'online' : 'offline';
+        const age    = relativeTime(n.last_seen);
+        const active = nhSelectedId === n.device_id ? ' active' : '';
+        return `<div class="nh-node${active}" data-did="${esc(n.device_id)}">
+          <div class="nh-dot ${online}"></div>
+          <div class="nh-node-label">${esc(n.label)}</div>
+          <div class="nh-node-age">${esc(age)}</div>
+        </div>`;
+      }).join('');
+  }
+
+  // ── Local containers / VMs ──
+  if (containers.length) {
+    html += `<div class="nh-list-header">Containers &amp; VMs (${containers.length})</div>` +
+      containers.map(c => {
+        const running = (c.status || '').toLowerCase() === 'running';
+        const selId   = 'vm:' + c.name;
+        const active  = nhSelectedId === selId ? ' active' : '';
+        const kind    = c.type === 'virtual-machine' ? 'VM' : 'CT';
+        return `<div class="nh-node${active}" data-vm="${esc(c.name)}">
+          <div class="nh-dot ${running ? 'online' : 'offline'}"></div>
+          <div class="nh-node-label">${esc(c.name)}</div>
+          <div class="nh-node-age">${kind}</div>
+        </div>`;
+      }).join('');
+  }
+
+  if (!html) {
+    const vmHint = containerClientAvailable
+      ? `Create one — ask Kai to "make a container".`
+      : `No LXD/Incus installed.`;
+    html = `<div class="nh-no-nodes">No nodes registered yet.<br><br>Pair a machine with:<br><code style="font-size:10px">python agent.py --server …</code><br><br>${vmHint}</div>`;
+  }
+
+  sidebar.innerHTML = html;
+  sidebar.querySelectorAll('.nh-node[data-did]').forEach(el => {
+    el.addEventListener('click', () => selectNhNode(winId, el.dataset.did));
+  });
+  sidebar.querySelectorAll('.nh-node[data-vm]').forEach(el => {
+    el.addEventListener('click', () => selectNhNode(winId, 'vm:' + el.dataset.vm));
+  });
+}
+
+function renderNhDetail(winId, deviceId) {
+  const head = document.querySelector(`#${winId} .nh-detail-head`);
+  const body = document.querySelector(`#${winId} .nh-detail-body`);
+  if (!head || !body) return;
+
+  // Container / VM detail
+  if (typeof deviceId === 'string' && deviceId.startsWith('vm:')) {
+    const c = containerRegistry[deviceId.slice(3)];
+    if (!c) {
+      head.innerHTML = '';
+      body.innerHTML = `<div class="nh-empty">Select an instance to view details.</div>`;
+      return;
+    }
+    const running = (c.status || '').toLowerCase() === 'running';
+    const dot = running
+      ? '<span style="color:#3eb34f">● ' + esc(c.status) + '</span>'
+      : '<span style="color:#777">○ ' + esc(c.status) + '</span>';
+    const kind = c.type === 'virtual-machine' ? 'Virtual machine' : 'System container';
+    head.innerHTML = `
+      <div class="nh-detail-name">${esc(c.name)}</div>
+      <div class="nh-detail-meta">${dot} &nbsp;·&nbsp; ${esc(kind)}${c.ipv4 ? ' &nbsp;·&nbsp; ' + esc(c.ipv4) : ''}</div>`;
+    body.innerHTML = `<div class="nh-empty">Manage in chat:<br><br>` +
+      `Ask Kai to <em>start</em>, <em>stop</em>, or <em>delete</em> "${esc(c.name)}",<br>` +
+      `or run <em>lxc.info("${esc(c.name)}")</em> for full status.</div>`;
+    return;
+  }
+
+  const node = nodeRegistry[deviceId];
+  if (!node) {
+    head.innerHTML = '';
+    body.innerHTML = `<div class="nh-empty">Select a node to view details.</div>`;
+    return;
+  }
+  const online  = node.online ? '<span style="color:#3eb34f">● online</span>' : '<span style="color:#777">○ offline</span>';
+  const age     = relativeTime(node.last_seen);
+  head.innerHTML = `
+    <div class="nh-detail-name">${esc(node.label)}</div>
+    <div class="nh-detail-meta">${online} &nbsp;·&nbsp; last seen ${esc(age)} &nbsp;·&nbsp; <span style="color:var(--gnome-muted);font-size:10px">${esc(deviceId)}</span></div>`;
+  if (node.scanOutput) {
+    body.innerHTML = `<div class="nh-scan-out">${esc(node.scanOutput)}</div>`;
+  } else {
+    body.innerHTML = `<div class="nh-empty">No scan data yet.<br><br>Ask Kai to scan this node or run<br><em>cluster.broadcast_scan()</em> in chat.</div>`;
+  }
+}
+
+function selectNhNode(winId, deviceId) {
+  nhSelectedId = deviceId;
+  renderNhSidebar(winId);
+  renderNhDetail(winId, deviceId);
+}
+
+function initNetworkHubWindow() {
+  const id = createWindow('network', 'Network Hub', { width: 620, height: 400 });
+  nhWinId = id;
+  const body = $(`${id}-body`);
+  body.className = 'body nh-body';
+  body.innerHTML = `
+    <div class="nh-sidebar">
+      <div class="nh-list" id="${id}-list"></div>
+      <div class="nh-footer">
+        <button class="nh-scan-btn" id="${id}-refresh">⟳ Refresh</button>
+      </div>
+    </div>
+    <div class="nh-main">
+      <div class="nh-detail-head"></div>
+      <div class="nh-detail-body">
+        <div class="nh-empty">Loading nodes…</div>
+      </div>
+    </div>`;
+
+  $(`${id}-refresh`).addEventListener('click', async () => {
+    await Promise.all([fetchClusterNodes(), fetchContainers()]);
+    renderNhSidebar(id);
+    if (nhSelectedId) renderNhDetail(id, nhSelectedId);
+  });
+
+  // Initial load
+  Promise.all([fetchClusterNodes(), fetchContainers()]).then(() => {
+    renderNhSidebar(id);
+    // Auto-select first online node, else first running container
+    const first = Object.values(nodeRegistry).find(n => n.online) || Object.values(nodeRegistry)[0];
+    if (first) {
+      selectNhNode(id, first.device_id);
+    } else {
+      const vm = Object.values(containerRegistry)[0];
+      if (vm) selectNhNode(id, 'vm:' + vm.name);
+      else renderNhDetail(id, null);
+    }
+  });
+
+  // Refresh sidebar every 30s while window exists
+  nhRefreshTimer = setInterval(async () => {
+    if (!windows[id]) { clearInterval(nhRefreshTimer); nhWinId = null; return; }
+    await Promise.all([fetchClusterNodes(), fetchContainers()]);
+    renderNhSidebar(id);
+    if (nhSelectedId) renderNhDetail(id, nhSelectedId);
+  }, 30000);
+
+  windows[id].el.querySelector('.win-ctrl.close').addEventListener('click', () => {
+    clearInterval(nhRefreshTimer);
+    nhWinId = null;
+  }, { once: true });
+
+  return id;
+}
+
+// Called from tool.end for cluster tools — store output and refresh hub
+function nhHandleScanResult(output) {
+  if (!output) return;
+  // Parse sections: "=== label ===" headers separate per-node blocks
+  const sections = output.split(/(?=^=== )/m);
+  for (const section of sections) {
+    const match = section.match(/^=== (.+?) ===/);
+    if (!match) continue;
+    const label = match[1].trim();
+    // Find device by label
+    const node = Object.values(nodeRegistry).find(n => n.label === label);
+    if (node) {
+      node.scanOutput = section.trim();
+    }
+  }
+  // Also handle single-node output (no === header, just data)
+  if (!sections.some(s => s.match(/^=== /)) && output.trim()) {
+    if (nhSelectedId && nodeRegistry[nhSelectedId]) {
+      nodeRegistry[nhSelectedId].scanOutput = output.trim();
+    }
+  }
+  // Re-render if hub is open
+  if (nhWinId && windows[nhWinId]) {
+    renderNhSidebar(nhWinId);
+    if (nhSelectedId) renderNhDetail(nhWinId, nhSelectedId);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 9. INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
 bootSequence();

@@ -3,79 +3,30 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Kai">
+  <link rel="manifest" href="/static/manifest.json">
   <title>Kai</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-
   <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "surface-container-lowest": "#0d0d17",
-            "surface-container-low": "#1b1b25",
-            "inverse-surface": "#e4e1f0",
-            "on-background": "#e4e1f0",
-            "on-primary-container": "#130094",
-            "background": "#12121d",
-            "error": "#ffb4ab",
-            "surface-tint": "#c1c1ff",
-            "surface": "#12121d",
-            "on-tertiary": "#482900",
-            "on-error-container": "#ffdad6",
-            "on-secondary-fixed-variant": "#414273",
-            "surface-bright": "#393844",
-            "on-secondary-fixed": "#151545",
-            "on-tertiary-fixed-variant": "#673d00",
-            "secondary-fixed-dim": "#c2c1fc",
-            "primary": "#c1c1ff",
-            "surface-container-high": "#292934",
-            "tertiary-fixed-dim": "#ffb867",
-            "tertiary-fixed": "#ffddba",
-            "outline": "#918fa0",
-            "surface-variant": "#34343f",
-            "error-container": "#93000a",
-            "surface-container-highest": "#34343f",
-            "secondary-container": "#444476",
-            "on-surface-variant": "#c7c4d6",
-            "on-primary-fixed-variant": "#3430b7",
-            "on-tertiary-fixed": "#2b1700",
-            "secondary-fixed": "#e2dfff",
-            "on-primary": "#1908a2",
-            "on-tertiary-container": "#3f2300",
-            "inverse-on-surface": "#302f3b",
-            "primary-fixed": "#e2dfff",
-            "secondary": "#c2c1fc",
-            "inverse-primary": "#4d4ccf",
-            "primary-container": "#8283ff",
-            "surface-dim": "#12121d",
-            "on-secondary": "#2b2b5b",
-            "on-error": "#690005",
-            "on-surface": "#e4e1f0",
-            "outline-variant": "#464554",
-            "tertiary": "#ffb867",
-            "surface-container": "#1f1f29",
-            "primary-fixed-dim": "#c1c1ff",
-            "on-primary-fixed": "#0b006b",
-            "on-secondary-container": "#b4b3ed",
-            "tertiary-container": "#cc7f0c"
-          },
-          fontFamily: {
-            "headline": ["Space Grotesk"],
-            "body": ["Inter"],
-            "label": ["Space Grotesk"]
-          },
-          borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
-        },
-      },
-    }
+    // Apply theme before first paint to avoid flash
+    (function() {
+      var t = localStorage.getItem('kai_theme') || 'nebula';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
   </script>
+  <!-- Pre-built Tailwind (see tailwind.config.js + `npm run build:css`).
+       Replaces the Play CDN so the UI styles offline and the CSP needs no
+       'unsafe-eval'. -->
+  <link rel="stylesheet" href="/static/tailwind.css"/>
+  <!-- Fonts vendored locally (Space Grotesk, Inter, Material Symbols) — no
+       phone-home to Google. See kai/static/fonts/. -->
+  <link rel="stylesheet" href="/static/fonts/fonts-app.css"/>
 
   <style>
-    /* ── Base ─────────────────────────────────────────────────────────────── */
-    :root {
+    /* ── Themes ───────────────────────────────────────────────────────────── */
+    :root, [data-theme="nebula"] {
       --accent: #c1c1ff;
       --muted: #918fa0;
       --text: #e4e1f0;
@@ -87,7 +38,61 @@
       --tertiary: #ffb867;
       --error-color: #ffb4ab;
       --outline-v: #464554;
+      --theme-name: "Nebula";
     }
+    [data-theme="terminal"] {
+      --accent: #00e535;
+      --muted: #3a5c3a;
+      --text: #a8e6a8;
+      --bg: #080c08;
+      --surface: #0c130c;
+      --surface-high: #111a11;
+      --surface-highest: #162116;
+      --primary: #00e535;
+      --tertiary: #d4b04a;
+      --error-color: #ff5555;
+      --outline-v: #1a2e1a;
+      --theme-name: "Terminal";
+    }
+    [data-theme="terminal"] body { font-family: 'Space Grotesk', monospace; }
+    [data-theme="terminal"] .msg-wrap.ai .bubble { border-left-color: rgba(0, 229, 53, 0.25); }
+    [data-theme="terminal"] .tab-btn.active { color: #00e535; border-bottom-color: #00e535; }
+
+    [data-theme="slate"] {
+      --accent: #7aa2f7;
+      --muted: #565f89;
+      --text: #c0caf5;
+      --bg: #0f1117;
+      --surface: #16161e;
+      --surface-high: #1a1b26;
+      --surface-highest: #24283b;
+      --primary: #7aa2f7;
+      --tertiary: #e0af68;
+      --error-color: #f7768e;
+      --outline-v: #292e42;
+      --theme-name: "Slate";
+    }
+    [data-theme="slate"] .msg-wrap.ai .bubble { border-left-color: rgba(122, 162, 247, 0.2); }
+    [data-theme="slate"] .tab-btn.active { color: #7aa2f7; border-bottom-color: #7aa2f7; }
+
+    /* ── Theme picker swatches ───────────────────────────────────────────── */
+    .theme-swatches { display: flex; gap: 8px; margin-top: 10px; }
+    .theme-swatch {
+      width: 36px; height: 36px; border-radius: 8px; cursor: pointer;
+      border: 2px solid transparent; transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .theme-swatch:hover { transform: scale(1.1); }
+    .theme-swatch.active { border-color: var(--text); }
+    .theme-swatch .swatch-check {
+      font-size: 14px; color: white;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      display: none;
+    }
+    .theme-swatch.active .swatch-check { display: block; }
+
+    /* ── Base ─────────────────────────────────────────────────────────────── */
     .material-symbols-outlined {
       font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
     }
@@ -289,6 +294,38 @@
     .confirm-go:hover { filter: brightness(1.2); }
     .confirm-skip:hover { background: var(--surface); border-color: var(--muted); }
 
+    /* ── Confirm diff preview (persona self-edits) ───────────────────────── */
+    .confirm-diff {
+      margin: 10px 0 2px;
+      border: 1px solid var(--outline-v);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .confirm-diff > summary {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      user-select: none;
+    }
+    .confirm-diff .diff-body {
+      margin: 0;
+      padding: 8px 12px;
+      max-height: 320px;
+      overflow: auto;
+      font-family: 'Ubuntu Mono', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .diff-body .diff-add  { display: block; color: #7ee787; background: rgba(46,160,67,0.15); }
+    .diff-body .diff-del  { display: block; color: #ff7b72; background: rgba(248,81,73,0.15); }
+    .diff-body .diff-hunk { display: block; color: var(--accent); }
+    .diff-body .diff-ctx  { display: block; color: var(--muted); }
+
     /* ── Markdown Content ─────────────────────────────────────────────────── */
     .content h1, .content h2, .content h3 { font-family: 'Space Grotesk', sans-serif; font-weight: 600; margin: 16px 0 8px; }
     .content h1 { font-size: 1.3em; }
@@ -479,6 +516,24 @@
       font-family: 'Space Grotesk', monospace; font-size: 12px;
     }
 
+    /* Send button → Stop state */
+    #sendBtn.is-stop { background-color: #ef4444 !important; }
+    #micBtn { transition: background 0.2s, color 0.2s, box-shadow 0.2s; }
+    #micBtn.recording {
+      background-color: #ef4444 !important;
+      color: #fff !important;
+      animation: mic-pulse 1.2s ease-in-out infinite;
+    }
+    #micBtn.processing {
+      background-color: var(--primary-container) !important;
+      color: var(--on-primary-container) !important;
+    }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
+      50%       { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
+    }
+    #ttsBtn.tts-on { color: var(--primary) !important; }
+
     /* Model list */
     .model-row {
       display: flex;
@@ -573,8 +628,8 @@
     .info-key { color: var(--muted); font-family: 'Space Grotesk', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
     .info-val { color: var(--text); font-family: 'Space Grotesk', monospace; font-size: 11px; }
 
-    /* DM toggle (settings) */
-    #dm-toggle {
+    /* Dev-mode toggle (settings) */
+    #dev-toggle {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -589,9 +644,13 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    #dm-toggle:hover { border-color: var(--primary); }
-    #dm-toggle.active { border-color: var(--tertiary); }
-    #dm-toggle.active #dm-campaign-name { color: var(--tertiary); }
+    #dev-toggle:hover { border-color: var(--primary); }
+    #dev-toggle.active { border-color: var(--tertiary); }
+    #dev-toggle.active #dev-state { color: var(--tertiary); }
+    /* Dev-mode system stats panel (dashboard) */
+    .dash-dev-block { margin-top: 8px; }
+    .dash-dev-block-head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+    .dash-dev-pre { font-family: 'Space Grotesk', 'Ubuntu Mono', monospace; font-size: 11px; line-height: 1.45; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; margin: 0; }
 
     /* Settings user row */
     .settings-user-row {
@@ -815,6 +874,47 @@
     .docs-upload-status.ok { color: #66bb6a; }
     .docs-upload-status.err { color: var(--error-color); }
 
+    /* Chat drag-and-drop overlay */
+    .chat-drop-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: rgba(20, 20, 30, 0.55);
+      backdrop-filter: blur(2px);
+      border: 2px dashed var(--primary);
+      border-radius: 16px;
+      margin: 12px;
+      pointer-events: none;
+      color: var(--on-surface, #fff);
+      font-family: 'Space Grotesk', monospace;
+    }
+    .chat-drop-overlay.active { display: flex; }
+    .chat-drop-overlay .material-symbols-outlined { font-size: 40px; color: var(--primary); }
+    .chat-drop-toast {
+      position: absolute;
+      bottom: 110px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 41;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: var(--surface-container-high, rgba(40,40,55,0.9));
+      color: var(--muted);
+      font-family: 'Space Grotesk', monospace;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .chat-drop-toast.show { opacity: 1; }
+    .chat-drop-toast.ok  { color: #66bb6a; }
+    .chat-drop-toast.err { color: var(--error-color); }
+
     .doc-row {
       display: flex;
       align-items: center;
@@ -838,63 +938,6 @@
       transition: color 0.15s;
     }
     .btn-doc-del:hover { color: var(--error-color); }
-
-    /* DM dialog overlay */
-    #dm-dialog-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      z-index: 300;
-      align-items: center;
-      justify-content: center;
-      backdrop-filter: blur(4px);
-    }
-    #dm-dialog-overlay.open { display: flex; }
-    .dm-dialog {
-      background: var(--surface-high);
-      border: 1px solid var(--outline-v);
-      border-radius: 16px;
-      padding: 28px;
-      width: min(420px, 90vw);
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
-    }
-    .dm-dialog h3 { font-family: 'Space Grotesk'; font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-    .dm-dialog p { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 16px; }
-    .dm-dialog input {
-      width: 100%;
-      padding: 10px 14px;
-      background: var(--bg);
-      border: 1px solid var(--outline-v);
-      border-radius: 10px;
-      color: var(--text);
-      font-family: 'Space Grotesk';
-      font-size: 13px;
-      margin-bottom: 16px;
-    }
-    .dm-dialog input:focus { outline: none; border-color: var(--primary); }
-    .dm-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
-    .btn-dm-cancel {
-      padding: 8px 20px;
-      background: none;
-      border: 1px solid var(--outline-v);
-      border-radius: 8px;
-      color: var(--muted);
-      font-family: 'Space Grotesk';
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .btn-dm-confirm {
-      padding: 8px 20px;
-      background: var(--primary);
-      border: none;
-      border-radius: 8px;
-      color: var(--bg);
-      font-family: 'Space Grotesk';
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-    }
 
     /* Input hint */
     .input-hint {
@@ -949,6 +992,294 @@
 
     /* Pulse indicator */
     .pulse-indicator { box-shadow: 0 0 8px var(--tertiary); }
+
+    /* ── Mobile sidebar overlay ──────────────────────────────────────────── */
+    @media (max-width: 767px) {
+      #sidebar {
+        position: fixed;
+        inset-y: 0;
+        left: 0;
+        z-index: 50;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+      }
+      #sidebar.open {
+        transform: translateX(0);
+      }
+      #sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: rgba(0,0,0,0.5);
+        backdrop-filter: blur(2px);
+      }
+      #sidebar-backdrop.open { display: block; }
+
+      /* ── Header — five tabs + action icons don't fit at phone widths.
+         Shrink padding, let the tab strip scroll horizontally, and drop
+         the lowest-priority links so account/logout stay reachable. ── */
+      #app-header { padding-left: 12px; padding-right: 12px; }
+
+      #tab-nav {
+        flex: 1;
+        min-width: 0;
+        gap: 1.1rem;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      #tab-nav::-webkit-scrollbar { display: none; }
+      #tab-nav .tab-btn { flex-shrink: 0; }
+
+      #topbar-actions { gap: 10px; flex-shrink: 0; margin-left: 8px; }
+      #open-computer-btn,
+      #topbar-actions a[href="/dnd"],
+      #topbar-user { display: none; }
+
+      /* ── Study tab — sidebar + results side-by-side overflows phone
+         widths. Stack the sources list above the search/results area. ── */
+      .study-layout { flex-direction: column; height: 100%; }
+      .study-sidebar {
+        width: 100%; max-width: none; min-width: 0;
+        max-height: 160px;
+        border-right: none; border-bottom: 1px solid var(--border);
+      }
+      .study-main { min-width: 0; }
+      .study-search-input { min-width: 0; }
+    }
+    @media (min-width: 768px) {
+      #sidebar-backdrop { display: none !important; }
+      #mobile-menu-btn { display: none !important; }
+    }
+    /* ── Tablet header — at 768-1024px the sidebar is persistent (240px)
+       but the 5-tab nav + topbar actions no longer fit. Let the tab strip
+       take remaining space and scroll horizontally instead of overflowing
+       the header. ── */
+    @media (min-width: 768px) and (max-width: 1024px) {
+      #tab-nav {
+        flex: 1;
+        min-width: 0;
+        gap: 1.5rem;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        margin-right: 1rem;
+      }
+      #tab-nav::-webkit-scrollbar { display: none; }
+      #tab-nav .tab-btn { flex-shrink: 0; }
+      #topbar-actions { flex-shrink: 0; }
+    }
+
+    /* ── Study Mode ────────────────────────────────────────────────────────── */
+    .study-layout { display: flex; height: 100%; gap: 0; overflow: hidden; }
+    .study-sidebar {
+      width: 260px; min-width: 220px; max-width: 300px;
+      border-right: 1px solid var(--border);
+      overflow-y: auto; flex-shrink: 0;
+      background: var(--surface);
+      padding: 16px 0;
+    }
+    .study-sidebar-title {
+      font-family: var(--font-headline); font-size: 10px; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--muted); padding: 6px 16px 2px;
+    }
+    .study-cat-btn {
+      width: 100%; text-align: left; padding: 7px 16px;
+      font-size: 13px; color: var(--text); background: none; border: none;
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+      transition: background .15s;
+    }
+    .study-cat-btn:hover { background: var(--surface-hover, rgba(255,255,255,.06)); }
+    .study-cat-btn.active { color: var(--accent); }
+    .study-cat-items { display: none; padding: 0 0 4px 0; }
+    .study-cat-items.open { display: block; }
+    .study-source-item {
+      padding: 5px 16px 5px 28px; font-size: 12px; color: var(--muted);
+      cursor: pointer; transition: color .15s;
+    }
+    .study-source-item:hover { color: var(--text); }
+    .study-source-item a { color: inherit; text-decoration: none; }
+    .study-source-item a:hover { color: var(--accent); text-decoration: underline; }
+
+    .study-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .study-search-bar {
+      padding: 16px 24px 12px; border-bottom: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+    }
+    .study-search-row { display: flex; gap: 8px; align-items: center; }
+    .study-search-input {
+      flex: 1; padding: 9px 14px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); font-size: 14px; outline: none;
+      transition: border-color .2s;
+    }
+    .study-search-input:focus { border-color: var(--accent); }
+    .study-filter-chips { display: flex; gap: 6px; }
+    .study-chip {
+      padding: 4px 12px; border-radius: 99px; font-size: 11px;
+      font-family: var(--font-headline); letter-spacing: .07em;
+      border: 1px solid var(--border); background: none;
+      color: var(--muted); cursor: pointer; transition: all .15s;
+      text-transform: uppercase;
+    }
+    .study-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .study-chip:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+
+    .study-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .study-tab-btn {
+      padding: 8px 20px; font-size: 12px; font-family: var(--font-headline);
+      text-transform: uppercase; letter-spacing: .08em;
+      border: none; background: none; color: var(--muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s;
+    }
+    .study-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .study-results-area { flex: 1; overflow-y: auto; padding: 16px 24px; }
+    .study-result-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 10px; transition: border-color .15s;
+    }
+    .study-result-card:hover { border-color: var(--accent); }
+    .study-result-source {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 10px; font-family: var(--font-headline); letter-spacing: .08em;
+      text-transform: uppercase; margin-bottom: 6px;
+      background: rgba(var(--accent-rgb, 130,120,255),.15); color: var(--accent);
+    }
+    .study-result-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+    .study-result-meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .study-result-abstract { font-size: 12px; color: var(--text); opacity: .8; margin-bottom: 8px; line-height: 1.5; }
+    .study-result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .study-badge-free {
+      display: inline-block; padding: 2px 7px; border-radius: 4px;
+      font-size: 10px; font-family: var(--font-headline); text-transform: uppercase;
+      background: rgba(72,199,142,.15); color: #48c78e; border: 1px solid rgba(72,199,142,.3);
+    }
+    .study-badge-unknown {
+      display: inline-block; padding: 2px 7px; border-radius: 4px;
+      font-size: 10px; font-family: var(--font-headline); text-transform: uppercase;
+      background: rgba(255,170,0,.1); color: #fa0; border: 1px solid rgba(255,170,0,.25);
+    }
+    .study-empty { text-align: center; padding: 48px 0; color: var(--muted); font-size: 14px; }
+
+    /* epub reader overlay */
+    #study-reader-overlay {
+      position: fixed; inset: 0; background: var(--bg); z-index: 9000;
+      display: none; flex-direction: column;
+    }
+    #study-reader-overlay.open { display: flex; }
+    .reader-topbar {
+      padding: 10px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+      background: var(--surface);
+    }
+    .reader-title { flex: 1; font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #epub-viewer { flex: 1; width: 100%; overflow: hidden; background: #fff; }
+    #pdf-viewer-frame { flex: 1; width: 100%; border: none; }
+    .reader-nav { display: flex; gap: 8px; align-items: center; }
+
+    /* ── Dashboard redesign ───────────────────────────────────────── */
+    .dash-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 16px; }
+    @media (max-width: 700px) { .dash-grid { grid-template-columns: 1fr; } }
+    .dash-col { display: flex; flex-direction: column; }
+    .dash-section { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 12px 14px; }
+    .dash-section-head { display: flex; align-items: center; gap: 6px; font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
+    .dash-refresh-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--muted); padding: 0; display: flex; align-items: center; transition: color .15s; }
+    .dash-refresh-btn:hover { color: var(--accent); }
+    .dash-node-list { display: flex; flex-direction: column; gap: 6px; }
+    .dash-node-row { display: flex; align-items: center; gap: 8px; }
+    .dash-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dash-dot.online { background: #4ade80; box-shadow: 0 0 6px #4ade8066; }
+    .dash-dot.offline { background: var(--tertiary); }
+    .dash-dot.unknown { background: var(--muted); }
+    .dash-node-label { margin-left: auto; font-size: 11px; color: var(--muted); }
+    .dash-container-list { display: flex; flex-direction: column; gap: 6px; }
+    .dash-ct-row { display: flex; align-items: center; gap: 8px; }
+    .dash-ct-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dash-ct-ip { font-family: 'Space Grotesk'; font-size: 11px; color: var(--muted); }
+    .dash-ct-actions { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+    .dash-ct-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; align-items: center; transition: color .15s; }
+    .dash-ct-btn:hover { color: var(--accent); }
+    .dash-ct-btn.danger:hover { color: #f87171; }
+    .dash-ct-btn:disabled { opacity: .4; cursor: default; }
+    .dash-stat-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--outline-v); }
+    .dash-stat-row:last-child { border-bottom: none; }
+    .dash-stat-key { font-size: 12px; color: var(--muted); }
+    .dash-stat-val { font-family: 'Space Grotesk'; font-size: 14px; font-weight: 600; color: var(--text); }
+    .dash-action-btn { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--outline-v); border-radius: 6px; padding: 7px 12px; font-family: 'Space Grotesk'; font-size: 12px; color: var(--text); cursor: pointer; transition: background .15s, border-color .15s; text-align: left; }
+    .dash-action-btn:hover { background: var(--surface-high); border-color: var(--accent); color: var(--accent); }
+    .dash-goals-list { display: flex; flex-direction: column; gap: 8px; }
+    .dash-goal-item { background: var(--surface); border: 1px solid var(--outline-v); border-radius: 6px; padding: 8px 10px; }
+    .dash-goal-title { font-size: 13px; color: var(--text); font-weight: 500; }
+    .dash-goal-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .dash-goal-bar { height: 3px; background: var(--outline-v); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+    .dash-goal-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+    /* Briefing card */
+    .dash-briefing-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-left: 3px solid var(--tertiary); border-radius: 8px; padding: 14px 16px; }
+    .dash-briefing-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+
+    /* ── Goals banner (above chat input) ────────────────────────── */
+    .goals-banner { display: flex; align-items: center; gap: 8px; padding: 6px 24px; background: color-mix(in srgb, var(--tertiary) 8%, var(--surface)); border-top: 1px solid color-mix(in srgb, var(--tertiary) 20%, transparent); }
+
+    /* ── Memory browser ──────────────────────────────────────────── */
+    .mem-tabbar { display: flex; align-items: center; gap: 2px; padding: 10px 16px; border-bottom: 1px solid var(--outline-v); flex-shrink: 0; }
+    .mem-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 6px 12px; font-family: 'Space Grotesk'; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s; }
+    .mem-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .mem-tab:hover:not(.active) { color: var(--text); }
+    .mem-search-input { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--text); outline: none; width: 200px; transition: border-color .15s; }
+    .mem-search-input:focus { border-color: var(--accent); }
+    .mem-pane { display: none; }
+    .mem-pane.active { display: block; }
+    .mem-facts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .mem-fact-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 12px 14px; }
+    .mem-fact-key { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin-bottom: 4px; }
+    .mem-fact-value { font-size: 13px; color: var(--text); line-height: 1.5; }
+    .mem-fact-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 8px; }
+    .mem-timeline { display: flex; flex-direction: column; gap: 0; max-width: 700px; }
+    .mem-day-label { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 12px 0 6px; border-bottom: 1px solid var(--outline-v); margin-bottom: 8px; }
+    .mem-ep-row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--outline-v) 40%, transparent); align-items: flex-start; }
+    .mem-ep-type { font-family: 'Space Grotesk'; font-size: 10px; padding: 2px 6px; border-radius: 3px; background: var(--surface-high); color: var(--muted); flex-shrink: 0; margin-top: 1px; }
+    .mem-ep-content { font-size: 13px; color: var(--text); line-height: 1.5; flex: 1; }
+    .mem-ep-time { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+    .mem-goals-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 700px) { .mem-goals-columns { grid-template-columns: 1fr; } }
+    .mem-goals-col-head { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--outline-v); }
+    .mem-goal-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+    .mem-goal-card-title { font-size: 13px; color: var(--text); font-weight: 500; }
+    .mem-goal-card-step { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .mem-goal-card-bar { height: 3px; background: var(--outline-v); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+    .mem-goal-card-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+    .mem-reflections { max-width: 700px; display: flex; flex-direction: column; gap: 12px; }
+    .mem-reflection-entry { background: var(--surface-low); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 13px; color: var(--text); line-height: 1.6; }
+    .mem-reflection-date { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* ── Code block copy button ──────────────────────────────────── */
+    .code-wrap { position: relative; }
+    .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface-high); border: 1px solid var(--outline-v); border-radius: 4px; padding: 3px 8px; font-size: 11px; font-family: 'Space Grotesk'; color: var(--muted); cursor: pointer; transition: color .15s, background .15s; }
+    .copy-btn:hover { color: var(--accent); background: var(--surface); }
+    .copy-btn.copied { color: #4ade80; }
+
+    /* ── Briefing card in chat messages ─────────────────────────── */
+    .briefing-msg-card { background: var(--surface-low); border-left: 3px solid var(--tertiary); border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 8px; }
+    .briefing-msg-title { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--tertiary); margin-bottom: 6px; }
+
+    /* ── New-capabilities awareness card (per-namespace stepper) ──── */
+    .cap-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-left: 3px solid var(--tertiary); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 0 0 14px; }
+    .cap-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .cap-card-title { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--tertiary); }
+    .cap-card-progress { font-size: 11px; color: var(--muted); }
+    .cap-card-x { margin-left: auto; background: none; border: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+    .cap-card-x:hover { color: var(--text); }
+    .cap-card-ns { font-family: 'Space Grotesk'; font-size: 14px; color: var(--text); margin-bottom: 6px; }
+    .cap-card-ns code { background: var(--surface); padding: 1px 6px; border-radius: 4px; }
+    .cap-card-tool { font-size: 13px; line-height: 1.5; color: var(--text); margin-bottom: 6px; }
+    .cap-card-tool b { color: var(--tertiary); font-weight: 600; }
+    .cap-card-tool span { color: var(--muted); }
+    .cap-card-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .cap-card-next { background: var(--tertiary); color: #0d0d17; border: none; border-radius: 6px; padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .cap-card-next:hover { filter: brightness(1.1); }
   </style>
 </head>
 
@@ -1025,6 +1356,8 @@
   </div>
 </aside>
 
+<!-- Mobile sidebar backdrop -->
+<div id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
 <!-- MAIN AREA                                                                -->
@@ -1032,13 +1365,19 @@
 <main id="main" class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-surface">
 
   <!-- Tab Bar -->
-  <header class="h-14 flex justify-between items-center w-full px-8 bg-[#12121d] border-b border-outline-variant/10 shrink-0">
-    <nav class="flex items-center gap-8">
+  <header id="app-header" class="h-14 flex justify-between items-center w-full px-8 bg-[#12121d] border-b border-outline-variant/10 shrink-0">
+    <!-- Hamburger — mobile only -->
+    <button id="mobile-menu-btn" onclick="openSidebar()" class="mr-3 text-on-surface-variant hover:text-primary transition-colors" aria-label="Open menu">
+      <span class="material-symbols-outlined">menu</span>
+    </button>
+    <nav id="tab-nav" class="flex items-center gap-8">
       <button class="tab-btn active font-headline uppercase tracking-widest text-[12px] transition-colors bg-transparent border-none cursor-pointer" data-tab="dashboard">Dashboard</button>
       <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="chat">Chat</button>
       <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="settings">Settings</button>
+      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="study">Study</button>
+      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="memory">Memory</button>
     </nav>
-    <div class="flex items-center gap-6">
+    <div id="topbar-actions" class="flex items-center gap-6">
       <button id="open-computer-btn" class="font-headline uppercase tracking-widest text-[11px] text-slate-500 hover:text-[#e95420] transition-colors bg-transparent border-none cursor-pointer flex items-center gap-1" title="Kai's Computer">
         <span class="material-symbols-outlined" style="font-size:16px">desktop_windows</span>
         Computer
@@ -1057,62 +1396,162 @@
 
     <!-- ── Dashboard Panel ──────────────────────────────────────────────── -->
     <div id="panel-dashboard" class="tab-pane active" style="flex: 1; overflow-y: auto;">
-      <div class="max-w-4xl mx-auto py-10 px-8">
+      <div class="max-w-5xl mx-auto py-8 px-6">
 
-        <!-- Stat Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-          <div class="stat-card">
-            <span class="material-symbols-outlined text-primary text-2xl">psychology</span>
-            <span class="stat-card-value" id="dash-facts">0</span>
-            <span class="stat-card-label">Facts</span>
+        <!-- Briefing Card -->
+        <div id="dash-briefing-wrap" style="display:none;" class="dash-briefing-card mb-6">
+          <div class="dash-briefing-header">
+            <span class="material-symbols-outlined" style="font-size:16px;color:var(--tertiary)">wb_sunny</span>
+            <span id="dash-briefing-date" style="font-family:'Space Grotesk';font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--tertiary)"></span>
           </div>
-          <div class="stat-card">
-            <span class="material-symbols-outlined text-primary text-2xl">forum</span>
-            <span class="stat-card-value" id="dash-sessions">0</span>
-            <span class="stat-card-label">Sessions</span>
-          </div>
-          <div class="stat-card">
-            <span class="material-symbols-outlined text-primary text-2xl">description</span>
-            <span class="stat-card-value" id="dash-documents">0</span>
-            <span class="stat-card-label">Documents</span>
-          </div>
-          <div class="stat-card">
-            <span class="material-symbols-outlined text-primary text-2xl">sticky_note_2</span>
-            <span class="stat-card-value" id="dash-notes">0</span>
-            <span class="stat-card-label">Notes</span>
-          </div>
+          <div id="dash-briefing-body" style="font-size:13px;line-height:1.6;color:var(--text);white-space:pre-line;"></div>
         </div>
 
-        <!-- Recent Sessions -->
-        <div class="mb-10">
-          <h3 class="font-headline font-bold text-lg mb-4">Recent Sessions</h3>
-          <div id="dash-recent-sessions" class="recent-sessions-list text-sm text-on-surface-variant">No recent sessions</div>
-        </div>
+        <!-- Main Grid -->
+        <div class="dash-grid">
 
-        <!-- Quick Actions -->
-        <div>
-          <h3 class="font-headline font-bold text-lg mb-4">Quick Actions</h3>
-          <div class="flex flex-wrap gap-3">
-            <button id="dash-new-chat" class="px-5 py-2.5 bg-surface-container-low hover:bg-surface-container-high border border-outline-variant/10 rounded-xl font-headline text-sm font-medium transition-all flex items-center gap-2">
-              <span class="material-symbols-outlined text-primary text-lg">add</span>
-              New Chat
-            </button>
-            <button id="dash-upload-doc" class="px-5 py-2.5 bg-surface-container-low hover:bg-surface-container-high border border-outline-variant/10 rounded-xl font-headline text-sm font-medium transition-all flex items-center gap-2">
-              <span class="material-symbols-outlined text-primary text-lg">upload_file</span>
-              Upload Document
-            </button>
-            <a href="/dnd" class="px-5 py-2.5 bg-surface-container-low hover:bg-surface-container-high border border-outline-variant/10 rounded-xl font-headline text-sm font-medium transition-all flex items-center gap-2 no-underline text-on-surface">
-              <span class="material-symbols-outlined text-primary text-lg">casino</span>
-              Enter D&amp;D
-            </a>
+          <!-- Left: System + Stats -->
+          <div class="dash-col">
+
+            <!-- Node Status -->
+            <div class="dash-section">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">hub</span>
+                System
+                <button id="dash-nodes-refresh" class="dash-refresh-btn" title="Refresh node status">
+                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
+                </button>
+              </div>
+              <div id="dash-nodes" class="dash-node-list">
+                <div class="dash-node-row">
+                  <span class="dash-dot online"></span>
+                  <span style="font-size:13px;color:var(--text)">Host</span>
+                  <span class="dash-node-label">online</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Containers / VMs -->
+            <div class="dash-section" style="margin-top:12px">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">deployed_code</span>
+                Containers
+                <button id="dash-containers-refresh" class="dash-refresh-btn" title="Refresh containers">
+                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
+                </button>
+              </div>
+              <div id="dash-containers" class="dash-container-list">
+                <div style="font-size:12px;color:var(--muted)">Loading…</div>
+              </div>
+            </div>
+
+            <!-- Developer: live system stats (hidden unless dev mode is on) -->
+            <div id="dash-dev-section" class="dash-section" style="margin-top:12px;display:none">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">monitoring</span>
+                System Stats
+                <button id="dash-dev-refresh" class="dash-refresh-btn" title="Refresh system stats">
+                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
+                </button>
+              </div>
+              <div class="dash-dev-block">
+                <div class="dash-dev-block-head">Temperatures</div>
+                <pre id="dash-dev-temps" class="dash-dev-pre">—</pre>
+              </div>
+              <div class="dash-dev-block">
+                <div class="dash-dev-block-head">Network</div>
+                <pre id="dash-dev-network" class="dash-dev-pre">—</pre>
+              </div>
+              <div class="dash-dev-block">
+                <div class="dash-dev-block-head">Disk</div>
+                <pre id="dash-dev-disk" class="dash-dev-pre">—</pre>
+              </div>
+            </div>
+
+            <!-- Memory Stats -->
+            <div class="dash-section" style="margin-top:12px">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">psychology</span>
+                Memory
+              </div>
+              <div class="dash-stat-row">
+                <span class="dash-stat-key">Facts</span>
+                <span class="dash-stat-val" id="dash-facts">—</span>
+              </div>
+              <div class="dash-stat-row">
+                <span class="dash-stat-key">Sessions</span>
+                <span class="dash-stat-val" id="dash-sessions">—</span>
+              </div>
+              <div class="dash-stat-row">
+                <span class="dash-stat-key">Documents</span>
+                <span class="dash-stat-val" id="dash-documents">—</span>
+              </div>
+              <div class="dash-stat-row">
+                <span class="dash-stat-key">Notes</span>
+                <span class="dash-stat-val" id="dash-notes">—</span>
+              </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="dash-section" style="margin-top:12px">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">bolt</span>
+                Quick Actions
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+                <button id="dash-new-chat" class="dash-action-btn">
+                  <span class="material-symbols-outlined" style="font-size:15px">add_comment</span>New Chat
+                </button>
+                <button id="dash-upload-doc" class="dash-action-btn">
+                  <span class="material-symbols-outlined" style="font-size:15px">upload_file</span>Upload Document
+                </button>
+                <button id="dash-open-memory" class="dash-action-btn">
+                  <span class="material-symbols-outlined" style="font-size:15px">account_tree</span>Browse Memory
+                </button>
+              </div>
+            </div>
+
           </div>
-        </div>
 
+          <!-- Right: Goals + Activity -->
+          <div class="dash-col">
+
+            <!-- Active Goals -->
+            <div class="dash-section">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">track_changes</span>
+                Active Goals
+              </div>
+              <div id="dash-goals" class="dash-goals-list">
+                <span style="font-size:12px;color:var(--muted)">No active goals</span>
+              </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="dash-section" style="margin-top:12px">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">history</span>
+                Recent Sessions
+              </div>
+              <div id="dash-recent-sessions" class="recent-sessions-list text-sm text-on-surface-variant">Loading…</div>
+            </div>
+
+          </div>
+
+        </div><!-- /dash-grid -->
       </div>
     </div>
 
     <!-- ── Chat Panel ───────────────────────────────────────────────────── -->
-    <div id="panel-chat" class="tab-pane" style="flex: 1; min-height: 0; overflow: hidden;">
+    <div id="panel-chat" class="tab-pane" style="flex: 1; min-height: 0; overflow: hidden; position: relative;">
+
+      <!-- Drag-and-drop overlay — appears while dragging files anywhere over the chat -->
+      <div id="chat-drop-overlay" class="chat-drop-overlay">
+        <span class="material-symbols-outlined">upload_file</span>
+        <span>Drop files to add them to this conversation</span>
+      </div>
+      <div id="chat-drop-toast" class="chat-drop-toast"></div>
+
 
       <!-- Messages -->
       <div id="messages" class="flex-1 overflow-y-auto px-8 pb-4" style="flex: 1; overflow-y: auto;">
@@ -1155,6 +1594,16 @@
 
       </div>
 
+      <!-- Goals Banner -->
+      <div id="goals-banner" style="display:none;" class="goals-banner">
+        <span class="material-symbols-outlined" style="font-size:14px;color:var(--tertiary)">track_changes</span>
+        <span id="goals-banner-text" style="flex:1;font-size:12px;color:var(--muted)"></span>
+        <button id="goals-banner-view" style="font-size:11px;font-family:'Space Grotesk';color:var(--accent);background:none;border:none;cursor:pointer;text-transform:uppercase;letter-spacing:.05em" title="Open memory browser">View</button>
+        <button id="goals-banner-dismiss" style="background:none;border:none;cursor:pointer;color:var(--muted);line-height:1" title="Dismiss">
+          <span class="material-symbols-outlined" style="font-size:14px">close</span>
+        </button>
+      </div>
+
       <!-- Input Area -->
       <div id="input-area" class="shrink-0 p-6 bg-gradient-to-t from-background via-background/95 to-transparent">
         <div class="max-w-4xl mx-auto">
@@ -1165,9 +1614,20 @@
                 <div class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></div>
                 <span class="input-hint">Running locally</span>
               </div>
-              <button id="sendBtn" class="w-8 h-8 rounded-lg bg-primary text-on-primary flex items-center justify-center transition-transform active:scale-90 cursor-pointer border-none" title="Send (Enter)">
-                <span class="material-symbols-outlined text-sm font-bold">arrow_upward</span>
-              </button>
+              <div class="flex items-center gap-2">
+                <select id="ttsVoice" class="hidden sm:block bg-transparent text-on-surface-variant text-xs rounded-lg border border-outline-variant/20 px-1.5 py-1 cursor-pointer hover:text-primary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors" title="Voice for spoken replies">
+                  <option value="">Loading voices…</option>
+                </select>
+                <button id="ttsBtn" class="w-7 h-7 rounded-lg bg-transparent text-on-surface-variant flex items-center justify-center cursor-pointer border-none hover:text-primary transition-colors" title="Toggle voice output (TTS)">
+                  <span class="material-symbols-outlined text-sm">volume_up</span>
+                </button>
+                <button id="micBtn" class="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center cursor-pointer border-none" title="Click to toggle recording · Hold for push-to-talk">
+                  <span class="material-symbols-outlined text-sm" id="micIcon">mic</span>
+                </button>
+                <button id="sendBtn" class="w-8 h-8 rounded-lg bg-primary text-on-primary flex items-center justify-center transition-transform active:scale-90 cursor-pointer border-none" title="Send (Enter)">
+                  <span class="material-symbols-outlined text-sm font-bold">arrow_upward</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1204,10 +1664,6 @@
                 <strong>research</strong>
                 <span class="mode-option-desc">In-depth analysis</span>
               </button>
-              <button class="mode-option" data-mode="dm">
-                <strong>dm</strong>
-                <span class="mode-option-desc">Dungeon Master mode</span>
-              </button>
             </div>
           </div>
         </div>
@@ -1238,6 +1694,18 @@
                 <span class="mode-option-desc">Maximum chaos &mdash; anything goes</span>
               </button>
             </div>
+          </div>
+
+          <!-- Tool model level (which model runs tool calls) -->
+          <div class="settings-label" style="margin-top:14px">Tool model</div>
+          <div class="mode-selector-wrap">
+            <button class="mode-pill" id="toollevel-pill" onclick="toggleToolLevelDropdown()">
+              <span id="toollevel-label">Light (3B)</span>
+              <span class="mode-arrow">&#9662;</span>
+            </button>
+            <!-- options are rendered by JS from /settings/tool-level so
+                 uninstalled models can be labeled with their pull command -->
+            <div id="toollevel-dropdown" class="mode-dropdown"></div>
           </div>
 
           <!-- Temperature slider (this chat only) -->
@@ -1320,12 +1788,32 @@
           <div id="s-docs-preview" class="mt-2"></div>
         </div>
 
-        <!-- DM Mode -->
+        <!-- Developer Mode -->
         <div class="settings-section">
-          <button id="dm-toggle">
-            <span>DM Mode</span>
-            <span id="dm-campaign-name">Off</span>
+          <button id="dev-toggle">
+            <span>Developer Mode</span>
+            <span id="dev-state">Off</span>
           </button>
+          <div class="temp-slider-hint" style="margin-top:6px">Surfaces live system stats (temps, network, disk) on the dashboard.</div>
+        </div>
+
+        <!-- Theme -->
+        <div class="settings-section">
+          <div class="settings-label">Theme</div>
+          <div class="theme-swatches">
+            <button class="theme-swatch" data-theme-pick="nebula" title="Nebula"
+                    style="background: linear-gradient(135deg, #12121d 50%, #c1c1ff 50%)">
+              <span class="swatch-check">✓</span>
+            </button>
+            <button class="theme-swatch" data-theme-pick="terminal" title="Terminal"
+                    style="background: linear-gradient(135deg, #080c08 50%, #00e535 50%)">
+              <span class="swatch-check">✓</span>
+            </button>
+            <button class="theme-swatch" data-theme-pick="slate" title="Slate"
+                    style="background: linear-gradient(135deg, #0f1117 50%, #7aa2f7 50%)">
+              <span class="swatch-check">✓</span>
+            </button>
+          </div>
         </div>
 
         <!-- User -->
@@ -1339,11 +1827,197 @@
           </div>
         </div>
 
+        <!-- Add User (owner only) -->
+        <div class="settings-section" id="add-user-section" style="display:none">
+          <div class="settings-header">
+            <span class="settings-label">Add User</span>
+            <button class="settings-view-btn" id="user-add-btn">+ Add</button>
+          </div>
+          <div id="user-add-form" class="model-add-form" style="display:none">
+            <input id="user-add-name" class="model-name-input" type="text"
+                   placeholder="Name" maxlength="64" autocomplete="off">
+            <input id="user-add-pin" class="model-name-input" type="password"
+                   placeholder="PIN (4-8 digits)" maxlength="8" autocomplete="new-password">
+            <div class="model-add-actions">
+              <button class="btn btn-sm" id="user-save-btn">Save</button>
+              <button class="btn btn-sm btn-muted" id="user-cancel-btn">Cancel</button>
+            </div>
+          </div>
+          <div id="user-add-msg" class="settings-label" style="margin-top:6px"></div>
+        </div>
+
+        <!-- System control (owner only) -->
+        <div class="settings-section" id="system-control-section" style="display:none">
+          <div class="settings-header">
+            <span class="settings-label">System control</span>
+          </div>
+          <div class="temp-slider-hint" style="margin-bottom:8px">
+            Restart or shut down Kai. A shutdown finishes saving the session
+            (welcome-back note + embeddings) before exiting.
+          </div>
+          <div class="model-add-actions" style="flex-wrap:wrap; gap:8px">
+            <button class="btn btn-sm" id="sys-restart-soft" title="Reload brains in place; models stay warm">Soft restart</button>
+            <button class="btn btn-sm" id="sys-restart-hard" title="Save session, then restart the whole app">Hard restart</button>
+            <button class="btn btn-sm btn-muted" id="sys-shutdown" title="Save session, then exit">Shut down</button>
+          </div>
+          <div id="sys-control-msg" class="settings-label" style="margin-top:8px"></div>
+        </div>
+
       </div>
     </div>
 
+    <!-- ── Study Panel ──────────────────────────────────────────────────── -->
+    <div id="panel-study" class="tab-pane" style="flex: 1; min-height: 0; overflow: hidden;">
+      <div class="study-layout">
+
+        <!-- Collections sidebar -->
+        <div class="study-sidebar" id="study-sidebar">
+          <div class="study-sidebar-title">Open Access Sources</div>
+          <div id="study-collections-list">
+            <div class="study-empty" style="padding: 20px 16px; text-align:left;">Loading&hellip;</div>
+          </div>
+        </div>
+
+        <!-- Main area -->
+        <div class="study-main">
+
+          <!-- Search bar -->
+          <div class="study-search-bar">
+            <div class="study-search-row">
+              <input id="study-search-input" class="study-search-input" type="text"
+                placeholder="Search papers, books, textbooks…" autocomplete="off" />
+              <button class="btn btn-sm" id="study-search-btn">Search</button>
+            </div>
+            <div class="study-filter-chips">
+              <button class="study-chip active" data-filter="all">All</button>
+              <button class="study-chip" data-filter="papers">Papers</button>
+              <button class="study-chip" data-filter="books">Books</button>
+            </div>
+          </div>
+
+          <!-- Inner tabs: Results / Library / Ask -->
+          <div class="study-tabs">
+            <button class="study-tab-btn active" data-study-tab="results">Results</button>
+            <button class="study-tab-btn" data-study-tab="library">My Library</button>
+            <button class="study-tab-btn" data-study-tab="ask">Ask Library</button>
+          </div>
+
+          <!-- Results pane -->
+          <div id="study-pane-results" class="study-results-area">
+            <div class="study-empty">
+              <span class="material-symbols-outlined" style="font-size:40px;opacity:.3;display:block;margin-bottom:8px;">school</span>
+              Search above to find open-access papers and books.<br>
+              <span style="font-size:11px;opacity:.6;">arXiv · PubMed Central · Semantic Scholar · Open Library · Project Gutenberg</span>
+            </div>
+          </div>
+
+          <!-- Library pane -->
+          <div id="study-pane-library" class="study-results-area" style="display:none;">
+            <div class="study-empty" id="study-library-empty">
+              <span class="material-symbols-outlined" style="font-size:40px;opacity:.3;display:block;margin-bottom:8px;">bookmarks</span>
+              No saved items yet. Save epub or PDF files from search results.
+            </div>
+            <div id="study-library-list"></div>
+          </div>
+
+          <!-- Ask Library pane -->
+          <div id="study-pane-ask" class="study-results-area" style="display:none;">
+            <div style="max-width:600px;margin:0 auto;padding-top:8px;">
+              <div style="margin-bottom:14px;">
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;">Ask your saved books &amp; papers</div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.5;">
+                  Kai will search the full text of everything in your library and pull relevant passages.
+                  Save some content first — it indexes automatically in the background.
+                </div>
+              </div>
+              <div class="study-search-row" style="margin-bottom:12px;">
+                <input id="study-ask-input" class="study-search-input" type="text"
+                  placeholder="What does Feynman say about entropy? / Define CRISPR mechanism…" autocomplete="off" />
+                <button class="btn btn-sm" id="study-ask-btn">Ask</button>
+              </div>
+              <div id="study-ask-results">
+                <div class="study-empty" style="padding-top:16px;">
+                  <span class="material-symbols-outlined" style="font-size:36px;opacity:.3;display:block;margin-bottom:8px;">manage_search</span>
+                  Ask a question and Kai will find the answer in your library.
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /study-main -->
+      </div><!-- /study-layout -->
+    </div><!-- /panel-study -->
+
+    <!-- ── Memory Browser Panel ─────────────────────────────────────────── -->
+    <div id="panel-memory" class="tab-pane" style="flex:1;overflow:hidden;">
+
+      <!-- Memory Tab Bar -->
+      <div class="mem-tabbar">
+        <button class="mem-tab active" data-memtab="facts">Facts</button>
+        <button class="mem-tab" data-memtab="timeline">Timeline</button>
+        <button class="mem-tab" data-memtab="goals">Goals</button>
+        <button class="mem-tab" data-memtab="reflections">Reflections</button>
+        <div style="flex:1"></div>
+        <input id="mem-search" type="search" placeholder="Search memory…" class="mem-search-input" autocomplete="off">
+      </div>
+
+      <!-- Facts Pane -->
+      <div id="memtab-facts" class="mem-pane active" style="overflow-y:auto;flex:1;padding:20px 24px">
+        <div id="mem-facts-grid" class="mem-facts-grid">
+          <div style="color:var(--muted);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+      <!-- Timeline Pane -->
+      <div id="memtab-timeline" class="mem-pane" style="display:none;overflow-y:auto;flex:1;padding:20px 24px">
+        <div id="mem-timeline" class="mem-timeline">
+          <div style="color:var(--muted);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+      <!-- Goals Pane -->
+      <div id="memtab-goals" class="mem-pane" style="display:none;overflow-y:auto;flex:1;padding:20px 24px">
+        <div class="mem-goals-columns">
+          <div class="mem-goals-col">
+            <div class="mem-goals-col-head">Active</div>
+            <div id="mem-goals-active"></div>
+          </div>
+          <div class="mem-goals-col">
+            <div class="mem-goals-col-head">Done</div>
+            <div id="mem-goals-done"></div>
+          </div>
+          <div class="mem-goals-col">
+            <div class="mem-goals-col-head">Abandoned</div>
+            <div id="mem-goals-abandoned"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reflections Pane -->
+      <div id="memtab-reflections" class="mem-pane" style="display:none;overflow-y:auto;flex:1;padding:20px 24px">
+        <div id="mem-reflections">
+          <div style="color:var(--muted);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+    </div><!-- /panel-memory -->
+
   </div><!-- /tab-content -->
 </main>
+
+<!-- epub reader overlay -->
+<div id="study-reader-overlay">
+  <div class="reader-topbar">
+    <button class="btn btn-sm btn-muted" id="reader-close-btn" onclick="closeStudyReader()">&#8592; Back</button>
+    <span class="reader-title" id="reader-title">Document</span>
+    <div class="reader-nav" id="epub-nav" style="display:none;">
+      <button class="btn btn-sm btn-muted" id="epub-prev">&#8249; Prev</button>
+      <button class="btn btn-sm btn-muted" id="epub-next">Next &#8250;</button>
+    </div>
+  </div>
+  <div id="epub-viewer"></div>
+  <iframe id="pdf-viewer-frame" style="display:none;"></iframe>
+</div>
 
 
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
@@ -1358,20 +2032,6 @@
   </div>
   <div class="hist-list" id="hist-list">
     <div class="mem-empty">Loading&hellip;</div>
-  </div>
-</div>
-
-<!-- DM Dialog -->
-<div id="dm-dialog-overlay">
-  <div class="dm-dialog">
-    <h3>Start DM Mode</h3>
-    <p>Kai will track NPCs, quests, and events automatically while you play.<br>
-       Leave blank to resume an existing campaign.</p>
-    <input id="dm-campaign-input" type="text" placeholder="Campaign name (e.g. Curse of Strahd)" maxlength="80">
-    <div class="dm-dialog-actions">
-      <button class="btn-dm-cancel" onclick="closeDmDialog()">Cancel</button>
-      <button class="btn-dm-confirm" onclick="confirmDmStart()">Start</button>
-    </div>
   </div>
 </div>
 
@@ -1413,9 +2073,20 @@
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
 <!-- SCRIPTS                                                                  -->
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
-<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
+<script src="/static/epub.min.js"></script>
 <script src="/static/app.js"></script>
+<script>
+function openSidebar() {
+  document.getElementById('sidebar').classList.add('open');
+  document.getElementById('sidebar-backdrop').classList.add('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-backdrop').classList.remove('open');
+}
+</script>
 
 </body>
 </html>

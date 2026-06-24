@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kai
+GenericName=Local AI Agent
+Comment=Kai — your personal local AI assistant
+Exec=bash -c 'cd /path/to/newB2_kai && .venv/bin/python app.py'
+Icon=/path/to/newB2_kai/kai/static/icon-192.png
+Terminal=false
+Categories=Utility;Office;
+Keywords=AI;assistant;chat;
+StartupNotify=true

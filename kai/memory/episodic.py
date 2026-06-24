@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Callable
 
 from kai.config import EPISODIC_TOP_K
-from kai.db import get_conn, sqlite_vec_available
-from kai.schema import EpisodicEntry
+from kai.store.db import get_conn, sqlite_vec_available
+from kai.store.schema import EpisodicEntry
 
 EmbedFn = Callable[[str], list[float]]
 
