@@ -9,7 +9,9 @@ from datetime import datetime
 from typing import Callable
 
 from kai.config import EPISODIC_TOP_K
-from kai.store.db import get_conn, sqlite_vec_available
+from kai.store.db import (
+    get_conn, sqlite_vec_available, like_escape, vec_knn, resort_by_rowid_order,
+)
 from kai.store.schema import EpisodicEntry
 
 EmbedFn = Callable[[str], list[float]]
@@ -80,22 +82,14 @@ def _vector_search(
     query_embedding: list[float] | None = None,
     user_id: int = 0,
 ) -> list[EpisodicEntry]:
-    import sqlite_vec
     embedding = query_embedding or embed_fn(query)
     conn = get_conn()
 
-    # sqlite-vec vec0 requires a pure KNN query (no JOINs with MATCH).
-    # Step 1: get matching rowids from the vector table alone.
-    knn_rows = conn.execute(
-        "SELECT rowid FROM episodic_vec "
-        "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-        (sqlite_vec.serialize_float32(embedding), int(top_k * 2))
-    ).fetchall()
-    if not knn_rows:
+    # Step 1: pure vec0 KNN — over-fetch since the user_id filter comes later.
+    rowids = [r[0] for r in vec_knn(conn, "episodic_vec", embedding, top_k * 2)]
+    if not rowids:
         return []
     # Step 2: fetch the actual entries by rowid, filtered by user_id.
-    # Preserve KNN distance ordering via the rowid list order.
-    rowids = [r[0] for r in knn_rows]
     placeholders = ",".join("?" * len(rowids))
     rows = conn.execute(
         f"SELECT id, content, timestamp, entry_type, metadata "
@@ -104,22 +98,14 @@ def _vector_search(
         (*rowids, user_id, top_k)
     ).fetchall()
 
-    # Re-sort to match KNN distance order (IN clause returns arbitrary order)
+    # Step 3: IN-clause order is arbitrary — restore KNN distance order.
     entries = _rows_to_entries(rows)
-    row_id_by_entry_id = {}
-    for r in conn.execute(
-        f"SELECT id, rowid FROM episodic_entries WHERE rowid IN ({placeholders})",
-        rowids,
-    ).fetchall():
-        row_id_by_entry_id[r[0]] = r[1]
-    rowid_rank = {rid: i for i, rid in enumerate(rowids)}
-    entries.sort(key=lambda e: rowid_rank.get(row_id_by_entry_id.get(e.id, -1), 999))
-    return entries
+    return resort_by_rowid_order(conn, "episodic_entries", entries, rowids)
 
 
 def _text_search(query: str, top_k: int, user_id: int = 0) -> list[EpisodicEntry]:
     conn = get_conn()
-    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = like_escape(query)
     rows = conn.execute(
         "SELECT id, content, timestamp, entry_type, metadata "
         "FROM episodic_entries "
@@ -142,21 +128,14 @@ def search_non_turns(
     Raw 'turn' entries are excluded — they are temporary staging; only archives are injected.
     """
     if (query_embedding or embed_fn) and sqlite_vec_available():
-        import sqlite_vec
         embedding = query_embedding or embed_fn(query)
         conn = get_conn()
-        # Step 1: pure KNN query — no extra WHERE conditions, only MATCH + LIMIT
-        # Turns are no longer embedded (skipped in add_entry), so the vec table
-        # contains only archives/learned entries — no need to over-fetch.
-        knn_rows = conn.execute(
-            "SELECT rowid FROM episodic_vec "
-            "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-            (sqlite_vec.serialize_float32(embedding), int(top_k))
-        ).fetchall()
-        if not knn_rows:
+        # Step 1: pure KNN. Turns are no longer embedded (skipped in add_entry),
+        # so the vec table holds only archives/learned entries — no over-fetch.
+        rowids = [r[0] for r in vec_knn(conn, "episodic_vec", embedding, top_k)]
+        if not rowids:
             return []
         # Step 2: fetch entries and filter by user_id + entry_type
-        rowids = [r[0] for r in knn_rows]
         placeholders = ",".join("?" * len(rowids))
         rows = conn.execute(
             f"SELECT id, content, timestamp, entry_type, metadata "
@@ -166,21 +145,13 @@ def search_non_turns(
             (*rowids, user_id, top_k)
         ).fetchall()
 
-        # Re-sort to match KNN distance order (IN clause returns arbitrary order)
+        # Step 3: IN-clause order is arbitrary — restore KNN distance order.
         entries = _rows_to_entries(rows)
-        row_id_by_entry_id = {}
-        for r in conn.execute(
-            f"SELECT id, rowid FROM episodic_entries WHERE rowid IN ({placeholders})",
-            rowids,
-        ).fetchall():
-            row_id_by_entry_id[r[0]] = r[1]
-        rowid_rank = {rid: i for i, rid in enumerate(rowids)}
-        entries.sort(key=lambda e: rowid_rank.get(row_id_by_entry_id.get(e.id, -1), 999))
-        return entries
+        return resort_by_rowid_order(conn, "episodic_entries", entries, rowids)
 
     # Text fallback — exclude raw turns
     conn = get_conn()
-    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = like_escape(query)
     rows = conn.execute(
         "SELECT id, content, timestamp, entry_type, metadata "
         "FROM episodic_entries "

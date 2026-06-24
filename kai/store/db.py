@@ -100,6 +100,57 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+# ── Search helpers ───────────────────────────────────────────────────────────
+# Shared by every full-text / vector search path so the tricky bits (LIKE-escape
+# correctness, the vec0 two-step KNN dance) live in exactly one tested place.
+
+def like_escape(s: str) -> str:
+    r"""Escape %, _ and \ so user input is matched literally under a
+    ``LIKE ? ESCAPE '\'`` clause. Without this, a user typing ``%`` or ``_``
+    would inject SQL wildcards into their own search."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def vec_knn(conn: sqlite3.Connection, vec_table: str, embedding, k: int
+            ) -> list[tuple[int, float]]:
+    """Pure sqlite-vec vec0 KNN: return up to ``k`` ``(rowid, distance)`` pairs,
+    nearest-first.
+
+    vec0 ``MATCH`` cannot be JOINed, so callers do a two-step: get ordered
+    rowids here, fetch the real rows by ``rowid IN (...)`` (which loses order),
+    then restore order with :func:`resort_by_rowid_order`. ``vec_table`` is
+    always a hard-coded table name, never user input.
+    """
+    import sqlite_vec
+    return conn.execute(
+        f"SELECT rowid, distance FROM {vec_table} "
+        f"WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+        (sqlite_vec.serialize_float32(embedding), int(k)),
+    ).fetchall()
+
+
+def resort_by_rowid_order(conn: sqlite3.Connection, table: str, entries: list,
+                          rowids: list[int], id_attr: str = "id") -> list:
+    """Re-sort ``entries`` (fetched via ``rowid IN (...)``, arbitrary order) back
+    into the KNN distance order given by ``rowids``. Sorts in place and returns
+    the same list. Entries must expose their primary key via ``id_attr``."""
+    if not rowids:
+        return entries
+    placeholders = ",".join("?" * len(rowids))
+    rowid_by_id = {
+        r[0]: r[1]
+        for r in conn.execute(
+            f"SELECT {id_attr}, rowid FROM {table} WHERE rowid IN ({placeholders})",
+            rowids,
+        ).fetchall()
+    }
+    rank = {rid: i for i, rid in enumerate(rowids)}
+    entries.sort(
+        key=lambda e: rank.get(rowid_by_id.get(getattr(e, id_attr), -1), 999)
+    )
+    return entries
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create all tables once. No-op after the first call."""
     global _schema_initialized

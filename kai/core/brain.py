@@ -917,7 +917,11 @@ class Brain:
             _chain_stopped = False   # Cerebellum STOP — end the rounds, never escalate
             _rounds_done = False     # duplicate calls piling up — answer with what we have
             any_tool_error = False   # Python exception — tool completely failed
-            any_soft_error = False   # Tool ran but output contains a Windows error code
+            # Windows-only: tool ran but output carries a Windows hex error code
+            # (0x…). There is no false-positive-free Linux equivalent (exit codes
+            # are small ints that appear everywhere), so this escalation path is
+            # deliberately Windows-scoped rather than silently cross-platform.
+            any_win_error_code = False
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
                 tool_name = fn.get("name") or ""
@@ -1003,9 +1007,9 @@ class Brain:
                 self._cerebellum_post(tool_name, result, query_emb, messages)
                 messages.append({"role": "tool", "content": json.dumps(result)})
 
-                _hard, _soft = self._classify_tool_result(result)
+                _hard, _win_code = self._classify_tool_result(result)
                 any_tool_error = any_tool_error or _hard
-                any_soft_error = any_soft_error or _soft
+                any_win_error_code = any_win_error_code or _win_code
 
             # Safety stop — end the rounds entirely. Must come before error
             # escalation: a stop that re-arms the full tool set with "do not
@@ -1047,7 +1051,7 @@ class Brain:
                             "answer from what you know and explain what blocked you."
                         ),
                     })
-            elif any_soft_error and "search.web" not in tools_used:
+            elif any_win_error_code and "search.web" not in tools_used:
                 # A tool ran but returned a Windows error code (e.g. 0x80240032).
                 # search.web is already in the tool schema — direct the model to use it.
                 messages.append({
@@ -1115,11 +1119,14 @@ class Brain:
 
     @staticmethod
     def _classify_tool_result(result: dict) -> tuple[bool, bool]:
-        """Return (hard_error, soft_error) for one tool result.
+        """Return (hard_error, win_error_code) for one tool result.
 
         hard_error: the tool itself crashed (Python exception / no registry).
-        soft_error: the tool ran but the system returned a Windows error code
-        (the 0x hex pattern — unambiguous, no false positives).
+        win_error_code: the tool ran but its output carries a Windows hex error
+        code (the 0x… pattern — unambiguous, no false positives). This is
+        intentionally Windows-only: Linux exit codes are small ints that appear
+        in legitimate output, so there is no equally false-positive-free signal
+        to key a cross-platform escalation off of.
         """
         if not result.get("success", True):
             return True, False

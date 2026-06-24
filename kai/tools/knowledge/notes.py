@@ -6,7 +6,7 @@ from datetime import datetime
 
 _MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
 
-from kai.store.db import get_conn
+from kai.store.db import get_conn, like_escape
 from kai.core._app_state import get_current_user_id
 from kai.tools.registry import registry
 
@@ -64,7 +64,7 @@ def search_notes(query: str) -> str:
         user_id = get_current_user_id()
         conn = get_conn()
         # Escape LIKE wildcards so user input is treated literally
-        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped = like_escape(query)
         rows = conn.execute(
             "SELECT id, timestamp, title, content FROM notes "
             "WHERE user_id = ? AND (content LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\') "

@@ -8,7 +8,7 @@ Tables (in kai.db):
 import uuid
 from datetime import datetime
 
-from kai.store.db import get_conn
+from kai.store.db import get_conn, like_escape
 
 
 # ── Write ────────────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ def search_messages(query: str, limit: int = 10, user_id: int = 0) -> list[dict]
     Returns matching messages with their session title and timestamp.
     """
     conn = get_conn()
-    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = like_escape(query)
     rows = conn.execute(
         "SELECT sm.role, sm.content, sm.timestamp, s.title, s.id "
         "FROM session_messages sm "

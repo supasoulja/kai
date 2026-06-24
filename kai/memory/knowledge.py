@@ -110,6 +110,10 @@ class HandoffRouter:
             query_bytes = sqlite_vec.serialize_float32(vec)
             conn = get_conn()
 
+            # Idiom note: vec_distance_cosine inline JOIN, *not* the vec0 MATCH
+            # two-step (db.vec_knn). vec0 MATCH forbids JOINs, but here we need
+            # hp.target_mode from the sibling table in one shot — so the inline
+            # distance function is the right tool. See db.vec_knn for the other idiom.
             row = conn.execute("""
                 SELECT hp.rowid, hp.target_mode,
                        vec_distance_cosine(hv.embedding, ?) AS dist
@@ -344,6 +348,9 @@ class KnowledgeStore:
             conn = self._conn()
             query_bytes = sqlite_vec.serialize_float32(embed_fn(query))
 
+            # Idiom note: vec_distance_cosine inline JOIN, *not* db.vec_knn's vec0
+            # MATCH two-step — we need k.content/source/topic alongside the score
+            # and vec0 MATCH can't JOIN, so distance is computed inline.
             rows = conn.execute("""
                 SELECT k.content, k.source, k.topic,
                        1.0 - vec_distance_cosine(kv.embedding, ?) AS similarity

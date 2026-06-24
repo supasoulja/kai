@@ -38,3 +38,24 @@ def run_powershell(cmd: str, timeout: int = 20) -> ShellResult:
         return ShellResult("", "Timed out", True, False)
     except Exception as exc:
         return ShellResult("", str(exc), False, False)
+
+
+def run_shell(cmd: str, timeout: int = 20) -> ShellResult:
+    """POSIX companion to run_powershell — run a command through /bin/sh and
+    return the same structured ShellResult.
+
+    Never raises — failures come back as a ShellResult with ok=False. Note that
+    a command which runs but exits non-zero still has ok=True (it *ran*); inspect
+    `err` or do your own returncode handling for command-level failure.
+    """
+    try:
+        r = subprocess.run(
+            ["/bin/sh", "-c", cmd],
+            capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
+        )
+        return ShellResult(r.stdout.strip(), r.stderr.strip(), False, True)
+    except subprocess.TimeoutExpired:
+        return ShellResult("", "Timed out", True, False)
+    except Exception as exc:
+        return ShellResult("", str(exc), False, False)
