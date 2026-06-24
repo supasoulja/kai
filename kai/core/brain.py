@@ -21,8 +21,9 @@ from typing import TYPE_CHECKING, Any
 import kai.config as cfg
 from kai.config import (
     CHAT_MODEL,
-    TEMPERATURE_REASON, HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP, LEARN_FROM_CONVERSATION,
+    TEMPERATURE_REASON, HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP,
 )
+from kai.memory.privacy import learning_enabled, patterns_enabled
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
 from kai.util.text import strip_thinking as _strip_thinking
@@ -999,7 +1000,7 @@ class Brain:
                 _call_sigs.append(_sig)
 
                 # ── Pattern tracking ──────────────────────────────────────────
-                if cfg.PATTERN_ENABLED:
+                if patterns_enabled(self.user_id):
                     from kai.memory.patterns import log_tool_call as _log_pattern
                     _log_pattern(tool_name, user_id=self.user_id, topic=user_input[:80])
 
@@ -1678,7 +1679,7 @@ class Brain:
         # Rate-limit: only extract knowledge every 3rd turn to reduce Ollama
         # queue pressure. The background LLM call delays the next turn's embed
         # + chat because Ollama serializes GPU work.
-        if LEARN_FROM_CONVERSATION and count % 3 == 0:
+        if learning_enabled(self.user_id) and count % 3 == 0:
             try:
                 self._extract_knowledge(user_input, assistant_text)
             except Exception:

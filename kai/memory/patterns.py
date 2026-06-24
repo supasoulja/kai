@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import kai.config as cfg
+from kai.memory.privacy import patterns_enabled
 
 _bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pattern-log")
 
@@ -37,7 +38,7 @@ _TOOL_SUGGEST: dict[str, str] = {
 
 def log_tool_call(tool_name: str, user_id: int = 0, topic: str = "") -> None:
     """Fire-and-forget: record this tool call for pattern analysis."""
-    if not cfg.PATTERN_ENABLED:
+    if not patterns_enabled(user_id):
         return
     _bg.submit(_write_pattern, tool_name, user_id, topic)
 
@@ -64,7 +65,7 @@ def get_proactive_suggestion(user_id: int = 0) -> str:
 
     Called by context.py on session open — fast DB aggregate, no LLM.
     """
-    if not cfg.PATTERN_ENABLED:
+    if not patterns_enabled(user_id):
         return ""
     try:
         return _check_patterns(user_id)

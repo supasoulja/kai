@@ -357,6 +357,8 @@ Every tool call is logged asynchronously (tool name × hour of day × day of wee
 
 All detection is a fast DB aggregate query. No LLM, no embeddings.
 
+Tracking is on by default but can be turned off per user, and the recorded history can be wiped — see [Privacy & Data at Rest](#privacy--data-at-rest).
+
 ---
 
 ## Tools
@@ -423,6 +425,16 @@ Three-factor local auth:
 3. **Machine certificate** — 30-byte random key generated once per installation. A copied database is useless on another machine.
 
 Phone access via `--lan` only requires name + PIN (no machine certificate check on remote devices).
+
+---
+
+## Privacy & Data at Rest
+
+Kai is local-only, but "local" is not the same as "encrypted." Be aware of how your data sits on disk:
+
+- **`var/` is plaintext at rest.** All of Kai's data lives under `var/` (`var/memory/` for the SQLite databases, `var/state/` for app settings, `var/tls/` for the self-signed cert). The SQLite files are **not** encrypted at the application level — anyone with read access to `var/` can read your facts, conversations, and knowledge store directly. Secrets are the exception: PINs and session tokens are hashed, and provider API keys are encrypted with the per-device key.
+- **To protect data at rest, put `var/` on an encrypted volume** — full-disk encryption (LUKS, FileVault, BitLocker) or a dedicated encrypted partition. Point Kai at it with `KAI_VAR_DIR=/path/to/encrypted/var`. Transparent SQLCipher-style database encryption is a possible future option but is not built in today.
+- **Silent learning is on by default but controllable, per user.** Two background subsystems build a profile of you: conversation learning (`LEARN_FROM_CONVERSATION`) and usage-pattern tracking (`PATTERN_ENABLED`). Each can be turned off per user, and the recorded usage-pattern history can be wiped — see `kai/memory/privacy.py` (`set_learning_enabled`, `set_patterns_enabled`, `forget_usage_patterns`). Deleting your account (`delete_user`) erases all of it.
 
 ---
 
