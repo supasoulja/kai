@@ -24,6 +24,7 @@ from kai.config import (
     TEMPERATURE_REASON, HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP,
 )
 from kai.memory.privacy import learning_enabled, patterns_enabled
+from kai.core.history import HistoryManager
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
 from kai.util.text import strip_thinking as _strip_thinking
@@ -290,18 +291,14 @@ class Brain:
         self._cancel = threading.Event()  # set by request_stop() to abort the current turn
         self.user_id = user_id
         self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
-        self._session_history: list[dict] = []  # rolling conversation turns for this session
-        self._history_lock = threading.Lock()    # protects _session_history mutations
+        self._history = HistoryManager()         # session history, lock, turn counters, compression
         self.session_id: str | None = None       # current persisted session UUID
-        self._turn_order: int = 0                # monotonic counter for message ordering
         self._tool_index: dict[str, list[float]] = {}  # name → embedding vector, built lazily
         self._tool_index_ready: bool = False
         self._memory_router_ready: bool = False       # memory domain index built lazily
         self._handoff_router_ready: bool = False      # handoff pattern index seeded lazily
         from kai.memory.knowledge import HandoffRouter
         self._handoff_router = HandoffRouter()
-        self._compressing: bool = False               # prevents concurrent history compressions
-        self._turn_count: int = 0                     # monotonic counter for learn-rate gating
         self._pending_confirm: dict | None = None     # tool call awaiting user confirmation
         self._tool_level: str = cfg.DEFAULT_TOOL_LEVEL  # which model runs tool rounds
         self._tool_model: str | None = None             # resolved lazily, availability-checked
@@ -526,8 +523,7 @@ class Brain:
         _, clean = _strip_thinking(full_text)
         clean = clean.strip()
         if clean:
-            with self._history_lock:
-                self._session_history.append({"role": "assistant", "content": clean})
+            self._history.append("assistant", clean)
         # A cold-open greeting is how the welcome-back note gets delivered — clear it.
         if not fresh:
             self._mark_session_notes_delivered()
@@ -592,16 +588,12 @@ class Brain:
 
     def clear_history(self) -> None:
         """Clear in-memory conversation history (call on /clear)."""
-        with self._history_lock:
-            self._session_history.clear()
-        self.session_id  = None
-        self._turn_order = 0
-        self._turn_count = 0
+        self._history.clear()
+        self.session_id = None
 
     def snapshot_history(self) -> list[dict]:
         """Thread-safe snapshot of current history for archiving."""
-        with self._history_lock:
-            return list(self._session_history)
+        return self._history.snapshot()
 
     # ── Public surface for collaborators (api/state, web, sleep) ──────────────
     # These let external code drive the Brain without reaching into its private
@@ -625,18 +617,13 @@ class Brain:
     def append_external_turn(self, role: str, content: str) -> None:
         """Append a turn produced outside the chat loop (e.g. a document-upload
         note) to the session history, taking the history lock internally."""
-        with self._history_lock:
-            self._session_history.append({"role": role, "content": content})
+        self._history.append(role, content)
 
     def load_session(self, session_id: str, messages: list[dict]) -> int:
         """Replace in-memory history with a saved session. Returns message count."""
-        with self._history_lock:
-            self._session_history = [
-                {"role": m["role"], "content": m["content"]} for m in messages
-            ]
-        self.session_id  = session_id
-        self._turn_order = len(messages)
-        return len(messages)
+        count = self._history.replace(messages)
+        self.session_id = session_id
+        return count
 
     def run(self, user_input: str, trace_id: str | None = None) -> str:
         """
@@ -709,8 +696,7 @@ class Brain:
             use_think = True
 
         context = self._build_turn_context(user_input, query_emb, trace_id)
-        with self._history_lock:
-            history = list(self._session_history[-_HISTORY_HARD_CAP:])
+        history = self._history.window(_HISTORY_HARD_CAP)
         # Never replay failure placeholders — otherwise the model mimics them.
         # (Also scrubs any "[no response]" already stored from earlier sessions.)
         history = [m for m in history
@@ -1478,16 +1464,16 @@ class Brain:
         Returns the assistant message id (None if persistence failed).
         """
         self._record_trace(trace_id, user_input, context, tools_used, raw_text, turn_start)
-        with self._history_lock:
-            self._session_history.append({"role": "user", "content": user_input})
-            # Don't keep a pure failure placeholder in replayed history — it would
-            # be mimicked next turn. The user turn stays so context isn't lost.
-            if clean_text.strip() not in _FAILURE_MARKERS:
-                self._session_history.append({"role": "assistant", "content": clean_text})
+        turns = [{"role": "user", "content": user_input}]
+        # Don't keep a pure failure placeholder in replayed history — it would
+        # be mimicked next turn. The user turn stays so context isn't lost.
+        if clean_text.strip() not in _FAILURE_MARKERS:
+            turns.append({"role": "assistant", "content": clean_text})
+        self._history.extend(turns)
         msg_id = self._persist_turn(user_input, clean_text)
         # The first reply of a session delivers the welcome-back note /
         # briefing — mark them consumed so they aren't re-injected next time.
-        if self._turn_count <= 1:
+        if self._history.turn_count <= 1:
             self._mark_session_notes_delivered()
         if self.session_id:
             events.emit(events.EVENT_STREAM_END, self.session_id,
@@ -1539,8 +1525,7 @@ class Brain:
         context = self.memory.render_context(
             query=user_input,
         ) + GROUNDING_RULE
-        with self._history_lock:
-            history = list(self._session_history[-_HISTORY_HARD_CAP:])
+        history = self._history.window(_HISTORY_HARD_CAP)
 
         evidence = str(result.get("output", ""))[:3000]
         messages: list[dict] = [
@@ -1587,9 +1572,9 @@ class Brain:
                     _mstate.record_session_start(str(self.user_id))
                 except Exception:
                     pass
-            sessions.append_message(self.session_id, "user",      user_input, self._turn_order, user_id=self.user_id)
-            msg_id = sessions.append_message(self.session_id, "assistant", response, self._turn_order + 1, user_id=self.user_id)
-            self._turn_order += 2
+            sessions.append_message(self.session_id, "user",      user_input, self._history.turn_order, user_id=self.user_id)
+            msg_id = sessions.append_message(self.session_id, "assistant", response, self._history.turn_order + 1, user_id=self.user_id)
+            self._history.advance_turn_order(2)
             return msg_id
         except Exception:
             if cfg.DEBUG:
@@ -1698,9 +1683,7 @@ class Brain:
             if cfg.DEBUG:
                 import traceback
                 traceback.print_exc()
-        with self._history_lock:
-            self._turn_count += 1
-            count = self._turn_count
+        count = self._history.bump_turn_count()
         # Rate-limit: only extract knowledge every 3rd turn to reduce Ollama
         # queue pressure. The background LLM call delays the next turn's embed
         # + chat because Ollama serializes GPU work.
@@ -1717,9 +1700,7 @@ class Brain:
         # for promotion on the next startup.
         try:
             from kai.core.sleep import checkpoint_session
-            with self._history_lock:
-                hist = list(self._session_history)
-            checkpoint_session(hist)
+            checkpoint_session(self._history.snapshot())
         except Exception:
             pass
 
@@ -1834,7 +1815,7 @@ class Brain:
 
     def _maybe_compress_history(self) -> None:
         """
-        Compress _session_history when it grows too large for the context window.
+        Compress the session history when it grows too large for the context window.
 
         Runs in the background after each turn (from _post_turn) so the user
         never waits on it. Fires only when total chars exceed
@@ -1849,57 +1830,25 @@ class Brain:
         During the LLM call the full history remains visible to concurrent readers.
         A ``_compressing`` flag prevents overlapping compressions.
         """
-        with self._history_lock:
-            if self._compressing:
-                return  # another thread is already compressing
-
-            total_chars = sum(len(m.get("content") or "") for m in self._session_history)
-            if total_chars <= HISTORY_CHAR_LIMIT:
-                return
-
-            keep_n = HISTORY_COMPRESS_KEEP * 2  # user + assistant = 2 messages per exchange
-            hist_len = len(self._session_history)
-            if hist_len <= keep_n:
-                return  # not enough history to split
-
-            self._compressing = True
-
-            # Snapshot the old portion — do NOT trim yet so concurrent readers
-            # still see the full history during the (slow) LLM call.
-            split_idx = hist_len - keep_n
-            to_compress = [
-                m for m in self._session_history[:split_idx]
-                if m.get("role") != "system"
-            ]
-
+        keep_n = HISTORY_COMPRESS_KEEP * 2  # user + assistant = 2 messages per exchange
+        to_compress = self._history.begin_compression(HISTORY_CHAR_LIMIT, keep_n)
+        if to_compress is None:
+            return  # nothing to do (already compressing / under limit / too short)
         if not to_compress:
-            with self._history_lock:
-                self._compressing = False
+            self._history.abort_compression()
             return
 
         try:
             summary = self._summarize_messages(to_compress)
             if not summary:
                 return  # compression failed — history is still intact (never trimmed)
-
-            # Atomic swap: drop the compressed messages and inject the summary.
-            # split_idx still points at the right boundary because we only APPEND
-            # during the window (new messages go to the end, old ones stayed put).
-            with self._history_lock:
-                # Safety: if history was cleared during compression, bail out
-                if len(self._session_history) < split_idx:
-                    return
-                self._session_history = self._session_history[split_idx:]
-                self._session_history.insert(0, {
-                    "role":    "system",
-                    "content": f"[Earlier in this conversation: {summary}]",
-                })
-
+            # Atomic swap inside HistoryManager: drop the compressed prefix, inject
+            # the summary. Safe because only appends happened during the LLM call.
+            self._history.commit_compression(summary)
             # Archive to episodic DB off the hot path — nothing is lost.
             self._bg_pool.submit(self.memory.archive_history, summary)
         finally:
-            with self._history_lock:
-                self._compressing = False
+            self._history.abort_compression()  # idempotent — clears the in-progress flag
 
     def flush_history_snapshot(self, snapshot: list[dict]) -> None:
         """
