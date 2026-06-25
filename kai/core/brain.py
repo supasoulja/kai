@@ -731,13 +731,13 @@ class Brain:
             )
         if direct is not None:
             raw_text, clean = direct
-            msg_id = self._finalize_turn(
+            msg_id, latency_ms = self._finalize_turn(
                 user_input=user_input, clean_text=clean, raw_text=raw_text,
                 trace_id=trace_id, context=context, tools_used=tools_used,
                 turn_start=turn_start,
             )
             yield clean, False, {}
-            yield "", True, {"message_id": msg_id} if msg_id else {}
+            yield "", True, self._done_meta(msg_id, latency_ms)
             return
 
         # ── Ground the response in tool evidence ─────────────────────────────
@@ -781,12 +781,12 @@ class Brain:
                 events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
             yield clean_text, False, {}
 
-        msg_id = self._finalize_turn(
+        msg_id, latency_ms = self._finalize_turn(
             user_input=user_input, clean_text=clean_text, raw_text=full_text,
             trace_id=trace_id, context=context, tools_used=tools_used,
             turn_start=turn_start,
         )
-        yield "", True, {"message_id": msg_id} if msg_id else {}
+        yield "", True, self._done_meta(msg_id, latency_ms)
 
     # ── Turn phases ──────────────────────────────────────────────────────────
     # run_stream is the orchestrator; each method below is one phase with one
@@ -803,11 +803,17 @@ class Brain:
         user_input: str,
         trace_id: str,
         on_status: "Callable[[str], None] | None",
+        keep_prose: bool = False,
     ) -> Generator[tuple[str, bool, dict], None, "tuple[str, str] | None"]:
         """Run up to MAX_TOOL_ROUNDS of non-streaming tool calls.
 
         Mutates `messages` in place (assistant tool_calls, tool results,
         corrective prompts) and appends every called tool to `tools_used`.
+
+        keep_prose: normally the tool model's prose is discarded (Kai's voice
+        writes the real reply). For a crew specialist the tool model IS the
+        worker and its prose is the findings — set True to return that content
+        instead of dropping it.
 
         Rounds run on the selected tool model (granite — emits structured
         calls without reasoning) or fall back to the chat model with thinking
@@ -890,11 +896,12 @@ class Brain:
 
                 # If recovery injected tool_calls, fall through to tool execution
                 if not msg.get("tool_calls"):
-                    if tool_model is not None:
+                    if tool_model is not None and not keep_prose:
                         # The tool model's only job is picking tools. Prose
                         # from it is not Kai's voice — discard it and let the
                         # chat model write the real reply in the streamed
-                        # final answer.
+                        # final answer. (Crew specialists pass keep_prose=True:
+                        # their prose IS the findings, so fall through instead.)
                         flow_rec.record(trace_id, "discarded_prose", text=content)
                         break
                     _, clean = _strip_thinking(content)
@@ -1040,43 +1047,220 @@ class Brain:
                 tools_schema = None
                 break
 
-            # Error escalation (paper "Less is More", Tier 2 fallback):
-            # First failure → give the model the full tool set so it has every alternative.
-            # Subsequent failures → push hard and let it exit gracefully if truly stuck.
-            if any_tool_error:
-                if not _escalated and self.tool_registry:
-                    tools_schema = self.tool_registry.get_schema()
-                    _escalated = True
-                    flow_rec.record(trace_id, "escalation", full_schema=True)
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "One or more tools failed. All available tools are now provided — "
-                            "pick a different one to complete the task. Do not give up."
-                        ),
-                    })
-                else:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "Tools continue to fail. If no suitable tool exists, "
-                            "answer from what you know and explain what blocked you."
-                        ),
-                    })
-            elif any_win_error_code and "search.web" not in tools_used:
-                # A tool ran but returned a Windows error code (e.g. 0x80240032).
-                # search.web is already in the tool schema — direct the model to use it.
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "A tool returned a Windows error code. "
-                        "Call search.web to look up the exact error code and find the cause and fix."
-                    ),
-                })
+            new_schema, _escalated = self._apply_error_escalation(
+                messages, tools_used, trace_id,
+                any_tool_error=any_tool_error,
+                any_win_error_code=any_win_error_code,
+                escalated=_escalated,
+            )
+            if new_schema is not None:
+                tools_schema = new_schema
 
         # Rounds exhausted (or confirm gate / Stop broke out) — continue to
         # the streamed final answer.
         return None
+
+    def _apply_error_escalation(
+        self, messages: list[dict], tools_used: list[str], trace_id: str, *,
+        any_tool_error: bool, any_win_error_code: bool, escalated: bool,
+    ) -> "tuple[list[dict] | None, bool]":
+        """Append the corrective prompt after a round that errored, escalating the
+        recovery (paper "Less is More", Tier 2 fallback):
+
+        - First hard failure → widen to the full tool set so the model has every
+          alternative. Returns that schema (the caller swaps it in) + escalated=True.
+        - Later failures → push hard, let it exit gracefully if truly stuck.
+        - No hard error but a Windows error code (and search.web unused) → point
+          it at search.web to look the code up.
+
+        Returns (new_tools_schema_or_None, escalated). A None schema means keep the
+        current one.
+        """
+        if any_tool_error:
+            if not escalated and self.tool_registry:
+                flow_rec.record(trace_id, "escalation", full_schema=True)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "One or more tools failed. All available tools are now provided — "
+                        "pick a different one to complete the task. Do not give up."
+                    ),
+                })
+                return self.tool_registry.get_schema(), True
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Tools continue to fail. If no suitable tool exists, "
+                    "answer from what you know and explain what blocked you."
+                ),
+            })
+            return None, escalated
+
+        if any_win_error_code and "search.web" not in tools_used:
+            # A tool ran but returned a Windows error code (e.g. 0x80240032).
+            # search.web is already in the tool schema — direct the model to use it.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "A tool returned a Windows error code. "
+                    "Call search.web to look up the exact error code and find the cause and fix."
+                ),
+            })
+        return None, escalated
+
+    # ── Crew: specialist execution (Phase 3b) ──────────────────────────────────
+    # NOTE: not yet wired into run_stream — see backlog 3d. Reuses _run_tool_rounds
+    # with a CLEAN short context (lean prompt + subtask + scratchpad) and a tool
+    # schema narrowed to the specialist's slice.
+
+    def _run_specialist(
+        self,
+        name: str,
+        subtask: str,
+        scratchpad: "list[str] | None" = None,
+        *,
+        query_emb: list[float] | None = None,
+        trace_id: str = "",
+        on_status: "Callable[[str], None] | None" = None,
+    ) -> Generator[tuple[str, bool, dict], None, "object"]:
+        """Run one crew specialist on ONE subtask. Returns a crew.SpecialistResult.
+
+        Context is deliberately short — the lean prompt + the subtask + only the
+        scratchpad facts handed in, NOT the growing session history (better
+        small-model accuracy; the main structural change from the single
+        ever-growing messages list). Yields the same status/confirm/think events
+        as _run_tool_rounds so the UI and confirm gate keep working.
+        """
+        from kai.core import crew
+
+        prompt = crew.load_specialist_prompt(name)
+        slice_names = crew.tools_for_specialist(name, self.tool_registry.category_tool_map()) \
+            if self.tool_registry else []
+        tools_schema = self.tool_registry.schema_for(slice_names) if slice_names else None
+
+        facts = "\n".join(f"- {f}" for f in (scratchpad or []) if f)
+        user_block = subtask if not facts else f"{subtask}\n\nKnown so far:\n{facts}"
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user",   "content": user_block},
+        ]
+        tools_used: list[str] = []
+
+        answer = yield from self._run_tool_rounds(
+            messages, tools_schema, tools_used,
+            query_emb=query_emb, user_input=subtask, trace_id=trace_id,
+            on_status=on_status, keep_prose=True,
+        )
+
+        if answer:
+            _, findings_text = answer
+        else:
+            # Tools ran but no prose findings were returned (confirm gate, safety
+            # stop, or rounds exhausted) — distill from the tool results gathered.
+            findings_text = self._distill_tool_findings(messages)
+
+        status, residual = crew.parse_specialist_status(findings_text)
+        return crew.SpecialistResult(
+            status=status, findings=findings_text.strip(),
+            tools=tools_used, for_=residual,
+        )
+
+    def _run_crew(
+        self,
+        user_request: str,
+        *,
+        query_emb: list[float] | None = None,
+        trace_id: str = "",
+        on_status: "Callable[[str], None] | None" = None,
+    ) -> Generator[tuple[str, bool, dict], None, str]:
+        """BOSS lane: Otto orchestrates specialists sequentially, accumulating a
+        scratchpad. Returns the combined findings string (the evidence Kai's voice
+        then synthesizes). Bounded by crew.MAX_DISPATCHES; a (specialist, subtask)
+        dedup guards ping-pong; a `needs:` handback force-dispatches the named
+        sibling next, preserving partial work.
+        """
+        from kai.core import crew
+
+        otto_prompt = crew.load_specialist_prompt("Otto")
+        scratchpad: list[str] = []
+        tried: set[tuple[str, str]] = set()
+        forced: tuple[str, str] | None = None  # (specialist, subtask) from a needs: handback
+
+        for _step in range(crew.MAX_DISPATCHES):
+            if self._cancel.is_set():
+                break
+            if forced:
+                specialist, subtask = forced
+                forced = None
+            else:
+                decision = self._otto_decide(otto_prompt, user_request, scratchpad, trace_id)
+                if not decision or decision[0] == "finish":
+                    break
+                _, specialist, subtask = decision
+
+            sig = (specialist, subtask.strip()[:60].lower())
+            if sig in tried:
+                break  # ping-pong / repeat guard
+            tried.add(sig)
+
+            result = yield from self._run_specialist(
+                specialist, subtask, list(scratchpad),
+                query_emb=query_emb, trace_id=trace_id, on_status=on_status,
+            )
+            if result.findings:
+                scratchpad.append(f"[{specialist}] {result.findings}")
+            if result.needs and not result.blocked:
+                forced = (result.needs, result.for_ or subtask)
+
+        return "\n\n".join(scratchpad)
+
+    def _otto_decide(
+        self, otto_prompt: str, user_request: str, scratchpad: list[str], trace_id: str,
+    ) -> "tuple[str, str, str] | None":
+        """One non-streaming call to Otto → his next DISPATCH/FINISH line, parsed.
+        Otto never calls tools here (his search.web disambiguation exception is a
+        later refinement); he is a pure router."""
+        from kai.core import crew
+
+        tool_model, _ = self._resolve_tool_model()
+        facts = "\n".join(scratchpad) if scratchpad else "(nothing gathered yet)"
+        user = (
+            f"User request: {user_request}\n\n"
+            f"Findings so far:\n{facts}\n\n"
+            "Output your one line now (DISPATCH <specialist>: <subtask>  or  FINISH: <summary>):"
+        )
+        messages = [
+            {"role": "system", "content": otto_prompt},
+            {"role": "user", "content": user},
+        ]
+        if tool_model is None:
+            resp = self._chat(messages, think=False, temperature=cfg.TEMPERATURE_TOOL)
+        else:
+            resp = self.ollama.chat(messages, model=tool_model, think=False)
+        text = resp.get("message", {}).get("content", "")
+        decision = crew.parse_otto_decision(text)
+        flow_rec.record(trace_id, "otto", text=text,
+                        decision="/".join(d for d in (decision or ("none",)) if d))
+        return decision
+
+    @staticmethod
+    def _distill_tool_findings(messages: list[dict]) -> str:
+        """Concatenate the tool-result outputs from a specialist's scratch messages
+        into a compact findings string — the fallback when the worker ran tools but
+        didn't write a closing summary."""
+        outs: list[str] = []
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            content = m.get("content", "")
+            try:
+                payload = json.loads(content)
+                out = payload.get("output", content) if isinstance(payload, dict) else content
+            except (json.JSONDecodeError, TypeError):
+                out = content
+            if out:
+                outs.append(str(out).strip())
+        return "\n".join(outs)
 
     # ── Tool-round helpers ─────────────────────────────────────────────────────
 
@@ -1454,15 +1638,17 @@ class Brain:
         context: str,
         tools_used: list[str],
         turn_start: float,
-    ) -> int | None:
+    ) -> tuple[int | None, int]:
         """Commit a finished turn — the single end-of-turn path for every exit.
 
         The trace keeps the raw text (with <think> tags) for debugging;
         history and the sessions DB get the clean version. Background
         post-turn work is submitted here, BEFORE the caller's final yield,
         so a consumer that stops iterating at done=True can't skip it.
-        Returns the assistant message id (None if persistence failed).
+        Returns (assistant message id | None, latency_ms) — id is None if
+        persistence failed.
         """
+        latency_ms = int((time.monotonic() - turn_start) * 1000)
         self._record_trace(trace_id, user_input, context, tools_used, raw_text, turn_start)
         turns = [{"role": "user", "content": user_input}]
         # Don't keep a pure failure placeholder in replayed history — it would
@@ -1470,7 +1656,7 @@ class Brain:
         if clean_text.strip() not in _FAILURE_MARKERS:
             turns.append({"role": "assistant", "content": clean_text})
         self._history.extend(turns)
-        msg_id = self._persist_turn(user_input, clean_text)
+        msg_id = self._persist_turn(user_input, clean_text, latency_ms)
         # The first reply of a session delivers the welcome-back note /
         # briefing — mark them consumed so they aren't re-injected next time.
         if self._history.turn_count <= 1:
@@ -1478,10 +1664,17 @@ class Brain:
         if self.session_id:
             events.emit(events.EVENT_STREAM_END, self.session_id,
                         tools_used=tools_used,
-                        duration=round(time.monotonic() - turn_start, 3))
+                        duration=round(latency_ms / 1000, 3))
         # commit + learn + compression: runs off the hot path
         self._bg_pool.submit(self._post_turn, user_input, clean_text)
-        return msg_id
+        return msg_id, latency_ms
+
+    @staticmethod
+    def _done_meta(msg_id: int | None, latency_ms: int) -> dict:
+        """Build the meta payload for the terminal done=True yield."""
+        if not msg_id:
+            return {}
+        return {"message_id": msg_id, "latency_ms": latency_ms}
 
     def _emit_status(self, label: str, on_status: "Callable[[str], None] | None" = None) -> None:
         """Send a status label to both UIs: CLI callback + web event bus."""
@@ -1553,14 +1746,14 @@ class Brain:
                 events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
             yield clean_text, False, {}
 
-        msg_id = self._finalize_turn(
+        msg_id, latency_ms = self._finalize_turn(
             user_input=user_input, clean_text=clean_text, raw_text=full_text,
             trace_id=trace_id, context=context, tools_used=tools_used,
             turn_start=turn_start,
         )
-        yield "", True, {"message_id": msg_id} if msg_id else {}
+        yield "", True, self._done_meta(msg_id, latency_ms)
 
-    def _persist_turn(self, user_input: str, response: str) -> int | None:
+    def _persist_turn(self, user_input: str, response: str, latency_ms: int | None = None) -> int | None:
         """Persist user+assistant messages to the sessions DB. Returns assistant message id."""
         try:
             if not self.session_id:
@@ -1573,7 +1766,7 @@ class Brain:
                 except Exception:
                     pass
             sessions.append_message(self.session_id, "user",      user_input, self._history.turn_order, user_id=self.user_id)
-            msg_id = sessions.append_message(self.session_id, "assistant", response, self._history.turn_order + 1, user_id=self.user_id)
+            msg_id = sessions.append_message(self.session_id, "assistant", response, self._history.turn_order + 1, user_id=self.user_id, latency_ms=latency_ms)
             self._history.advance_turn_order(2)
             return msg_id
         except Exception:
