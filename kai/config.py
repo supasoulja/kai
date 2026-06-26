@@ -53,8 +53,11 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 # HQ_EMBED        — heavy Ollama model run at shutdown to re-embed into
 #                   high-quality shadow tables (no VRAM contention at shutdown).
 
-CHAT_MODEL      = "gemma4:26b"
-REASONING_MODEL = CHAT_MODEL             # unified — gemma4:26b handles both roles natively
+# gemma4:12b (8.4 GB) — fits 100% on the 16 GB card with room for the
+# 8K KV cache. The 18 GB gemma4:26b overflowed VRAM and spilled ~22% of layers
+# onto the CPU (slow). Bump back up only on a ≥24 GB GPU.
+CHAT_MODEL      = "gemma4:12b"
+REASONING_MODEL = CHAT_MODEL             # unified — gemma4:12b handles both roles natively
 SUMMARY_MODEL   = CHAT_MODEL             # unified — see CHAT_MODEL note above
 MEMORY_MODEL    = CHAT_MODEL             # swap-loaded for the memory loop's semantic reads
 # EMBED_MODEL is an alias for HQ_EMBED_MODEL — defined just below it (single source of truth)
@@ -142,7 +145,12 @@ RECALL_CONFIDENCE_MIN = 0.5
 # already uses ~5000-6000 chars.  Episodic entries need ~200-400 chars each.
 # 8192 context window ≈ 32k chars.  10k chars ≈ 3000 tokens — leaves plenty
 # of headroom for the conversation history.
-MAX_CONTEXT_CHARS  = 10000  # max characters for the full context block
+MAX_CONTEXT_CHARS  = 15000  # max characters for the full context block
+# Raised 10k→15k (2026-06-24): persona.md is now injected near-verbatim as the
+# identity block (~12k chars / ~3k tokens) instead of a lossy hardcoded extract,
+# so the budget must leave room for [SEMANTIC]/[PROCEDURAL]/[EPISODIC] on top.
+# 15k chars ≈ 3.75k tokens of the 8192 window — leaves ~4.4k for history+response.
+# Lower it (and condense persona.md) if you want leaner turns.
 
 # ── History compression ─────────────────────────────────────────────────────────
 # Compression fires when _session_history exceeds HISTORY_CHAR_LIMIT total chars.
@@ -170,9 +178,18 @@ KNOWLEDGE_THRESHOLD  = 0.4   # cosine distance cutoff for knowledge search
 HANDOFF_THRESHOLD    = 0.55  # cosine distance cutoff for handoff routing (lower = stricter)
 # Semantic tool gate — lets the handoff router's verdict ("tool"/"researcher")
 # open the tool gate when the keyword regex in brain.py misses. Keyword hits
-# still work either way; this only ADDS recall. Off by default so it can be
-# A/B-tested against the pure-regex gate before the keyword lists shrink.
-SEMANTIC_TOOL_GATE   = False
+# still work either way; this only ADDS recall (additive — never closes the gate).
+# Enabled 2026-06-24 (3e): the crew triage relies on the same semantic tool axis
+# (HandoffRouter.axis_match), so the legacy _select_tool_schema path is brought in
+# line. Set KAI_SEMANTIC_GATE=0 to force off for A/B.
+import os as _os
+SEMANTIC_TOOL_GATE   = _os.environ.get("KAI_SEMANTIC_GATE", "1").lower() not in ("0", "false", "no")
+
+# Crew routing — when True, run_stream routes tool turns through the triage tree
+# (kai/core/crew.py): FAST → one specialist, BOSS → Otto orchestration, instead
+# of the single generalist _run_tool_rounds loop. Off by default so it can be
+# A/B-tested against the current loop; flip to True (or set KAI_CREW=1) to enable.
+CREW_ENABLED = _os.environ.get("KAI_CREW", "").lower() in ("1", "true", "yes")
 
 # Turn-flow recorder — logs every step inside a turn (model requests, raw
 # responses, thinking, tool calls with outputs, discarded text, fallbacks)

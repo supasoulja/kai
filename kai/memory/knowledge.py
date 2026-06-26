@@ -14,9 +14,9 @@ Knowledge system — two-layer learned intelligence:
 import sqlite3
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from kai.config import FAST_EMBED_DIM, HANDOFF_THRESHOLD
 
@@ -142,6 +142,47 @@ class HandoffRouter:
 
         except Exception:
             return "chat", 0.0
+
+    # Tree axes (Part C / 3e): which handoff modes back each binary triage node.
+    # No physical table split — the modes already encode the axes, so a filtered
+    # nearest-neighbour query gives independent tool/think signals while
+    # preserving every seeded + runtime-learned pattern and the researcher's
+    # learn() path. tool+researcher → the TOOLS? axis; reasoning → the THINK? axis.
+    _AXIS_MODES = {"tool": ("tool", "researcher"), "think": ("reasoning",)}
+
+    def axis_match(
+        self, query_emb: list[float] | None, axis: str,
+        threshold: float = HANDOFF_THRESHOLD,
+    ) -> tuple[bool, float]:
+        """Binary semantic match for one triage axis. Returns (matched, similarity).
+        `matched` is True when the nearest in-axis pattern is within threshold."""
+        modes = self._AXIS_MODES.get(axis)
+        if not modes or query_emb is None:
+            return (False, 0.0)
+        try:
+            from kai.store.db import get_conn, sqlite_vec_available
+            if not sqlite_vec_available():
+                return (False, 0.0)
+            import sqlite_vec
+            conn = get_conn()
+            placeholders = ",".join("?" * len(modes))
+            row = conn.execute(
+                f"""
+                SELECT vec_distance_cosine(hv.embedding, ?) AS dist
+                FROM handoff_vec hv
+                JOIN handoff_patterns hp ON hp.rowid = hv.rowid
+                WHERE hp.target_mode IN ({placeholders})
+                ORDER BY dist ASC
+                LIMIT 1
+                """,
+                (sqlite_vec.serialize_float32(query_emb), *modes),
+            ).fetchone()
+            if not row or row[0] is None:
+                return (False, 0.0)
+            dist = row[0]
+            return (dist <= threshold, round(1.0 - dist, 3))
+        except Exception:
+            return (False, 0.0)
 
     def learn(self, pattern: str, target_mode: str, embed_fn: EmbedFn) -> None:
         """

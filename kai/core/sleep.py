@@ -189,7 +189,7 @@ def run_sleep_cycle(ollama, brain) -> None:
         except Exception:
             pass
 
-    session_history = brain._session_history if brain else []
+    session_history = brain.snapshot_history() if brain else []
 
     if not session_history:
         print("[~] No conversation this session — skipping welcome-back message.")

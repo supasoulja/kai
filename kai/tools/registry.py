@@ -164,6 +164,40 @@ class ToolRegistry:
         self._ensure_aliases_loaded()
         return [t["schema"] for t in self._tools.values()] + self._alias_schemas()
 
+    def schema_for(self, names) -> list[dict]:
+        """Return schemas for just the named tools (+ their aliases).
+
+        Used by the crew to narrow a specialist's tool schema to its slice.
+        Unknown names are silently skipped — the slice is authoritative.
+        """
+        self._ensure_aliases_loaded()
+        sel = set(names)
+        schemas = [t["schema"] for n, t in self._tools.items() if n in sel]
+        return schemas + self._alias_schemas(for_names=sel)
+
+    @staticmethod
+    def category_tool_map() -> dict[str, list[str]]:
+        """category → tool names, from _TOOL_CATEGORIES. Lets the crew derive a
+        specialist's tool slice without importing the category table directly."""
+        return {cat: list(info.get("tools", [])) for cat, info in _TOOL_CATEGORIES.items()}
+
+    @staticmethod
+    def rank_categories(
+        query_embedding: list[float],
+        category_index: dict[str, list[float]],
+        top_k: int = 3,
+    ) -> list[tuple[str, float]]:
+        """Rank categories by cosine similarity → [(category, score)] desc, top_k.
+        Feeds the crew triage's DOMAIN-SPREAD node (kai/core/crew.py)."""
+        if not category_index:
+            return []
+        scores = sorted(
+            ((cat, _cosine(query_embedding, emb)) for cat, emb in category_index.items()),
+            key=lambda t: t[1],
+            reverse=True,
+        )
+        return scores[:top_k]
+
     def execute(self, name: str, args: dict) -> Any:
         """Call a registered tool by name with the given arguments."""
         if name in self._tools:
