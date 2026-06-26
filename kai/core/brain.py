@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import kai.config as cfg
 from kai.config import (
@@ -271,6 +271,16 @@ def _build_compress_messages(raw_text: str) -> list[dict]:
 
 # ── Brain ──────────────────────────────────────────────────────────────────────
 
+class _ToolBatchOutcome(NamedTuple):
+    """Result of executing one model response's batch of tool calls."""
+    confirm_intercepted: bool  # a confirm-gated tool paused the chain
+    chain_stopped: bool        # cerebellum STOP — end rounds, never escalate
+    rounds_done: bool          # duplicate calls piling up — answer with what we have
+    tool_error: bool           # a tool raised (hard error) → escalation
+    win_error_code: bool       # tool output carried a Windows hex error code
+    dup_count: int             # running count of duplicate calls this turn
+
+
 class Brain:
     def __init__(
         self,
@@ -289,6 +299,7 @@ class Brain:
         self._think = think
         self._final_temp: float = cfg.TEMPERATURE_FINAL  # per-session final-answer temp
         self._cancel = threading.Event()  # set by request_stop() to abort the current turn
+        self._last_triage_think: bool = False  # crew path: think decision from the last triage
         self.user_id = user_id
         self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
         self._history = HistoryManager()         # session history, lock, turn counters, compression
@@ -723,7 +734,19 @@ class Brain:
         # If the model answers directly in a tool round, the rounds return that
         # answer here and the turn finalizes immediately (single exit path).
         direct = None
-        if tools_schema:
+        if cfg.CREW_ENABLED and self.tool_registry:
+            # Crew path (Part C/3b): triage → specialist(s); findings injected as
+            # evidence, then Kai's voice synthesizes (unchanged). The generalist
+            # _run_tool_rounds loop is bypassed entirely on this branch.
+            yield from self._run_crew_turn(
+                user_input, messages, tools_used, query_emb=query_emb,
+                handoff_mode=handoff_mode, tools_open=bool(tools_schema),
+                trace_id=trace_id, on_status=on_status,
+            )
+            # use_think is finalized by triage inside _run_crew_turn (stored on a
+            # one-shot attribute to avoid widening the helper's return contract).
+            use_think = self._last_triage_think
+        elif tools_schema:
             direct = yield from self._run_tool_rounds(
                 messages, tools_schema, tools_used,
                 query_emb=query_emb, user_input=user_input,
@@ -804,6 +827,7 @@ class Brain:
         trace_id: str,
         on_status: "Callable[[str], None] | None",
         keep_prose: bool = False,
+        model_override: str | None = None,
     ) -> Generator[tuple[str, bool, dict], None, "tuple[str, str] | None"]:
         """Run up to MAX_TOOL_ROUNDS of non-streaming tool calls.
 
@@ -814,6 +838,10 @@ class Brain:
         writes the real reply). For a crew specialist the tool model IS the
         worker and its prose is the findings — set True to return that content
         instead of dropping it.
+
+        model_override: force a specific tool model (the crew passes each member's
+        roles.json model here). Falls back to the level-resolved model if the
+        override isn't installed.
 
         Rounds run on the selected tool model (granite — emits structured
         calls without reasoning) or fall back to the chat model with thinking
@@ -828,7 +856,16 @@ class Brain:
         """
         from kai.memory.cerebellum import call_signature as _sig_of
         _escalated = False  # True after first tool error → full schema injected
-        tool_model, _ = self._resolve_tool_model()
+        if model_override:
+            # Crew per-agent model. Honour it only if installed, else fall back to
+            # the level-resolved model (keeps a bad roles.json from bricking turns).
+            try:
+                installed = model_override in self.ollama.installed_models()
+            except Exception:
+                installed = True  # can't check (cloud/offline) — trust the config
+            tool_model = model_override if installed else self._resolve_tool_model()[0]
+        else:
+            tool_model, _ = self._resolve_tool_model()
         rounds_model = tool_model or self._chat_model
         rounds_think = tool_model is None  # granite: no think; chat fallback: always think
         _call_sigs: list[str] = []  # executed (tool, args) signatures for dedup + loop detection
@@ -932,125 +969,32 @@ class Brain:
                 "content": msg.get("content", ""),
                 "tool_calls": msg["tool_calls"],
             })
-            _confirm_intercepted = False
-            _chain_stopped = False   # Cerebellum STOP — end the rounds, never escalate
-            _rounds_done = False     # duplicate calls piling up — answer with what we have
-            any_tool_error = False   # Python exception — tool completely failed
-            # Windows-only: tool ran but output carries a Windows hex error code
-            # (0x…). There is no false-positive-free Linux equivalent (exit codes
-            # are small ints that appear everywhere), so this escalation path is
-            # deliberately Windows-scoped rather than silently cross-platform.
-            any_win_error_code = False
-            for tc in msg["tool_calls"]:
-                fn = tc.get("function", {})
-                tool_name = fn.get("name") or ""
-                tool_args = fn.get("arguments", {})
-                tools_used.append(tool_name)
-
-                # Duplicate-call guard: small tool models sometimes re-issue
-                # the exact same call instead of writing a final answer. The
-                # result is already in the conversation — don't run it again,
-                # and after a second repeat stop the rounds so the final
-                # answer presents the data already gathered.
-                _sig = _sig_of(tool_name, tool_args)
-                if _sig in _call_sigs:
-                    _dup_count += 1
-                    flow_rec.record(trace_id, "duplicate_call", name=tool_name)
-                    messages.append({"role": "tool", "content": json.dumps({
-                        "output": ("This exact call already ran this turn — "
-                                   "its result is above. Answer from it."),
-                        "success": True,
-                    })})
-                    if _dup_count >= 2:
-                        _rounds_done = True
-                        break
-                    continue
-
-                # ── Confirm gate: pause and ask the user before running ──────
-                if tool_name in _CONFIRM_TOOLS:
-                    print(f"[confirm] intercepted {tool_name} — waiting for user OK")
-                    self._pending_confirm = {
-                        "name": tool_name,
-                        "args": tool_args,
-                        "trace_id": trace_id,
-                        "label": _TOOL_LABELS.get(tool_name, tool_name),
-                    }
-                    result = {
-                        "output": (
-                            f"⏸ {tool_name} requires your OK before running. "
-                            "Describe what you want to do and ask the user to confirm."
-                        ),
-                        "success": True,
-                    }
-                    messages.append({"role": "tool", "content": json.dumps(result)})
-                    confirm_event = {
-                        "confirm_tool": True,
-                        "name": tool_name,
-                        "label": self._pending_confirm["label"],
-                    }
-                    # Self-edits to persona.md carry the exact diff so the UI can
-                    # render a reviewable before/after modal — the user approves
-                    # precisely what will be written.
-                    if tool_name == "self.apply_persona_update":
-                        try:
-                            from kai.tools.system.self_inspect import persona_update_diff
-                            diff = persona_update_diff(
-                                tool_args.get("section", ""),
-                                tool_args.get("content", ""),
-                            )
-                            if diff:
-                                confirm_event["diff"] = diff
-                        except Exception:
-                            pass  # diff is a nicety — never block the confirm flow
-                    yield "", False, confirm_event
-                    _confirm_intercepted = True
-                    break  # exit tool loop — wait for user confirmation
-
-                # ── Cerebellum pre-check (may stop the chain) ─────────────────
-                if self._cerebellum_pre(tool_name, tool_args, query_emb,
-                                        _call_sigs, messages, trace_id):
-                    _chain_stopped = True
-                    break
-
-                if on_status:
-                    on_status(_TOOL_LABELS.get(tool_name, tool_name))
-                result = self._execute_tool_traced(tool_name, tool_args, trace_id)
-                _call_sigs.append(_sig)
-
-                # ── Pattern tracking ──────────────────────────────────────────
-                if patterns_enabled(self.user_id):
-                    from kai.memory.patterns import log_tool_call as _log_pattern
-                    _log_pattern(tool_name, user_id=self.user_id, topic=user_input[:80])
-
-                # ── Cerebellum post-check ─────────────────────────────────────
-                self._cerebellum_post(tool_name, result, query_emb, messages)
-                messages.append({"role": "tool", "content": json.dumps(result)})
-
-                _hard, _win_code = self._classify_tool_result(result)
-                any_tool_error = any_tool_error or _hard
-                any_win_error_code = any_win_error_code or _win_code
+            outcome = yield from self._execute_tool_calls(
+                msg["tool_calls"], messages, tools_used, _call_sigs, _dup_count,
+                query_emb=query_emb, user_input=user_input, trace_id=trace_id,
+                on_status=on_status, sig_of=_sig_of,
+            )
+            _dup_count = outcome.dup_count
 
             # Safety stop — end the rounds entirely. Must come before error
             # escalation: a stop that re-arms the full tool set with "do not
             # give up" isn't a stop (that was the bug this replaced).
-            if _chain_stopped:
+            if outcome.chain_stopped:
                 break
-
             # The model keeps repeating an already-executed call — it has the
             # data; move on to the final answer.
-            if _rounds_done:
+            if outcome.rounds_done:
                 break
-
             # Confirm-gated tool was intercepted — skip to final answer so the
             # model can ask the user for confirmation.
-            if _confirm_intercepted:
+            if outcome.confirm_intercepted:
                 tools_schema = None
                 break
 
             new_schema, _escalated = self._apply_error_escalation(
                 messages, tools_used, trace_id,
-                any_tool_error=any_tool_error,
-                any_win_error_code=any_win_error_code,
+                any_tool_error=outcome.tool_error,
+                any_win_error_code=outcome.win_error_code,
                 escalated=_escalated,
             )
             if new_schema is not None:
@@ -1108,10 +1052,225 @@ class Brain:
             })
         return None, escalated
 
+    def _execute_tool_calls(
+        self, tool_calls: list[dict], messages: list[dict], tools_used: list[str],
+        call_sigs: list[str], dup_count: int, *,
+        query_emb: list[float] | None, user_input: str, trace_id: str,
+        on_status: "Callable[[str], None] | None", sig_of,
+    ) -> "Generator[tuple[str, bool, dict], None, _ToolBatchOutcome]":
+        """Execute one model response's batch of tool calls.
+
+        Yields a confirm event if a gated tool is hit (the caller breaks to let
+        the model ask the user). Mutates `messages`, `tools_used`, `call_sigs` in
+        place and returns a _ToolBatchOutcome with the control flags + the running
+        duplicate count. The per-tool flow is: dedup guard → confirm gate →
+        cerebellum pre → execute + pattern-log + cerebellum post → classify.
+        """
+        confirm_intercepted = chain_stopped = rounds_done = False
+        tool_error = win_error_code = False
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            tool_name = fn.get("name") or ""
+            tool_args = fn.get("arguments", {})
+            tools_used.append(tool_name)
+
+            # Duplicate-call guard: small tool models sometimes re-issue the exact
+            # same call instead of writing a final answer. The result is already
+            # in the conversation — don't run it again, and after a second repeat
+            # stop the rounds so the final answer uses the data already gathered.
+            sig = sig_of(tool_name, tool_args)
+            if sig in call_sigs:
+                dup_count += 1
+                flow_rec.record(trace_id, "duplicate_call", name=tool_name)
+                messages.append({"role": "tool", "content": json.dumps({
+                    "output": ("This exact call already ran this turn — "
+                               "its result is above. Answer from it."),
+                    "success": True,
+                })})
+                if dup_count >= 2:
+                    rounds_done = True
+                    break
+                continue
+
+            # ── Confirm gate: pause and ask the user before running ──────────
+            if tool_name in _CONFIRM_TOOLS:
+                print(f"[confirm] intercepted {tool_name} — waiting for user OK")
+                self._pending_confirm = {
+                    "name": tool_name,
+                    "args": tool_args,
+                    "trace_id": trace_id,
+                    "label": _TOOL_LABELS.get(tool_name, tool_name),
+                }
+                result = {
+                    "output": (
+                        f"⏸ {tool_name} requires your OK before running. "
+                        "Describe what you want to do and ask the user to confirm."
+                    ),
+                    "success": True,
+                }
+                messages.append({"role": "tool", "content": json.dumps(result)})
+                confirm_event = {
+                    "confirm_tool": True,
+                    "name": tool_name,
+                    "label": self._pending_confirm["label"],
+                }
+                # Self-edits to persona.md carry the exact diff so the UI can
+                # render a reviewable before/after modal — the user approves
+                # precisely what will be written.
+                if tool_name == "self.apply_persona_update":
+                    try:
+                        from kai.tools.system.self_inspect import persona_update_diff
+                        diff = persona_update_diff(
+                            tool_args.get("section", ""),
+                            tool_args.get("content", ""),
+                        )
+                        if diff:
+                            confirm_event["diff"] = diff
+                    except Exception:
+                        pass  # diff is a nicety — never block the confirm flow
+                yield "", False, confirm_event
+                confirm_intercepted = True
+                break  # exit tool loop — wait for user confirmation
+
+            # ── Cerebellum pre-check (may stop the chain) ────────────────────
+            if self._cerebellum_pre(tool_name, tool_args, query_emb,
+                                    call_sigs, messages, trace_id):
+                chain_stopped = True
+                break
+
+            if on_status:
+                on_status(_TOOL_LABELS.get(tool_name, tool_name))
+            result = self._execute_tool_traced(tool_name, tool_args, trace_id)
+            call_sigs.append(sig)
+
+            # ── Pattern tracking ──────────────────────────────────────────────
+            if patterns_enabled(self.user_id):
+                from kai.memory.patterns import log_tool_call as _log_pattern
+                _log_pattern(tool_name, user_id=self.user_id, topic=user_input[:80])
+
+            # ── Cerebellum post-check ─────────────────────────────────────────
+            self._cerebellum_post(tool_name, result, query_emb, messages)
+            messages.append({"role": "tool", "content": json.dumps(result)})
+
+            hard, win_code = self._classify_tool_result(result)
+            tool_error = tool_error or hard
+            win_error_code = win_error_code or win_code
+
+        return _ToolBatchOutcome(
+            confirm_intercepted, chain_stopped, rounds_done,
+            tool_error, win_error_code, dup_count,
+        )
+
     # ── Crew: specialist execution (Phase 3b) ──────────────────────────────────
     # NOTE: not yet wired into run_stream — see backlog 3d. Reuses _run_tool_rounds
     # with a CLEAN short context (lean prompt + subtask + scratchpad) and a tool
     # schema narrowed to the specialist's slice.
+
+    def _run_crew_turn(
+        self,
+        user_input: str,
+        messages: list[dict],
+        tools_used: list[str],
+        *,
+        query_emb: list[float] | None,
+        handoff_mode: str,
+        tools_open: bool,
+        trace_id: str,
+        on_status: "Callable[[str], None] | None",
+    ) -> Generator[tuple[str, bool, dict], None, None]:
+        """Crew path for one turn (Part C/3b). Triage → run the chosen profile,
+        inject findings as evidence for Kai's voice to synthesize. Sets
+        `self._last_triage_think` (the final think decision) for run_stream.
+
+        CHAT/REASON resolve to no tools — nothing runs here, the turn falls
+        through to the streamed answer (REASON with thinking on).
+        """
+        from kai.core import crew
+        from kai.core.crew import Profile
+
+        # Tree nodes Q1/Q2 (Part C/3e): keyword/heuristic ∪ learned semantic patterns.
+        # tools_open arrives keyword-gated; needs_think starts from the heuristic +
+        # the reasoning handoff. The handoff-pattern axes add semantic recall so a
+        # tool/think turn with no keyword still routes correctly.
+        tool_sem = think_sem = False
+        if query_emb is not None:
+            try:
+                self._ensure_handoff_router()
+                tool_sem, _ = self._handoff_router.axis_match(query_emb, "tool")
+                think_sem, _ = self._handoff_router.axis_match(query_emb, "think")
+            except Exception:
+                pass
+        needs_think = (
+            _query_needs_thinking(user_input) or handoff_mode == "reasoning" or think_sem
+        )
+        decision = self._triage_turn(
+            user_input, query_emb, tools_open=tools_open or tool_sem, needs_think=needs_think,
+        )
+        self._last_triage_think = decision.think
+        flow_rec.record(trace_id, "triage", profile=str(decision.profile),
+                        specialist=decision.specialist or "-", lane=decision.lane,
+                        tools=decision.tools)
+
+        if not decision.tools:
+            return  # CHAT / REASON — no tools; stream the answer directly
+
+        # BOSS (or a tools turn with no clear single owner) → Otto orchestrates.
+        # BACKGROUND has no fire-and-forget infra yet (Phase 6) → run synchronously
+        # as a single specialist, same as FAST.
+        if decision.profile is Profile.BOSS or not decision.specialist:
+            tools_used.append("crew")
+            findings = yield from self._run_crew(
+                user_input, query_emb=query_emb, trace_id=trace_id, on_status=on_status,
+            )
+        else:
+            tools_used.append(decision.specialist)
+            result = yield from self._run_specialist(
+                decision.specialist, user_input,
+                query_emb=query_emb, trace_id=trace_id, on_status=on_status,
+            )
+            findings = result.findings
+            if result.needs and not result.blocked:
+                # FAST → BOSS promotion: Otto re-orchestrates; partial work kept.
+                boss = yield from self._run_crew(
+                    user_input, query_emb=query_emb, trace_id=trace_id, on_status=on_status,
+                )
+                findings = "\n\n".join(p for p in (findings, boss) if p)
+
+        if findings:
+            # Inject as a tool RESULT, not a system note: _ground_evidence and the
+            # voice model only treat role:"tool" content as real evidence. A system
+            # note trips the persona's anti-fabrication tripwire → Kai hedges ("let
+            # me run a scan") instead of reporting what the crew already found. The
+            # assistant/tool_calls wrapper keeps the message sequence template-valid.
+            messages.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{"function": {"name": "crew", "arguments": {}}}],
+            })
+            messages.append({
+                "role": "tool",
+                "content": json.dumps({"output": findings, "success": True}),
+            })
+
+    def _triage_turn(
+        self, user_input: str, query_emb: list[float] | None,
+        *, tools_open: bool, needs_think: bool,
+    ) -> "object":
+        """Run the model-free triage tree (Part C) → a crew.TriageResult.
+        Category scores come from the same cached index the tool selector uses."""
+        from kai.core import crew
+        scores: list[tuple[str, float]] = []
+        if query_emb and self._tool_index:
+            try:
+                scores = self.tool_registry.rank_categories(query_emb, self._tool_index, top_k=3)
+            except Exception:
+                scores = []
+        return crew.triage(
+            tools_open=tools_open,
+            needs_think=needs_think,
+            category_scores=scores,
+            long_running=crew.is_long_running_query(user_input),
+            think_capped=not self._think,
+        )
 
     def _run_specialist(
         self,
@@ -1146,10 +1305,12 @@ class Brain:
         ]
         tools_used: list[str] = []
 
+        from kai.llm import roles
         answer = yield from self._run_tool_rounds(
             messages, tools_schema, tools_used,
             query_emb=query_emb, user_input=subtask, trace_id=trace_id,
             on_status=on_status, keep_prose=True,
+            model_override=roles.crew_model_for(name),
         )
 
         if answer:
@@ -1221,8 +1382,14 @@ class Brain:
         Otto never calls tools here (his search.web disambiguation exception is a
         later refinement); he is a pure router."""
         from kai.core import crew
+        from kai.llm import roles
 
-        tool_model, _ = self._resolve_tool_model()
+        # Otto's model = his roles.json entry (defaults to the shared crew model).
+        want = roles.crew_model_for("Otto")
+        try:
+            tool_model = want if want in self.ollama.installed_models() else self._resolve_tool_model()[0]
+        except Exception:
+            tool_model = want or self._resolve_tool_model()[0]
         facts = "\n".join(scratchpad) if scratchpad else "(nothing gathered yet)"
         user = (
             f"User request: {user_request}\n\n"
