@@ -101,11 +101,16 @@ def read_page(url: str, wait_for: str = "") -> str:
         if not text:
             return f"[browser] {url}\n\nPage rendered but no readable text was found."
 
-        MAX = 12_000
-        truncated = len(text) > MAX
-        result = f"[browser] {url}\n\n{text[:MAX]}"
+        # Search mode: return an excerpt, not the whole page (same contract as
+        # research.fetch_url). Deep/full reads go through research.add_to_library.
+        from kai.config import WEB_EXCERPT_CHARS
+        truncated = len(text) > WEB_EXCERPT_CHARS
+        result = f"[browser] {url}\n\n{text[:WEB_EXCERPT_CHARS]}"
         if truncated:
-            result += f"\n\n[Truncated — page exceeded {MAX} character limit]"
+            result += (
+                f"\n\n[Excerpt — showing first {WEB_EXCERPT_CHARS} chars. "
+                "Ask to add this page to the library for the full text.]"
+            )
         return result
 
     except Exception as e:

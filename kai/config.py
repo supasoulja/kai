@@ -168,6 +168,11 @@ HISTORY_COMPRESS_KEEP = 4      # keep last N user/assistant exchanges verbatim
 # ── Tools ──────────────────────────────────────────────────────────────────────
 SEARCH_MAX_RESULTS = 5
 NOTES_SEARCH_TOP_K = 5
+# Web reads come in two modes. SEARCH mode (fetch_url / browser.read_page) returns
+# a tight excerpt so the orchestrator model isn't fed a whole page — saves inference.
+# LIBRARY mode (research.add_to_library) reads the full document on the way into the
+# RAG store. Keep the excerpt small; the deep path has no cap.
+WEB_EXCERPT_CHARS = 6000
 
 # ── Document RAG ───────────────────────────────────────────────────────────────
 RAG_TOP_K     = 3    # max chunks auto-injected into context per query

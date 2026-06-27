@@ -104,13 +104,35 @@ def ingest(
     if not text.strip():
         raise ValueError("Document appears to be empty or unreadable.")
 
+    return ingest_text(text, filename, embed_fn, user_id=user_id,
+                       file_type=suffix.lstrip("."))
+
+
+def ingest_text(
+    text: str,
+    source_name: str,
+    embed_fn: EmbedFn | None = None,
+    user_id: int = 0,
+    file_type: str = "text",
+) -> dict:
+    """
+    Chunk, embed, and store already-extracted text — the shared back half of
+    ingest(). Used directly by the deep-read path (research.add_to_library) where
+    text comes from a fetched URL rather than an uploaded file.
+
+    source_name is the display name (a filename or a URL). Returns the same
+    metadata dict as ingest().
+    """
+    if not text.strip():
+        raise ValueError("Document appears to be empty or unreadable.")
+
     chunks = _chunk(text)
     if not chunks:
         raise ValueError("No text could be extracted from the document.")
 
     doc_id     = str(uuid.uuid4())
     now        = datetime.now().isoformat()
-    file_type  = suffix.lstrip(".")
+    filename   = source_name
     char_count = len(text)
 
     # Persist document record and all chunks in one transaction
