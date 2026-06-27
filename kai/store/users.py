@@ -219,6 +219,26 @@ def delete_user(user_id: int) -> bool:
     if not row:
         return False
 
+    # All deletes run as one transaction: if any mandatory DELETE raises midway,
+    # roll back so we don't leave a half-deleted user (and a dangling open
+    # transaction on this thread-local connection for the next caller to inherit).
+    try:
+        _delete_user_rows(conn, user_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    # Per-user data lives outside kai.db too: three SQLite files (tree/state/
+    # knowledge) and the downloaded study library on disk. Wipe them as well —
+    # leaving them behind is the same privacy leak as the missed tables above.
+    # Runs only after the DB delete has durably committed.
+    _delete_user_files(user_id)
+    return True
+
+
+def _delete_user_rows(conn: sqlite3.Connection, user_id: int) -> None:
+    """Delete every kai.db row owned by *user_id* (no commit — caller owns the txn)."""
     # Order matters: delete referencing rows before parent rows.
     # Episodic: delete vectors first (they reference rowids in episodic_entries)
     try:
@@ -280,13 +300,6 @@ def delete_user(user_id: int) -> bool:
 
     # Finally, delete the user account itself
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    conn.commit()
-
-    # Per-user data lives outside kai.db too: three SQLite files (tree/state/
-    # knowledge) and the downloaded study library on disk. Wipe them as well —
-    # leaving them behind is the same privacy leak as the missed tables above.
-    _delete_user_files(user_id)
-    return True
 
 
 def _delete_user_files(user_id: int) -> None:

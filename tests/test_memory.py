@@ -184,6 +184,86 @@ def test_tree_connection_is_cached_and_reused(tmp_path, monkeypatch):
     assert mtree._conn("77") is not c1
 
 
+# ── Archive atomicity (episodic.archive_and_clear_turns) ─────────────────────────
+
+def test_archive_clears_turns_and_keeps_archive_with_transcript():
+    """Archiving must, in one transaction, drop the raw turns AND leave exactly one
+    archive entry plus its transcript — never both turns and archive, never an
+    orphaned transcript."""
+    uid = 9991  # isolate from other tests sharing the temp DB
+    episodic.add_entry("turn one", entry_type="turn", user_id=uid)
+    episodic.add_entry("turn two", entry_type="turn", user_id=uid)
+    assert episodic.get_pending_turns_text(user_id=uid)  # turns are staged
+
+    mm = MemoryManager(user_id=uid)
+    mm.archive_history("summary of the two turns")
+
+    # No raw turns remain
+    assert episodic.get_pending_turns_text(user_id=uid) == ""
+    # Exactly one archive entry, and its transcript is retrievable
+    archives = episodic.search_non_turns("summary", user_id=uid)
+    assert len(archives) == 1
+    assert episodic.get_transcript(archives[0].id, user_id=uid) is not None
+
+
+def test_archive_rolls_back_if_turn_delete_fails(monkeypatch):
+    """If the turn-deletion step raises mid-transaction, the raw turns must survive
+    rather than being half-archived."""
+    uid = 9992
+    episodic.add_entry("keep me", entry_type="turn", user_id=uid)
+
+    from kai.store.db import get_conn
+    real_conn = get_conn()
+
+    class FailingConn:
+        def execute(self, sql, *args, **kwargs):
+            if sql.strip().startswith("DELETE FROM episodic_entries"):
+                raise RuntimeError("simulated delete failure")
+            return real_conn.execute(sql, *args, **kwargs)
+        def commit(self):  return real_conn.commit()
+        def rollback(self): return real_conn.rollback()
+
+    monkeypatch.setattr("kai.memory.episodic.get_conn", lambda: FailingConn())
+    with pytest.raises(RuntimeError):
+        episodic.archive_and_clear_turns("summary", user_id=uid)
+
+    monkeypatch.undo()  # restore the real get_conn before asserting
+    assert "keep me" in episodic.get_pending_turns_text(user_id=uid)
+
+
+# ── State JSON deserialization is corruption-tolerant (state.py) ─────────────────
+
+def test_state_load_ignores_unknown_and_corrupt_json(tmp_path, monkeypatch):
+    """A state blob written before a field changed (extra key) or an outright
+    corrupt blob must fall back to defaults, not crash the read."""
+    from kai.memory import state as mstate
+    monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)
+
+    # Stale/extra key alongside a valid one — unknown key is dropped, valid kept.
+    conn = mstate._conn("u1")
+    import json as _json, time as _time
+    conn.execute(
+        "INSERT INTO state VALUES (?, ?, ?)",
+        ("user", _json.dumps({"terseness": 0.9, "obsolete_field": "x"}), _time.time()),
+    )
+    conn.commit()
+    loaded = mstate.load_user_state("u1")
+    assert loaded.terseness == 0.9
+    assert not hasattr(loaded, "obsolete_field")
+
+    # Outright garbage JSON → defaults, no exception. (Compare meaningful fields,
+    # not last_updated, which defaults to time.time() and so always differs.)
+    conn.execute(
+        "INSERT INTO state VALUES (?, ?, ?)",
+        ("kai", "{not valid json", _time.time()),
+    )
+    conn.commit()
+    loaded_kai = mstate.load_kai_state("u1")
+    defaults = mstate.KaiState()
+    assert loaded_kai.self_confidence == defaults.self_confidence
+    assert loaded_kai.intuition_active == defaults.intuition_active
+
+
 def test_state_connection_is_cached(tmp_path, monkeypatch):
     from kai.memory import state as mstate
     monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)

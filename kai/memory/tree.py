@@ -99,7 +99,7 @@ def _connect(user_id: str) -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(user_id))  # opens the file; creates it if missing
     conn.row_factory = sqlite3.Row             # makes rows dict-like: row["path"] instead of row[0]
     conn.execute("PRAGMA journal_mode=WAL")    # WAL mode: reads don't block writes
-    conn.execute("PRAGMA busy_timeout=3000")   # wait up to 3s if another process holds the lock
+    conn.execute("PRAGMA busy_timeout=5000")   # wait up to 5s if another process holds the lock
     _init(conn)                                # create the table and index on first run
     return conn
 

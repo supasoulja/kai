@@ -14,7 +14,7 @@ import time                              # for timestamps
 import sqlite3                           # the database driver
 import threading                         # thread-local connection cache (see _conn)
 from pathlib import Path                 # clean path handling
-from dataclasses import dataclass, asdict, field  # asdict turns a dataclass into a dict
+from dataclasses import dataclass, asdict, field, fields  # asdict turns a dataclass into a dict
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -97,6 +97,7 @@ def _connect(user_id: str) -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(user_id))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")   # wait up to 5s if the file is locked
     conn.execute("""
         CREATE TABLE IF NOT EXISTS state (
             key          TEXT PRIMARY KEY,   -- "user" | "kai" | "relationship"
@@ -161,7 +162,15 @@ def _load(user_id: str, key: str, cls):
         row = conn.execute("SELECT data FROM state WHERE key = ?", (key,)).fetchone()
     if row is None:                          # no record yet — first time talking to this user
         return cls()                          # cls() calls the dataclass constructor with all defaults
-    return cls(**json.loads(row["data"]))    # json.loads → dict; **dict unpacks as keyword args
+    # Be defensive: a corrupt blob or a row written before a dataclass field was
+    # added/removed must not crash the read. Keep only keys the dataclass knows,
+    # and fall back to defaults if the JSON itself is unparseable.
+    try:
+        raw = json.loads(row["data"])
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in raw.items() if k in known})
+    except Exception:
+        return cls()
 
 
 # ─── Public load/save API ─────────────────────────────────────────────────────

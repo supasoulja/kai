@@ -39,6 +39,7 @@ def _get_db():
     if _db_conn is None:
         _db_conn = sqlite3.connect(str(WATCHDOG_DB), check_same_thread=False)
         _db_conn.execute("PRAGMA journal_mode=WAL")
+        _db_conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock contention
         _db_conn.execute("""
             CREATE TABLE IF NOT EXISTS watchdog_devices (
                 device_id     TEXT PRIMARY KEY,
