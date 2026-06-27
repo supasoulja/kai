@@ -88,8 +88,12 @@ def _ensure_model():
         # CPU-only, no GPU contention
         opts = ort.SessionOptions()
         physical_cores = max((os.cpu_count() or 4) // 2, 1)
+        # Cap embedding threads so a live embed can't grab every core mid-turn and
+        # starve the foreground (desktop + the chat model's CPU-side work). A small
+        # pool keeps embedding cheap without pegging the box.
+        embed_threads = min(4, physical_cores)
         opts.inter_op_num_threads = 2
-        opts.intra_op_num_threads = physical_cores
+        opts.intra_op_num_threads = embed_threads
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
         _session = ort.InferenceSession(

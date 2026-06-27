@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -124,6 +125,10 @@ _NARRATED_INTENTS: list[tuple[re.Pattern, str, str]] = [
         r"\b(?:container|ct|vm|instance)\b[^.?!]*?"
         r"\b(?:named|called)\s+[`'\"]?([A-Za-z0-9][\w.-]{0,62})",
         re.IGNORECASE), "lxc.create", "name"),
+    # "searching the web for the latest gemma release", "let me look that up — for X"
+    (re.compile(
+        r"\b(?:search\w*|look\w*\s*up|googl\w*)\b[^.?!]*?\bfor\s+[`'\"]?(.+?)[`'\"]?\s*[.?!]*\s*$",
+        re.IGNORECASE), "search.web", "query"),
 ]
 
 
@@ -143,6 +148,66 @@ def _match_narrated_intent(clean: str, known_tools: set[str]) -> dict | None:
                 print(f"[recover] narrated intent: {tool_name}({arg_name}={value!r})")
             return {"function": {"name": tool_name, "arguments": {arg_name: value}}}
     return None
+
+
+# ── Pre-LLM intent fast-paths ────────────────────────────────────────────────
+# When the WHOLE user message is one of these common, unambiguous commands, run
+# the tool directly and skip the tool-round model call entirely (see
+# Brain._run_fast_path). Every target is a NO-ARGUMENT tool, so there's nothing
+# to misparse — the result is identical to what the model would produce, minus a
+# whole LLM round. Anchored ^…$ so we only fire on an exact command, never on a
+# passing mention inside a larger request. Order doesn't matter (patterns are
+# mutually exclusive by construction).
+_FAST_PATHS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^\s*(?:what(?:'?s| is)?\s+(?:the\s+)?)?time(?:\s+is\s+it)?(?:\s+(?:now|today))?\s*[?.!]*\s*$", re.I), "time.now"),
+    (re.compile(r"^\s*(?:what(?:'?s| is)?\s+)?(?:the\s+|today'?s\s+)?date(?:\s+(?:today|now))?\s*[?.!]*\s*$", re.I), "time.now"),
+    (re.compile(r"^\s*(?:list|show|what)\s+(?:are\s+)?(?:my\s+|the\s+)?(?:running\s+)?(?:containers|cts|vms|lxc)\b[^?.!]*[?.!]*\s*$", re.I), "lxc.list"),
+    (re.compile(r"^\s*(?:check|get|show|what(?:'?s| is)?)\s*(?:the\s+|my\s+)?weather\b[^?.!]*[?.!]*\s*$", re.I), "weather.current"),
+    (re.compile(r"^\s*(?:check|show|get|what(?:'?s| are)?)\s*(?:my\s+|the\s+)?(?:cpu\s+|gpu\s+|system\s+)?temp(?:erature)?s?\b[^?.!]*[?.!]*\s*$", re.I), "system.temps"),
+    (re.compile(r"^\s*(?:check|show|get|what(?:'?s| is)?)\s*(?:my\s+|the\s+)?disk\s+(?:usage|space|health)\b[^?.!]*[?.!]*\s*$", re.I), "files.disk_usage"),
+]
+
+
+def _match_fast_path(user_input: str) -> str | None:
+    """Return the tool name for a whole-input fast-path command, or None.
+
+    Deliberately strict — only an exact command match fires. Anything else (extra
+    detail, a question, a follow-up clause) falls through to the normal LLM path.
+    """
+    text = user_input.strip()
+    if not text or len(text) > 80:   # commands are short; long text is a real request
+        return None
+    for pattern, tool_name in _FAST_PATHS:
+        if pattern.match(text):
+            return tool_name
+    return None
+
+
+# ── Foreground-turn gate ─────────────────────────────────────────────────────
+# Background work (knowledge extraction) checks this so it never queues a second
+# generation behind a live user turn. A counter, not a bool: overlapping turns
+# across brains all register, and background work only runs when the count is 0.
+_active_turns = 0
+_active_turns_lock = threading.Lock()
+
+
+def _begin_turn() -> None:
+    global _active_turns
+    with _active_turns_lock:
+        _active_turns += 1
+
+
+def _end_turn() -> None:
+    global _active_turns
+    with _active_turns_lock:
+        if _active_turns > 0:
+            _active_turns -= 1
+
+
+def foreground_busy() -> bool:
+    """True while any user turn is mid-flight — background model work should wait."""
+    with _active_turns_lock:
+        return _active_turns > 0
 
 
 def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
@@ -315,6 +380,10 @@ class Brain:
         self._tool_model: str | None = None             # resolved lazily, availability-checked
         self._tool_model_resolved: bool = False
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
+        # Exchanges queued for knowledge extraction, drained only when no turn is
+        # in flight (see _drain_pending_learning) so learning never queues a
+        # generation behind the user. Bounded — old chatter is the cheapest to drop.
+        self._pending_learn: deque[tuple[str, str]] = deque(maxlen=12)
 
         # Active chat brain — defaults to local Ollama + CHAT_MODEL. set_active_brain()
         # can point the chat role at a connected cloud brain; _chat/_chat_stream wrap
@@ -360,8 +429,8 @@ class Brain:
         """Select which model runs tool-call rounds. Mirrors apply_preset.
 
         An unavailable model (not pulled in Ollama) falls back to running the
-        rounds on the chat model with thinking forced on — same as the "off"
-        level — so selecting any level never breaks anything.
+        rounds on the chat model — same as the "off" level — so selecting any
+        level never breaks anything.
         Returns the resolved {key, label, model, available}.
         """
         level = cfg.TOOL_MODEL_LEVELS.get(key)
@@ -377,7 +446,8 @@ class Brain:
         """Resolve the active tool level to an installed model (cached).
 
         Returns (model, available). model=None means: run the rounds on the
-        chat model with thinking on (the "off" level / fallback behavior).
+        chat model (the "off" level / fallback behavior) — no separate tool
+        model, no thinking.
         """
         if self._tool_model_resolved:
             return self._tool_model, self._tool_model is not None
@@ -389,7 +459,7 @@ class Brain:
                     resolved = wanted
                 elif cfg.DEBUG:
                     print(f"[tool model] {wanted} not installed — "
-                          f"rounds fall back to {self.model} with thinking on")
+                          f"rounds fall back to {self.model}")
             except Exception:
                 pass  # Ollama unreachable — fall back; apply_tool_level re-checks
         self._tool_model = resolved
@@ -655,6 +725,20 @@ class Brain:
         trace_id: str | None = None,
         on_status: "Callable[[str], None] | None" = None,
     ) -> Generator[tuple[str, bool, dict], None, None]:
+        """Public streaming entry. Marks a turn in flight (so background work
+        yields to it) then delegates to the implementation."""
+        _begin_turn()
+        try:
+            yield from self._run_stream_impl(user_input, trace_id, on_status)
+        finally:
+            _end_turn()
+
+    def _run_stream_impl(
+        self,
+        user_input: str,
+        trace_id: str | None = None,
+        on_status: "Callable[[str], None] | None" = None,
+    ) -> Generator[tuple[str, bool, dict], None, None]:
         """
         Streaming turn. Yields (token, done, {}) until done=True.
         The CLI iterates this and prints tokens as they arrive.
@@ -734,7 +818,18 @@ class Brain:
         # If the model answers directly in a tool round, the rounds return that
         # answer here and the turn finalizes immediately (single exit path).
         direct = None
-        if cfg.CREW_ENABLED and self.tool_registry:
+        # ── Pre-LLM fast-path: an exact, unambiguous command runs its tool
+        # directly and skips the whole tool-round model call. Falls through to
+        # the streamed answer with the result already grounded in `messages`.
+        fast_tool = _match_fast_path(user_input) if self.tool_registry else None
+        if fast_tool and fast_tool in set(self.tool_registry.list_tools()):
+            flow_rec.record(trace_id, "fast_path_hit", name=fast_tool)
+            yield from self._run_fast_path(
+                fast_tool, messages, tools_used,
+                query_emb=query_emb, user_input=user_input,
+                trace_id=trace_id, on_status=on_status,
+            )
+        elif cfg.CREW_ENABLED and self.tool_registry:
             # Crew path (Part C/3b): triage → specialist(s); findings injected as
             # evidence, then Kai's voice synthesizes (unchanged). The generalist
             # _run_tool_rounds loop is bypassed entirely on this branch.
@@ -816,6 +911,31 @@ class Brain:
     # job. Phases that stream UI chunks are generators and must be consumed
     # with `yield from`; they hand results back via their return value.
 
+    def _run_fast_path(
+        self, tool_name: str, messages: list[dict], tools_used: list[str], *,
+        query_emb: list[float] | None, user_input: str, trace_id: str,
+        on_status: "Callable[[str], None] | None",
+    ) -> "Generator[tuple[str, bool, dict], None, None]":
+        """Execute a deterministically-matched no-arg tool WITHOUT a tool-round
+        model call (the pre-LLM fast-path — see _match_fast_path).
+
+        Synthesizes the tool_call and runs it through the normal execution path
+        (_execute_tool_calls: dedup/confirm/cerebellum/result-append) so the tool
+        result lands in `messages` exactly as a real round would. run_stream then
+        streams the grounded answer. Saves a whole LLM round on common commands.
+        """
+        from kai.memory.cerebellum import call_signature as _sig_of
+        tool_calls = [{"function": {"name": tool_name, "arguments": {}}}]
+        flow_rec.record(trace_id, "fast_path", name=tool_name, input=user_input)
+        messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
+        # Reuse the batch executor; safe no-arg tools never hit the confirm gate,
+        # but yield-through keeps the contract identical if one ever does.
+        yield from self._execute_tool_calls(
+            tool_calls, messages, tools_used, [], 0,
+            query_emb=query_emb, user_input=user_input, trace_id=trace_id,
+            on_status=on_status, sig_of=_sig_of,
+        )
+
     def _run_tool_rounds(
         self,
         messages: list[dict],
@@ -843,10 +963,13 @@ class Brain:
         roles.json model here). Falls back to the level-resolved model if the
         override isn't installed.
 
-        Rounds run on the selected tool model (granite — emits structured
-        calls without reasoning) or fall back to the chat model with thinking
-        forced ON: gemma without thinking narrates the call instead of making
-        it, then fabricates results (the 06-09 regression).
+        Rounds run on the chat model by default (one resident model, no thinking
+        tax) or on an opt-in granite tool model. Neither thinks: granite emits
+        structured calls natively, and the chat model's occasional "narrate
+        instead of call" slip is caught by the pre-LLM fast-paths and the
+        narrated-intent recovery net (_match_narrated_intent /
+        _try_recover_tool_call) — so we keep tool-calling reliable without paying
+        the per-round reasoning latency that used to band-aid the 06-09 regression.
 
         Returns (raw_content, clean_text) when the chat model answers
         directly without calling tools — the caller finalizes the turn with
@@ -867,7 +990,10 @@ class Brain:
         else:
             tool_model, _ = self._resolve_tool_model()
         rounds_model = tool_model or self._chat_model
-        rounds_think = tool_model is None  # granite: no think; chat fallback: always think
+        # Tool rounds never think. Thinking adds a multi-thousand-token trace per
+        # round (the latency killer) and pulls the chat model off the fast path.
+        # Reliability without it comes from the fast-paths + narrated recovery.
+        rounds_think = False
         _call_sigs: list[str] = []  # executed (tool, args) signatures for dedup + loop detection
         _dup_count = 0              # repeats of an already-executed identical call
         for round_num in range(MAX_TOOL_ROUNDS):
@@ -882,8 +1008,11 @@ class Brain:
                 resp = self._chat(messages, tools=tools_schema,
                                   think=rounds_think, temperature=cfg.TEMPERATURE_TOOL)
             else:
+                # Opt-in granite tool model is secondary — unload it right after
+                # so it never holds a second runner beside the warm chat model.
                 resp = self.ollama.chat(
-                    messages, tools=tools_schema, model=tool_model, think=rounds_think
+                    messages, tools=tools_schema, model=tool_model,
+                    think=rounds_think, keep_alive=0,
                 )
             msg = resp.get("message", {})
             try:
@@ -1403,7 +1532,7 @@ class Brain:
         if tool_model is None:
             resp = self._chat(messages, think=False, temperature=cfg.TEMPERATURE_TOOL)
         else:
-            resp = self.ollama.chat(messages, model=tool_model, think=False)
+            resp = self.ollama.chat(messages, model=tool_model, think=False, keep_alive=0)
         text = resp.get("message", {}).get("content", "")
         decision = crew.parse_otto_decision(text)
         flow_rec.record(trace_id, "otto", text=text,
@@ -2027,6 +2156,22 @@ class Brain:
 
     # ── Conversational learning ──────────────────────────────────────────────
 
+    def _drain_pending_learning(self) -> None:
+        """Run queued knowledge extraction, but only while no user turn is in
+        flight — so a learning LLM call never queues a generation behind the
+        user's next request. Items not drained now wait for the next idle moment.
+        """
+        if not self._pending_learn or foreground_busy():
+            return
+        while self._pending_learn and not foreground_busy():
+            user_text, assistant_text = self._pending_learn.popleft()
+            try:
+                self._extract_knowledge(user_text, assistant_text)
+            except Exception:
+                if cfg.DEBUG:
+                    import traceback
+                    traceback.print_exc()
+
     def _post_turn(self, user_input: str, assistant_text: str) -> None:
         """
         Background post-turn processing: persist turn + compress history +
@@ -2044,16 +2189,13 @@ class Brain:
                 import traceback
                 traceback.print_exc()
         count = self._history.bump_turn_count()
-        # Rate-limit: only extract knowledge every 3rd turn to reduce Ollama
-        # queue pressure. The background LLM call delays the next turn's embed
-        # + chat because Ollama serializes GPU work.
+        # Rate-limit: queue an exchange for knowledge extraction every 3rd turn.
+        # Extraction is a full LLM call, so we DEFER it: it runs only when no user
+        # turn is in flight (see _drain_pending_learning), so it never queues a
+        # generation behind the user's next request. Same cadence, idle timing.
         if learning_enabled(self.user_id) and count % 3 == 0:
-            try:
-                self._extract_knowledge(user_input, assistant_text)
-            except Exception:
-                if cfg.DEBUG:
-                    import traceback
-                    traceback.print_exc()
+            self._pending_learn.append((user_input, assistant_text))
+        self._drain_pending_learning()
 
         # Crash-survival: refresh the recall checkpoint each turn (cheap file
         # write, no LLM). A clean shutdown supersedes it; a hard kill leaves it

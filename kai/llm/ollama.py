@@ -23,7 +23,7 @@ class OllamaClient:
 
     def _base_payload(
         self, model: str, messages: list, think: bool, tools=None,
-        temperature: float = TEMPERATURE_FINAL, keep_alive: str = "10m",
+        temperature: float = TEMPERATURE_FINAL, keep_alive: "str | int" = "10m",
     ) -> dict:
         p: dict = {
             "model": model,
@@ -79,14 +79,19 @@ class OllamaClient:
         model: str = CHAT_MODEL,
         think: bool = False,
         temperature: float = TEMPERATURE_FINAL,
+        keep_alive: "str | int" = "10m",
     ) -> Generator[tuple[str, bool, dict], None, None]:
         """
         Streaming chat. Yields (token, done, final_message).
         - token: the text chunk to print
         - done: True on the last chunk
         - final_message: full message dict (on done=True only)
+
+        keep_alive defaults to the warm "10m" for the main chat model — only the
+        user-facing model should stay resident. Secondary callers (a separate tool
+        model, embeddings) pass 0 so their model unloads right after use.
         """
-        payload = self._base_payload(model, messages, think, tools, temperature)
+        payload = self._base_payload(model, messages, think, tools, temperature, keep_alive)
         payload["stream"] = True
         with self._post("/api/chat", payload) as resp:
             in_think  = False
@@ -168,12 +173,23 @@ class OllamaClient:
                         return  # degenerate output loop — model stuck on whitespace
                 yield token, False, {}
 
-    def embed(self, text: str, model: str = EMBED_MODEL) -> list[float]:
-        return self.embed_batch([text], model)[0]
+    def embed(self, text: str, model: str = EMBED_MODEL,
+              keep_alive: "str | int" = 0) -> list[float]:
+        return self.embed_batch([text], model, keep_alive=keep_alive)[0]
 
-    def embed_batch(self, texts: list[str], model: str = EMBED_MODEL) -> list[list[float]]:
-        """Embed a list of strings in one HTTP call. Returns one vector per input."""
-        result = self._post_json("/api/embed", {"model": model, "input": texts}, timeout=120)
+    def embed_batch(self, texts: list[str], model: str = EMBED_MODEL,
+                    keep_alive: "str | int" = 0) -> list[list[float]]:
+        """Embed a list of strings in one HTTP call. Returns one vector per input.
+
+        keep_alive defaults to 0 — the embed model (a *secondary* model) unloads
+        immediately after use so it never holds a runner/VRAM beside the warm chat
+        model. Only the user-facing chat model stays resident between turns.
+        """
+        result = self._post_json(
+            "/api/embed",
+            {"model": model, "input": texts, "keep_alive": keep_alive},
+            timeout=120,
+        )
         return result["embeddings"]
 
     def is_alive(self) -> bool:

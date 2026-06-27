@@ -113,9 +113,11 @@ TEMP_MIN, TEMP_MAX = 0.0, 2.0   # slider range + validation bounds
 # the chat model can stay focused on conversation. Bigger granite = better at
 # inferring the right tool from vague phrasing ("something's off with my pc");
 # smaller = faster, fine when requests are specific ("check my temps").
-# "off" keeps rounds on CHAT_MODEL with thinking forced on — thinking is what
-# keeps gemma emitting structured tool calls instead of narrating them. It is
-# also the automatic fallback whenever the selected granite isn't installed.
+# "off" keeps rounds on CHAT_MODEL (no second model loaded, no thinking tax). The
+# chat model occasionally narrates a call instead of emitting it; the pre-LLM
+# intent fast-paths + narrated-intent recovery catch that, so it stays reliable
+# without a dedicated tool model. The granite levels remain opt-in for anyone who
+# wants a separate function-calling model (at the cost of a second resident model).
 TOOL_MODEL_LEVELS: dict[str, dict] = {
     "light":    {"label": "Light (3B)",    "model": "granite4.1:3b",
                  "blurb": "fast — best when you ask specifically"},
@@ -124,9 +126,13 @@ TOOL_MODEL_LEVELS: dict[str, dict] = {
     "deep":     {"label": "Deep (30B)",    "model": "granite4.1:30b",
                  "blurb": "best at inferring vague requests (17 GB download)"},
     "off":      {"label": "Main model",    "model": None,
-                 "blurb": "tool rounds on the chat model with thinking on"},
+                 "blurb": "tool rounds on the chat model — one model, fastest"},
 }
-DEFAULT_TOOL_LEVEL = "balanced"   # Granite 8B — good default for mixed phrasing
+# Default to the single-model path: tool rounds on the chat model. This keeps only
+# one model resident (no concurrent granite runner pegging a second CPU core) and
+# skips the per-round thinking tax. See brain._run_tool_rounds (rounds_think=False)
+# and the fast-path / narrated-recovery nets that keep tool-calling reliable.
+DEFAULT_TOOL_LEVEL = "off"
 
 # Safety net: hard cap on a single reasoning trace (chars). If the model loops,
 # we cut thinking off and force it to answer directly instead of running forever.
