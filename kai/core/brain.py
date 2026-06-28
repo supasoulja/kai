@@ -365,7 +365,6 @@ class Brain:
         self._think = think
         self._final_temp: float = cfg.TEMPERATURE_FINAL  # per-session final-answer temp
         self._cancel = threading.Event()  # set by request_stop() to abort the current turn
-        self._last_triage_think: bool = False  # crew path: think decision from the last triage
         self.user_id = user_id
         self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
         self._history = HistoryManager()         # session history, lock, turn counters, compression
@@ -1289,25 +1288,6 @@ class Brain:
             confirm_intercepted, chain_stopped, rounds_done,
             tool_error, win_error_code, dup_count,
         )
-
-    # ── Crew: delegators to CrewRunner ─────────────────────────────────────────
-    # The crew subsystem moved to kai/core/crew_runner.py (self._crew). These thin
-    # shims are TEMPORARY scaffolding (Wave 6 crew extraction, commit 1) so the
-    # existing tests that drive brain._run_crew_turn / monkeypatch brain._triage_turn
-    # keep passing unchanged — proving the move is behavior-preserving. Commit 2
-    # deletes them (and _last_triage_think) and retargets the tests to brain._crew.
-
-    def _triage_turn(self, *args, **kwargs):
-        return self._crew.triage(*args, **kwargs)
-
-    def _run_specialist(self, *args, **kwargs):
-        return (yield from self._crew.run_specialist(*args, **kwargs))
-
-    def _run_crew(self, *args, **kwargs):
-        return (yield from self._crew.run_crew(*args, **kwargs))
-
-    def _run_crew_turn(self, *args, **kwargs):
-        self._last_triage_think = (yield from self._crew.run_turn(*args, **kwargs))
 
     # ── Tool-round helpers ─────────────────────────────────────────────────────
 

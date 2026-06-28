@@ -243,7 +243,7 @@ def _specialist_brain(chat_responses):
 def test_run_specialist_returns_findings_done():
     # worker writes findings immediately (no tool call) — keep_prose keeps the prose
     brain = _specialist_brain([{"message": {"content": "CPU at 52C, nominal."}}])
-    result = _drain(brain._run_specialist("Gus", "check my temps"))
+    result = _drain(brain._crew.run_specialist("Gus", "check my temps"))
     assert result.status == "done"
     assert "52C" in result.findings
 
@@ -252,7 +252,7 @@ def test_run_specialist_escalates_with_needs():
     brain = _specialist_brain([
         {"message": {"content": "needs: web\nfor: look up error code 0x80240032"}}
     ])
-    result = _drain(brain._run_specialist("Gus", "diagnose the update error"))
+    result = _drain(brain._crew.run_specialist("Gus", "diagnose the update error"))
     assert result.status == "needs:web"
     assert result.needs == "Scout"
     assert "0x80240032" in result.for_
@@ -295,7 +295,7 @@ def test_run_crew_dispatches_then_finishes():
         {"message": {"content": "CPU is at 50C, nominal."}},                # Gus findings
         {"message": {"content": "FINISH: reported the temp"}},              # Otto step 2
     ])
-    findings = _drain(brain._run_crew("is my cpu hot?"))
+    findings = _drain(brain._crew.run_crew("is my cpu hot?"))
     assert "[Gus]" in findings and "50C" in findings
 
 
@@ -307,43 +307,56 @@ def test_run_crew_forces_needs_handback():
         {"message": {"content": "Saved the note."}},                        # Remy (forced)
         {"message": {"content": "FINISH: done"}},                           # Otto step 3
     ])
-    findings = _drain(brain._run_crew("read my crash log and note what's wrong"))
+    findings = _drain(brain._crew.run_crew("read my crash log and note what's wrong"))
     assert "[Remy]" in findings and "Saved the note" in findings
+
+
+def test_run_crew_dedup_guard_breaks_on_repeat_dispatch():
+    # Otto dispatches the SAME (Gus, subtask) twice — the dedup/ping-pong guard
+    # must run it once and break the loop, not re-run the identical call.
+    brain = _specialist_brain([
+        {"message": {"content": "DISPATCH Gus: check the cpu temp"}},   # Otto step 1
+        {"message": {"content": "CPU 50C, nominal."}},                  # Gus findings
+        {"message": {"content": "DISPATCH Gus: check the cpu temp"}},   # Otto step 2 (repeat)
+    ])
+    findings = _drain(brain._crew.run_crew("is my cpu hot?"))
+    assert findings.count("[Gus]") == 1   # ran once; the repeat dispatch was dropped
+    assert "50C" in findings
 
 
 # ── run_stream wiring (Brain._run_crew_turn, 3d) — triage stubbed ─────────────────
 
 def _crew_turn(brain, decision, user_input="do the thing"):
-    """Drive _run_crew_turn with a fixed triage decision; return (messages, tools_used)."""
-    brain._triage_turn = lambda *a, **k: decision
+    """Drive run_turn with a fixed triage decision; return (messages, tools_used, think)."""
+    brain._crew.triage = lambda *a, **k: decision
     messages = [{"role": "user", "content": user_input}]
     tools_used: list[str] = []
-    _drain(brain._run_crew_turn(
+    think = _drain(brain._crew.run_turn(
         user_input, messages, tools_used, query_emb=None,
         handoff_mode="tool", tools_open=True, trace_id="t", on_status=None,
     ))
-    return messages, tools_used
+    return messages, tools_used, think
 
 
 def test_crew_turn_fast_injects_findings():
     from kai.core import crew
     brain = _specialist_brain([{"message": {"content": "CPU 50C, nominal."}}])
     decision = crew.TriageResult(profile=crew.Profile.FAST, specialist="Gus", think=False, tools=True)
-    messages, tools_used = _crew_turn(brain, decision)
+    messages, tools_used, think = _crew_turn(brain, decision)
     # findings injected as a tool RESULT (so grounding + the voice model trust it)
     assert any(m["role"] == "tool" and "50C" in m.get("content", "") for m in messages)
     assert "Gus" in tools_used
-    assert brain._last_triage_think is False
+    assert think is False
 
 
 def test_crew_turn_chat_runs_nothing():
     from kai.core import crew
     brain = _specialist_brain([])  # no model calls expected
     decision = crew.TriageResult(profile=crew.Profile.REASON, specialist=None, think=True, tools=False)
-    messages, tools_used = _crew_turn(brain, decision)
+    messages, tools_used, think = _crew_turn(brain, decision)
     assert not any(m["role"] == "tool" for m in messages)  # no evidence injected
     assert tools_used == []
-    assert brain._last_triage_think is True  # REASON → think on, propagated to run_stream
+    assert think is True  # REASON → think on, propagated to run_stream
 
 
 def test_crew_turn_boss_orchestrates():
@@ -354,7 +367,7 @@ def test_crew_turn_boss_orchestrates():
         {"message": {"content": "FINISH: done"}},
     ])
     decision = crew.TriageResult(profile=crew.Profile.BOSS, specialist=None, think=True, tools=True)
-    messages, tools_used = _crew_turn(brain, decision)
+    messages, tools_used, _ = _crew_turn(brain, decision)
     assert "crew" in tools_used
     assert any(m["role"] == "tool" and "[Gus]" in m.get("content", "") for m in messages)
 
@@ -379,7 +392,7 @@ def test_semantic_tool_axis_opens_tools_on_keyword_miss():
     brain._tool_index = {}
     messages = [{"role": "user", "content": "how's my rig holding up"}]
     tools_used: list[str] = []
-    _drain(brain._run_crew_turn(
+    _drain(brain._crew.run_turn(
         "how's my rig holding up", messages, tools_used, query_emb=[0.0] * 384,
         handoff_mode="chat", tools_open=False, trace_id="t", on_status=None,
     ))
@@ -397,19 +410,19 @@ def test_semantic_think_axis_sets_reason():
     brain._tool_index = {}
     messages = [{"role": "user", "content": "walk me through the tradeoffs here"}]
     tools_used: list[str] = []
-    _drain(brain._run_crew_turn(
+    think = _drain(brain._crew.run_turn(
         "walk me through the tradeoffs here", messages, tools_used, query_emb=[0.0] * 384,
         handoff_mode="chat", tools_open=False, trace_id="t", on_status=None,
     ))
     assert tools_used == []                # no tools — REASON profile
-    assert brain._last_triage_think is True  # think axis turned thinking on
+    assert think is True  # think axis turned thinking on
 
 
 # ── 3f: crew uses the role→model map ──────────────────────────────────────────────
 
 def test_specialist_uses_default_crew_model():
     brain = _specialist_brain([{"message": {"content": "ok done"}}])
-    _drain(brain._run_specialist("Gus", "check something"))
+    _drain(brain._crew.run_specialist("Gus", "check something"))
     # default crew model = ROLE_MODELS["crew"] (granite4.1:8b), and it's installed
     assert brain.ollama.chat.call_args.kwargs.get("model") == "granite4.1:8b"
 
@@ -422,7 +435,7 @@ def test_specialist_honors_per_agent_override(monkeypatch):
     )
     brain = _specialist_brain([{"message": {"content": "ok"}}])
     brain.ollama.installed_models.return_value = ["qwen3.5:9b", "granite4.1:8b"]
-    _drain(brain._run_specialist("Gus", "check something"))
+    _drain(brain._crew.run_specialist("Gus", "check something"))
     assert brain.ollama.chat.call_args.kwargs.get("model") == "qwen3.5:9b"
 
 
@@ -431,6 +444,6 @@ def test_specialist_falls_back_when_override_not_installed(monkeypatch):
     monkeypatch.setattr(roles, "crew_model_for", lambda name: "not-installed:99b")
     brain = _specialist_brain([{"message": {"content": "ok"}}])
     brain.ollama.installed_models.return_value = ["granite4.1:8b"]
-    _drain(brain._run_specialist("Gus", "check something"))
+    _drain(brain._crew.run_specialist("Gus", "check something"))
     # uninstalled override → falls back to the level-resolved model, not the bad id
     assert brain.ollama.chat.call_args.kwargs.get("model") != "not-installed:99b"

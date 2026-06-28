@@ -70,11 +70,7 @@ class CrewRunner:
         needs_think = (
             _query_needs_thinking(user_input) or handoff_mode == "reasoning" or think_sem
         )
-        # NOTE: dispatched via the Brain (self._brain._triage_turn) rather than
-        # self.triage during the scaffolded migration, so the existing tests that
-        # monkeypatch brain._triage_turn keep working. Commit 2 switches this to
-        # self.triage and retargets those tests to brain._crew.triage.
-        decision = self._brain._triage_turn(
+        decision = self.triage(
             user_input, query_emb, tools_open=tools_open or tool_sem, needs_think=needs_think,
         )
         think_decision = decision.think
