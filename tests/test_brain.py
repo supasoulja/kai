@@ -236,9 +236,10 @@ def test_tool_rounds_use_selected_granite_model():
     assert mock_ollama.chat_stream.call_args.kwargs["model"] == cfg.CHAT_MODEL
 
 
-def test_tool_rounds_fall_back_to_chat_model_with_thinking():
-    """Granite not installed → rounds run on the chat model with think=True
-    (gemma without thinking narrates calls instead of making them)."""
+def test_tool_rounds_fall_back_to_chat_model_no_thinking():
+    """Granite not installed → rounds run on the chat model with think=False.
+    Thinking is the latency killer; the pre-LLM fast-paths + narrated-intent
+    recovery keep tool-calling reliable without it (the de-bloat change)."""
     mock_ollama = MagicMock(spec=OllamaClient)
     mock_ollama.embed.return_value = [0.0] * 2560
     mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL]
@@ -257,9 +258,53 @@ def test_tool_rounds_fall_back_to_chat_model_with_thinking():
     result = brain.run("What time is it?")
     for call in mock_ollama.chat.call_args_list:
         assert call.kwargs["model"] == brain.model
-        assert call.kwargs["think"] is True
+        assert call.kwargs["think"] is False
     # Fallback rounds keep the direct-answer path (it IS the chat model's voice)
     assert result == "It is Tuesday."
+
+
+def test_fast_path_matches_exact_commands_only():
+    """The pre-LLM fast-path fires only on an exact, unambiguous whole-input
+    command (so a passing mention or a compound request never short-circuits
+    the model)."""
+    from kai.core.brain import _match_fast_path
+    # Exact commands → their no-arg tool
+    assert _match_fast_path("what time is it?") == "time.now"
+    assert _match_fast_path("what's the date") == "time.now"
+    assert _match_fast_path("list containers") == "lxc.list"
+    assert _match_fast_path("check the weather") == "weather.current"
+    assert _match_fast_path("show my temps") == "system.temps"
+    assert _match_fast_path("what's my disk usage") == "files.disk_usage"
+    # Anything ambiguous, compound, or detailed falls through to the LLM
+    assert _match_fast_path("tell me the current time please") is None
+    assert _match_fast_path("what time is it and what's the weather") is None
+    assert _match_fast_path("write a poem about the weather") is None
+    assert _match_fast_path("") is None
+
+
+def test_fast_path_runs_tool_without_a_tool_round_model_call():
+    """An exact fast-path command executes its tool directly and skips the
+    tool-round model call entirely (mock_ollama.chat is never used); the answer
+    is still streamed by the chat model with the result grounded in messages."""
+    mock_ollama = MagicMock(spec=OllamaClient)
+    mock_ollama.embed.return_value = [0.0] * 2560
+    mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL]
+    mock_ollama.chat_stream.side_effect = make_mock_stream("It's 9 in the morning.")
+
+    mock_registry = MagicMock()
+    mock_registry.list_tools.return_value = ["time.now"]   # real list → fast-path fires
+    mock_registry.get_schema.return_value = [{"type": "function", "function": {"name": "time.now"}}]
+    mock_registry.execute.return_value = "2026-06-26 09:00"
+    mock_registry.risk_for.return_value = "safe"
+
+    memory = MemoryManager(embed_fn=lambda t: [0.0] * 2560)
+    brain = Brain(memory=memory, tool_registry=mock_registry, ollama=mock_ollama)
+
+    result = brain.run("what time is it?")
+    mock_ollama.chat.assert_not_called()           # NO tool-round model call
+    mock_registry.execute.assert_called_once()     # the tool ran deterministically
+    assert mock_registry.execute.call_args[0][0] == "time.now"
+    assert result == "It's 9 in the morning."
 
 
 def test_duplicate_tool_calls_not_reexecuted():

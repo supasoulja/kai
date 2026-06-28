@@ -94,6 +94,7 @@ def _get_db():
         db_path = MEMORY_DIR / "events.db"
         _db_conn = sqlite3.connect(str(db_path), check_same_thread=False)
         _db_conn.execute("PRAGMA journal_mode=WAL")
+        _db_conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock contention
         _db_conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,

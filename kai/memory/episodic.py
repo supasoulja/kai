@@ -208,6 +208,87 @@ def get_transcript(archive_id: str, user_id: int = 0) -> str | None:
     return row[0] if row else None
 
 
+def archive_and_clear_turns(
+    summary_text: str,
+    embed_fn: EmbedFn | None = None,
+    user_id: int = 0,
+) -> str:
+    """Atomically archive pending raw turns into a summary entry and delete them.
+
+    Replaces the old three-call dance (add_entry → save_transcript → delete_turns),
+    each of which committed separately. Those three text writes now happen in a
+    single transaction, so a crash can never leave the raw turns *and* their archive
+    both present, or strand a transcript without its turns. Returns the archive's
+    entry ID.
+
+    The summary embedding is best-effort and runs *after* the durable commit — a
+    failure there never undoes the archive (same contract as add_entry).
+    """
+    conn = get_conn()
+    entry_id = str(uuid.uuid4())
+    ts = datetime.now().isoformat()
+
+    # Capture the verbatim transcript and the turn rowids BEFORE anything is
+    # deleted — both are needed inside the transaction below.
+    transcript = get_pending_turns_text(user_id=user_id)
+    turn_rowids = [
+        r[0] for r in conn.execute(
+            "SELECT rowid FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
+            (user_id,)
+        ).fetchall()
+    ]
+
+    try:
+        conn.execute(
+            "INSERT INTO episodic_entries (id, user_id, content, timestamp, entry_type, metadata) "
+            "VALUES (?, ?, ?, ?, 'archive', '{}')",
+            (entry_id, user_id, summary_text, ts),
+        )
+        if transcript:
+            conn.execute(
+                "INSERT INTO episodic_transcripts (archive_id, user_id, content, timestamp) "
+                "VALUES (?, ?, ?, ?)",
+                (entry_id, user_id, transcript, ts),
+            )
+        conn.execute(
+            "DELETE FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
+            (user_id,)
+        )
+        if turn_rowids and sqlite_vec_available():
+            try:
+                placeholders = ",".join("?" * len(turn_rowids))
+                conn.execute(
+                    f"DELETE FROM episodic_vec WHERE rowid IN ({placeholders})",
+                    turn_rowids,
+                )
+            except Exception:
+                pass  # best-effort vec cleanup — text rows still go atomically
+        conn.commit()
+    except Exception:
+        conn.rollback()  # leave the turns intact rather than half-archive them
+        raise
+
+    # Embed the summary so it's retrievable by similarity — best-effort, post-commit.
+    if embed_fn and sqlite_vec_available():
+        try:
+            import sqlite_vec
+            rowid = conn.execute(
+                "SELECT rowid FROM episodic_entries WHERE id = ?", (entry_id,)
+            ).fetchone()[0]
+            embedding = embed_fn(summary_text)
+            conn.execute(
+                "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
+                (rowid, sqlite_vec.serialize_float32(embedding))
+            )
+            conn.commit()
+        except Exception:
+            from kai.config import DEBUG
+            if DEBUG:
+                import traceback; traceback.print_exc()
+
+    return entry_id
+
+
 def delete_turns(user_id: int = 0) -> None:
     """
     Delete all raw 'turn' entries from episodic_entries AND their vectors.
@@ -244,13 +325,17 @@ def delete_turns(user_id: int = 0) -> None:
 
 
 def _rows_to_entries(rows: list) -> list[EpisodicEntry]:
-    return [
-        EpisodicEntry(
+    entries = []
+    for row in rows:
+        try:
+            metadata = json.loads(row[4]) if row[4] else {}
+        except Exception:
+            metadata = {}  # corrupt metadata blob — don't let one bad row sink the read
+        entries.append(EpisodicEntry(
             id=row[0],
             content=row[1],
             timestamp=datetime.fromisoformat(row[2]),
             entry_type=row[3],
-            metadata=json.loads(row[4]),
-        )
-        for row in rows
-    ]
+            metadata=metadata,
+        ))
+    return entries

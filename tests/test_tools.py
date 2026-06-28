@@ -330,6 +330,122 @@ def test_web_search_formats_results():
     assert "python.org" in result
 
 
+# ── Weather (forecast formatting, no network) ────────────────────────────────
+
+def test_weather_forecast_block_surfaces_hi_lo_and_rain():
+    from kai.tools.web.weather import _format_forecast
+    days = [{
+        "date": "2026-06-27", "maxtempF": "89", "mintempF": "69",
+        "maxtempC": "31", "mintempC": "20",
+        "hourly": [
+            {"weatherDesc": [{"value": "Sunny"}], "chanceofrain": "10"},
+            {"weatherDesc": [{"value": "Partly cloudy"}], "chanceofrain": "40"},
+        ],
+    }]
+    out = _format_forecast(days)
+    assert "Today" in out
+    assert "69-89°F" in out
+    assert "40% rain" in out  # takes the max chance across the day
+
+
+def test_weather_forecast_empty_when_no_days():
+    from kai.tools.web.weather import _format_forecast
+    assert _format_forecast([]) == ""
+
+
+# ── Search (recency + max_results + lite fallback, no network) ────────────────
+
+def test_web_search_passes_recency_and_clamps_max_results():
+    from kai.tools.web import search as S
+    captured = {}
+
+    def fake(query, max_results=5, recency=""):
+        captured["max_results"] = max_results
+        captured["recency"] = recency
+        return [{"title": "t", "snippet": "s", "url": "u"}]
+
+    with patch.object(S, "_ddg_search", side_effect=fake):
+        S.web_search("q", recency="week", max_results=99)
+    assert captured["recency"] == "week"
+    assert captured["max_results"] == 10  # clamped to the 1-10 ceiling
+
+
+def test_recency_maps_to_ddg_df_codes():
+    from kai.tools.web.search import _RECENCY_CODES
+    assert _RECENCY_CODES == {"day": "d", "week": "w", "month": "m", "year": "y"}
+
+
+def test_lite_parser_extracts_results_and_unwraps_redirect():
+    from kai.tools.web.search import _parse_lite_results
+    html = (
+        '<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fpython.org">'
+        'Python</a><td class="result-snippet">Official site</td>'
+    )
+    results = _parse_lite_results(html, 5)
+    assert results == [{"title": "Python", "snippet": "Official site", "url": "https://python.org"}]
+
+
+def test_ddg_search_falls_back_to_lite_when_html_parses_nothing():
+    from kai.tools.web import search as S
+    lite_html = (
+        '<a class="result-link" href="https://example.com">Example</a>'
+        '<td class="result-snippet">A site</td>'
+    )
+    # First _fetch (html endpoint) returns unparseable markup; second (lite) parses.
+    with patch.object(S, "_fetch", side_effect=["<html>nothing useful</html>", lite_html]):
+        results = S._ddg_search("anything")
+    assert results and results[0]["title"] == "Example"
+
+
+# ── Researcher (excerpt + PDF + library, no network) ─────────────────────────
+
+def test_fetch_url_returns_excerpt_with_footer():
+    from kai.tools.web import researcher as R
+    from kai.config import WEB_EXCERPT_CHARS
+    with patch.object(R, "_extract_url_text", return_value=(200, "X" * (WEB_EXCERPT_CHARS + 500), None)):
+        out = R.fetch_url("http://example.com")
+    assert "Excerpt" in out
+    assert len(out) < WEB_EXCERPT_CHARS + 400  # body trimmed, not the full page
+
+
+def test_fetch_url_surfaces_extractor_error():
+    from kai.tools.web import researcher as R
+    with patch.object(R, "_extract_url_text", return_value=(None, "", "boom")):
+        assert R.fetch_url("http://x") == "boom"
+
+
+def test_add_to_library_full_read_then_searchable():
+    from kai.tools.web import researcher as R
+    from kai.tools.knowledge.rag import docs_search
+    from kai.core._app_state import set_current_user_id
+    set_current_user_id(0)
+    page = "The aurora borealis is caused by solar wind hitting the magnetosphere. " * 50
+    with patch.object(R, "_extract_url_text", return_value=(200, page, None)):
+        out = R.add_to_library("https://example.com/aurora")
+    assert "Saved to library" in out
+    assert "example.com/aurora" in out
+    # The full text is now retrievable via docs.search (text search is fine here).
+    hit = docs_search("aurora borealis")
+    assert "aurora" in hit.lower()
+
+
+# ── documents.ingest_text helper ──────────────────────────────────────────────
+
+def test_ingest_text_chunks_and_stores():
+    from kai.memory import documents as D
+    meta = D.ingest_text("hello world " * 200, source_name="https://src/x",
+                         user_id=0, file_type="url")
+    assert meta["chunk_count"] >= 1
+    assert meta["file_type"] == "url"
+    assert meta["filename"] == "https://src/x"
+
+
+def test_ingest_text_rejects_empty():
+    from kai.memory import documents as D
+    with pytest.raises(ValueError):
+        D.ingest_text("   ", source_name="x")
+
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
 def teardown_module(module):

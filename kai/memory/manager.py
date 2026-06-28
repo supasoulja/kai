@@ -96,22 +96,14 @@ class MemoryManager:
         Archives are retrieved only when semantically relevant — not injected every turn.
         The full verbatim transcript is preserved in episodic_transcripts for detail lookup.
         """
-        # Capture full transcript BEFORE turns are deleted
-        full_transcript = episodic.get_pending_turns_text(user_id=self.user_id)
-
-        # Store the summary archive — returns the new entry ID
-        archive_id = episodic.add_entry(
-            content    = summary_text,
-            embed_fn   = self.embed_fn,
-            entry_type = "archive",
-            user_id    = self.user_id,
+        # Summary, transcript, and turn deletion happen in one transaction so a
+        # crash can never leave raw turns + archive both present or orphan a
+        # transcript. (See episodic.archive_and_clear_turns.)
+        episodic.archive_and_clear_turns(
+            summary_text,
+            embed_fn = self.embed_fn,
+            user_id  = self.user_id,
         )
-
-        # Link the full transcript to this archive
-        if full_transcript:
-            episodic.save_transcript(archive_id, full_transcript, user_id=self.user_id)
-
-        episodic.delete_turns(user_id=self.user_id)  # raw turns captured — clean them up
 
     def get_transcript(self, archive_id: str) -> str | None:
         """Retrieve the full verbatim transcript for a given archive entry ID."""

@@ -461,10 +461,12 @@ _TOOL_CATEGORIES: dict[str, dict] = {
     "web_content": {
         "description": (
             "Open and read a specific web page or URL, take a screenshot of a page, "
-            "or fetch the raw contents of a link the user gave me. "
-            "Read this page, what does this URL say, grab that article."
+            "fetch the contents of a link the user gave me, or save a page to my "
+            "library to refer back to and search later. "
+            "Read this page, what does this URL say, grab that article, save this for me."
         ),
-        "tools": ["browser.read_page", "browser.screenshot", "research.fetch_url"],
+        "tools": ["browser.read_page", "browser.screenshot",
+                  "research.fetch_url", "research.add_to_library"],
     },
     "containers": {
         "description": (
@@ -569,6 +571,7 @@ TOOL_LABELS: dict[str, str] = {
     "cluster.broadcast_scan":        "Scanning all nodes",
     "cluster.get_result":            "Fetching node result",
     "research.fetch_url":            "Fetching URL",
+    "research.add_to_library":       "Filing page to library",
     "self.recent_changes":           "Reviewing recent changes",
     "study.search_papers":           "Searching papers",
     "study.search_books":            "Searching books",
@@ -617,6 +620,7 @@ _TOOL_RISK: dict[str, str] = {
     "lxc.stop":                      "caution",
     "workspace.git_clone":           "caution",
     "workspace.git_pull":            "caution",
+    "research.add_to_library":       "caution",  # writes a doc to the RAG library (reversible via docs.delete)
 }
 
 

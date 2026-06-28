@@ -24,6 +24,7 @@ import io
 import math
 import os
 import secrets
+import sqlite3
 import struct
 import tempfile
 from datetime import datetime, timedelta
@@ -614,6 +615,56 @@ class TestAdminControls:
         r = _fresh_client(self.owner_tok).get("/api/admin/shutdown-status")
         assert r.status_code == 200
         assert "phase" in r.json()
+
+
+# ── Account deletion: atomicity ───────────────────────────────────────────────
+
+class TestDeleteUserRollback:
+    """delete_user runs ~10 DELETEs as one transaction; a failure partway must
+    roll back rather than leave a half-deleted account or a dangling open txn."""
+
+    def setup_method(self):
+        _clear_users()
+        self.uid = _create_user(_unique_name("doomed"))
+
+    def test_delete_user_rolls_back_on_failure(self):
+        from kai.store import users as u
+        real_conn = get_conn()
+        name = _name_of(self.uid)
+        before = u.user_count()
+
+        # Proxy the connection so the final DELETE (the users row) blows up after
+        # earlier per-table deletes have already run. rollback/commit delegate to
+        # the real connection so we exercise the genuine rollback path.
+        class ConnProxy:
+            def execute(self, sql, *args, **kwargs):
+                if sql.strip().startswith("DELETE FROM users"):
+                    raise sqlite3.OperationalError("simulated failure mid-delete")
+                return real_conn.execute(sql, *args, **kwargs)
+            def commit(self):  return real_conn.commit()
+            def rollback(self): return real_conn.rollback()
+
+        with patch.object(u, "get_conn", return_value=ConnProxy()):
+            with pytest.raises(sqlite3.OperationalError):
+                u.delete_user(self.uid)
+
+        # The account and its row count are unchanged — the partial deletes rolled back.
+        assert u.user_count() == before
+        assert _name_of(self.uid) == name
+        # And the real connection is still usable (no dangling/aborted transaction).
+        real_conn.execute("SELECT 1").fetchone()
+
+    def test_delete_user_happy_path_removes_account(self):
+        from kai.store import users as u
+        before = u.user_count()
+        assert u.delete_user(self.uid) is True
+        assert u.user_count() == before - 1
+
+
+def _name_of(uid: int) -> str:
+    conn = get_conn()
+    row = conn.execute("SELECT name FROM users WHERE id = ?", (uid,)).fetchone()
+    return row[0] if row else ""
 
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
