@@ -26,6 +26,7 @@ from kai.config import (
 )
 from kai.memory.privacy import learning_enabled, patterns_enabled
 from kai.core.history import HistoryManager
+from kai.core.crew_runner import CrewRunner
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
 from kai.util.text import strip_thinking as _strip_thinking
@@ -375,6 +376,7 @@ class Brain:
         self._handoff_router_ready: bool = False      # handoff pattern index seeded lazily
         from kai.memory.knowledge import HandoffRouter
         self._handoff_router = HandoffRouter()
+        self._crew = CrewRunner(self)                 # agent-crew execution layer
         self._pending_confirm: dict | None = None     # tool call awaiting user confirmation
         self._tool_level: str = cfg.DEFAULT_TOOL_LEVEL  # which model runs tool rounds
         self._tool_model: str | None = None             # resolved lazily, availability-checked
@@ -833,14 +835,12 @@ class Brain:
             # Crew path (Part C/3b): triage → specialist(s); findings injected as
             # evidence, then Kai's voice synthesizes (unchanged). The generalist
             # _run_tool_rounds loop is bypassed entirely on this branch.
-            yield from self._run_crew_turn(
+            # run_turn returns the triage think decision for the streamed answer.
+            use_think = yield from self._crew.run_turn(
                 user_input, messages, tools_used, query_emb=query_emb,
                 handoff_mode=handoff_mode, tools_open=bool(tools_schema),
                 trace_id=trace_id, on_status=on_status,
             )
-            # use_think is finalized by triage inside _run_crew_turn (stored on a
-            # one-shot attribute to avoid widening the helper's return contract).
-            use_think = self._last_triage_think
         elif tools_schema:
             direct = yield from self._run_tool_rounds(
                 messages, tools_schema, tools_used,
@@ -1290,273 +1290,24 @@ class Brain:
             tool_error, win_error_code, dup_count,
         )
 
-    # ── Crew: specialist execution (Phase 3b) ──────────────────────────────────
-    # NOTE: not yet wired into run_stream — see backlog 3d. Reuses _run_tool_rounds
-    # with a CLEAN short context (lean prompt + subtask + scratchpad) and a tool
-    # schema narrowed to the specialist's slice.
+    # ── Crew: delegators to CrewRunner ─────────────────────────────────────────
+    # The crew subsystem moved to kai/core/crew_runner.py (self._crew). These thin
+    # shims are TEMPORARY scaffolding (Wave 6 crew extraction, commit 1) so the
+    # existing tests that drive brain._run_crew_turn / monkeypatch brain._triage_turn
+    # keep passing unchanged — proving the move is behavior-preserving. Commit 2
+    # deletes them (and _last_triage_think) and retargets the tests to brain._crew.
 
-    def _run_crew_turn(
-        self,
-        user_input: str,
-        messages: list[dict],
-        tools_used: list[str],
-        *,
-        query_emb: list[float] | None,
-        handoff_mode: str,
-        tools_open: bool,
-        trace_id: str,
-        on_status: "Callable[[str], None] | None",
-    ) -> Generator[tuple[str, bool, dict], None, None]:
-        """Crew path for one turn (Part C/3b). Triage → run the chosen profile,
-        inject findings as evidence for Kai's voice to synthesize. Sets
-        `self._last_triage_think` (the final think decision) for run_stream.
+    def _triage_turn(self, *args, **kwargs):
+        return self._crew.triage(*args, **kwargs)
 
-        CHAT/REASON resolve to no tools — nothing runs here, the turn falls
-        through to the streamed answer (REASON with thinking on).
-        """
-        from kai.core import crew
-        from kai.core.crew import Profile
+    def _run_specialist(self, *args, **kwargs):
+        return (yield from self._crew.run_specialist(*args, **kwargs))
 
-        # Tree nodes Q1/Q2 (Part C/3e): keyword/heuristic ∪ learned semantic patterns.
-        # tools_open arrives keyword-gated; needs_think starts from the heuristic +
-        # the reasoning handoff. The handoff-pattern axes add semantic recall so a
-        # tool/think turn with no keyword still routes correctly.
-        tool_sem = think_sem = False
-        if query_emb is not None:
-            try:
-                self._ensure_handoff_router()
-                tool_sem, _ = self._handoff_router.axis_match(query_emb, "tool")
-                think_sem, _ = self._handoff_router.axis_match(query_emb, "think")
-            except Exception:
-                pass
-        needs_think = (
-            _query_needs_thinking(user_input) or handoff_mode == "reasoning" or think_sem
-        )
-        decision = self._triage_turn(
-            user_input, query_emb, tools_open=tools_open or tool_sem, needs_think=needs_think,
-        )
-        self._last_triage_think = decision.think
-        flow_rec.record(trace_id, "triage", profile=str(decision.profile),
-                        specialist=decision.specialist or "-", lane=decision.lane,
-                        tools=decision.tools)
+    def _run_crew(self, *args, **kwargs):
+        return (yield from self._crew.run_crew(*args, **kwargs))
 
-        if not decision.tools:
-            return  # CHAT / REASON — no tools; stream the answer directly
-
-        # BOSS (or a tools turn with no clear single owner) → Otto orchestrates.
-        # BACKGROUND has no fire-and-forget infra yet (Phase 6) → run synchronously
-        # as a single specialist, same as FAST.
-        if decision.profile is Profile.BOSS or not decision.specialist:
-            tools_used.append("crew")
-            findings = yield from self._run_crew(
-                user_input, query_emb=query_emb, trace_id=trace_id, on_status=on_status,
-            )
-        else:
-            tools_used.append(decision.specialist)
-            result = yield from self._run_specialist(
-                decision.specialist, user_input,
-                query_emb=query_emb, trace_id=trace_id, on_status=on_status,
-            )
-            findings = result.findings
-            if result.needs and not result.blocked:
-                # FAST → BOSS promotion: Otto re-orchestrates; partial work kept.
-                boss = yield from self._run_crew(
-                    user_input, query_emb=query_emb, trace_id=trace_id, on_status=on_status,
-                )
-                findings = "\n\n".join(p for p in (findings, boss) if p)
-
-        if findings:
-            # Inject as a tool RESULT, not a system note: _ground_evidence and the
-            # voice model only treat role:"tool" content as real evidence. A system
-            # note trips the persona's anti-fabrication tripwire → Kai hedges ("let
-            # me run a scan") instead of reporting what the crew already found. The
-            # assistant/tool_calls wrapper keeps the message sequence template-valid.
-            messages.append({
-                "role": "assistant", "content": "",
-                "tool_calls": [{"function": {"name": "crew", "arguments": {}}}],
-            })
-            messages.append({
-                "role": "tool",
-                "content": json.dumps({"output": findings, "success": True}),
-            })
-
-    def _triage_turn(
-        self, user_input: str, query_emb: list[float] | None,
-        *, tools_open: bool, needs_think: bool,
-    ) -> "object":
-        """Run the model-free triage tree (Part C) → a crew.TriageResult.
-        Category scores come from the same cached index the tool selector uses."""
-        from kai.core import crew
-        scores: list[tuple[str, float]] = []
-        if query_emb and self._tool_index:
-            try:
-                scores = self.tool_registry.rank_categories(query_emb, self._tool_index, top_k=3)
-            except Exception:
-                scores = []
-        return crew.triage(
-            tools_open=tools_open,
-            needs_think=needs_think,
-            category_scores=scores,
-            long_running=crew.is_long_running_query(user_input),
-            think_capped=not self._think,
-        )
-
-    def _run_specialist(
-        self,
-        name: str,
-        subtask: str,
-        scratchpad: "list[str] | None" = None,
-        *,
-        query_emb: list[float] | None = None,
-        trace_id: str = "",
-        on_status: "Callable[[str], None] | None" = None,
-    ) -> Generator[tuple[str, bool, dict], None, "object"]:
-        """Run one crew specialist on ONE subtask. Returns a crew.SpecialistResult.
-
-        Context is deliberately short — the lean prompt + the subtask + only the
-        scratchpad facts handed in, NOT the growing session history (better
-        small-model accuracy; the main structural change from the single
-        ever-growing messages list). Yields the same status/confirm/think events
-        as _run_tool_rounds so the UI and confirm gate keep working.
-        """
-        from kai.core import crew
-
-        prompt = crew.load_specialist_prompt(name)
-        slice_names = crew.tools_for_specialist(name, self.tool_registry.category_tool_map()) \
-            if self.tool_registry else []
-        tools_schema = self.tool_registry.schema_for(slice_names) if slice_names else None
-
-        facts = "\n".join(f"- {f}" for f in (scratchpad or []) if f)
-        user_block = subtask if not facts else f"{subtask}\n\nKnown so far:\n{facts}"
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user",   "content": user_block},
-        ]
-        tools_used: list[str] = []
-
-        from kai.llm import roles
-        answer = yield from self._run_tool_rounds(
-            messages, tools_schema, tools_used,
-            query_emb=query_emb, user_input=subtask, trace_id=trace_id,
-            on_status=on_status, keep_prose=True,
-            model_override=roles.crew_model_for(name),
-        )
-
-        if answer:
-            _, findings_text = answer
-        else:
-            # Tools ran but no prose findings were returned (confirm gate, safety
-            # stop, or rounds exhausted) — distill from the tool results gathered.
-            findings_text = self._distill_tool_findings(messages)
-
-        status, residual = crew.parse_specialist_status(findings_text)
-        return crew.SpecialistResult(
-            status=status, findings=findings_text.strip(),
-            tools=tools_used, for_=residual,
-        )
-
-    def _run_crew(
-        self,
-        user_request: str,
-        *,
-        query_emb: list[float] | None = None,
-        trace_id: str = "",
-        on_status: "Callable[[str], None] | None" = None,
-    ) -> Generator[tuple[str, bool, dict], None, str]:
-        """BOSS lane: Otto orchestrates specialists sequentially, accumulating a
-        scratchpad. Returns the combined findings string (the evidence Kai's voice
-        then synthesizes). Bounded by crew.MAX_DISPATCHES; a (specialist, subtask)
-        dedup guards ping-pong; a `needs:` handback force-dispatches the named
-        sibling next, preserving partial work.
-        """
-        from kai.core import crew
-
-        otto_prompt = crew.load_specialist_prompt("Otto")
-        scratchpad: list[str] = []
-        tried: set[tuple[str, str]] = set()
-        forced: tuple[str, str] | None = None  # (specialist, subtask) from a needs: handback
-
-        for _step in range(crew.MAX_DISPATCHES):
-            if self._cancel.is_set():
-                break
-            if forced:
-                specialist, subtask = forced
-                forced = None
-            else:
-                decision = self._otto_decide(otto_prompt, user_request, scratchpad, trace_id)
-                if not decision or decision[0] == "finish":
-                    break
-                _, specialist, subtask = decision
-
-            sig = (specialist, subtask.strip()[:60].lower())
-            if sig in tried:
-                break  # ping-pong / repeat guard
-            tried.add(sig)
-
-            result = yield from self._run_specialist(
-                specialist, subtask, list(scratchpad),
-                query_emb=query_emb, trace_id=trace_id, on_status=on_status,
-            )
-            if result.findings:
-                scratchpad.append(f"[{specialist}] {result.findings}")
-            if result.needs and not result.blocked:
-                forced = (result.needs, result.for_ or subtask)
-
-        return "\n\n".join(scratchpad)
-
-    def _otto_decide(
-        self, otto_prompt: str, user_request: str, scratchpad: list[str], trace_id: str,
-    ) -> "tuple[str, str, str] | None":
-        """One non-streaming call to Otto → his next DISPATCH/FINISH line, parsed.
-        Otto never calls tools here (his search.web disambiguation exception is a
-        later refinement); he is a pure router."""
-        from kai.core import crew
-        from kai.llm import roles
-
-        # Otto's model = his roles.json entry (defaults to the shared crew model).
-        want = roles.crew_model_for("Otto")
-        try:
-            tool_model = want if want in self.ollama.installed_models() else self._resolve_tool_model()[0]
-        except Exception:
-            tool_model = want or self._resolve_tool_model()[0]
-        facts = "\n".join(scratchpad) if scratchpad else "(nothing gathered yet)"
-        user = (
-            f"User request: {user_request}\n\n"
-            f"Findings so far:\n{facts}\n\n"
-            "Output your one line now (DISPATCH <specialist>: <subtask>  or  FINISH: <summary>):"
-        )
-        messages = [
-            {"role": "system", "content": otto_prompt},
-            {"role": "user", "content": user},
-        ]
-        if tool_model is None:
-            resp = self._chat(messages, think=False, temperature=cfg.TEMPERATURE_TOOL)
-        else:
-            resp = self.ollama.chat(messages, model=tool_model, think=False, keep_alive=0)
-        text = resp.get("message", {}).get("content", "")
-        decision = crew.parse_otto_decision(text)
-        flow_rec.record(trace_id, "otto", text=text,
-                        decision="/".join(d for d in (decision or ("none",)) if d))
-        return decision
-
-    @staticmethod
-    def _distill_tool_findings(messages: list[dict]) -> str:
-        """Concatenate the tool-result outputs from a specialist's scratch messages
-        into a compact findings string — the fallback when the worker ran tools but
-        didn't write a closing summary."""
-        outs: list[str] = []
-        for m in messages:
-            if m.get("role") != "tool":
-                continue
-            content = m.get("content", "")
-            try:
-                payload = json.loads(content)
-                out = payload.get("output", content) if isinstance(payload, dict) else content
-            except (json.JSONDecodeError, TypeError):
-                out = content
-            if out:
-                outs.append(str(out).strip())
-        return "\n".join(outs)
+    def _run_crew_turn(self, *args, **kwargs):
+        self._last_triage_think = (yield from self._crew.run_turn(*args, **kwargs))
 
     # ── Tool-round helpers ─────────────────────────────────────────────────────
 
