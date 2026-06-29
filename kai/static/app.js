@@ -145,7 +145,8 @@ function switchTab(tabName) {
   document.querySelectorAll('.tab-pane').forEach(p =>
     p.classList.toggle('active', p.id === 'panel-' + tabName)
   );
-  if (tabName === 'dashboard') loadDashboard();
+  if (tabName === 'dashboard') { loadDashboard(); KaiConsole.start(); }
+  else KaiConsole.stop();
   if (tabName === 'study') loadStudy();
   if (tabName === 'memory') loadMemoryBrowser();
   if (tabName === 'chat') {
@@ -183,6 +184,50 @@ if (settingsLogoutBtn) {
     window.location.href = '/login';
   });
 }
+
+// Quit button — desktop app only. Routes through the native clean-quit path
+// (pywebview bridge → app.py _clean_quit: saving overlay + watchdog + ritual),
+// so it works even when the tray Quit misbehaves. Hidden in the browser, where
+// killing the shared server from a tab isn't wanted.
+(function initQuitButton() {
+  const btn = $('topbar-quit');
+  if (!btn) return;
+  const hasBridge = () => window.pywebview && pywebview.api && pywebview.api.close_action;
+  const reveal = () => { if (hasBridge()) btn.style.display = ''; };
+  // pywebview.api may attach after this script runs; catch it either way.
+  window.addEventListener('pywebviewready', reveal);
+  let tries = 0;
+  const probe = setInterval(() => {
+    if (hasBridge()) { reveal(); clearInterval(probe); }
+    else if (++tries > 40) clearInterval(probe);  // ~10s; give up (browser mode)
+  }, 250);
+  btn.addEventListener('click', () => {
+    if (!confirm('Quit Kai? It will finish saving the session, then exit.')) return;
+    try { pywebview.api.close_action('quit', false); }
+    catch (e) { console.error('Quit failed:', e); }
+  });
+})();
+
+// External links must never hijack the desktop webview — it's a single
+// chrome-less window with no Back button, so a chat link to e.g. an arXiv PDF
+// would trap the user on that page. Route cross-origin http(s) links to a
+// separate pop-up window via the native bridge (app.py _Api.open_link). In the
+// browser there's no bridge, so fall back to a normal new tab. Capture phase so
+// we win before any bubbling handler and can preventDefault reliably.
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  let url;
+  try { url = new URL(a.href); } catch { return; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+  if (url.origin === window.location.origin) return;  // in-app nav: leave alone
+  e.preventDefault();
+  if (window.pywebview && pywebview.api && pywebview.api.open_link) {
+    pywebview.api.open_link(a.href);
+  } else {
+    window.open(a.href, '_blank', 'noopener');
+  }
+}, true);
 
 // Kai's Computer button
 const computerBtn = $('open-computer-btn');
@@ -843,6 +888,12 @@ async function loadInfo() {
     // System control (restart / shutdown) \u2014 owner only
     const sysControl = $('system-control-section');
     if (sysControl) sysControl.style.display = d.is_owner ? '' : 'none';
+
+    // Server console \u2014 owner only (also starts polling if dashboard is open)
+    KaiConsole.setOwner(!!d.is_owner);
+    if (d.is_owner && document.getElementById('panel-dashboard')?.classList.contains('active')) {
+      KaiConsole.start();
+    }
   } catch { /* ignore */ }
 }
 
@@ -908,6 +959,40 @@ async function loadInfo() {
   const downBtn = $('sys-shutdown');
   if (!softBtn || !hardBtn || !downBtn) return;
 
+  // Ordered phases per mode, so the overlay can show the whole sequence and
+  // which step is running. Mirrors kai/core/lifecycle.py's _report() phases.
+  const PHASE_LABEL = {
+    'starting':    'Preparing',
+    'draining':    'Finishing in-flight memory work',
+    'sleep-cycle': 'Writing welcome-back note',
+    'hq-reembed':  'Embedding new memories',
+    'rebuilding':  'Reloading brains & indexes',
+    'closing':     'Releasing resources',
+    'done':        'Session saved',
+  };
+  const PHASE_ORDER = {
+    'soft-restart': ['draining', 'sleep-cycle', 'rebuilding', 'done'],
+    'default':      ['starting', 'draining', 'sleep-cycle', 'hq-reembed', 'closing', 'done'],
+  };
+
+  function renderSteps(mode, phase) {
+    const box = document.getElementById('kai-admin-steps');
+    if (!box) return;
+    const order = PHASE_ORDER[mode] || PHASE_ORDER.default;
+    const cur = order.indexOf(phase);
+    box.innerHTML = order.map((p, i) => {
+      const done = phase === 'done' || (cur >= 0 && i < cur);
+      const active = i === cur && phase !== 'done';
+      const icon = done ? '✓' : (active ? '◉' : '○');
+      const color = done ? '#a6e3a1' : (active ? '#e67e22' : '#6c7086');
+      const weight = active ? '600' : '400';
+      return '<div style="display:flex;align-items:center;gap:8px;font-size:13px;'
+        + 'color:' + color + ';font-weight:' + weight + ';padding:2px 0">'
+        + '<span style="width:14px;text-align:center">' + icon + '</span>'
+        + '<span>' + PHASE_LABEL[p] + '</span></div>';
+    }).join('');
+  }
+
   function overlay(title) {
     let o = document.getElementById('kai-admin-overlay');
     if (!o) {
@@ -917,9 +1002,10 @@ async function loadInfo() {
         + 'justify-content:center;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);'
         + 'font-family:system-ui,sans-serif';
       o.innerHTML = '<div style="background:#1e1e2e;color:#cdd6f4;border-radius:12px;'
-        + 'padding:28px 36px;text-align:center;min-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
-        + '<div id="kai-admin-title" style="font-size:17px;font-weight:600;margin-bottom:10px"></div>'
-        + '<div id="kai-admin-detail" style="font-size:13px;color:#a6adc8">Working…</div>'
+        + 'padding:28px 36px;min-width:340px;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+        + '<div id="kai-admin-title" style="font-size:17px;font-weight:600;margin-bottom:14px;text-align:center"></div>'
+        + '<div id="kai-admin-steps" style="text-align:left;margin-bottom:14px"></div>'
+        + '<div id="kai-admin-detail" style="font-size:12px;color:#a6adc8;text-align:center;min-height:16px">Working…</div>'
         + '<div style="height:6px;border-radius:3px;background:#313244;margin-top:14px;overflow:hidden">'
         + '<div id="kai-admin-bar" style="height:100%;width:0;background:#e67e22;transition:width .3s"></div>'
         + '</div></div>';
@@ -943,8 +1029,17 @@ async function loadInfo() {
         if (sawGone) { if (onBack) return onBack(); }
         const d = document.getElementById('kai-admin-detail');
         const bar = document.getElementById('kai-admin-bar');
-        if (d && st.phase) d.textContent = st.detail || st.phase;
-        if (bar && typeof st.pct === 'number') bar.style.width = Math.max(5, st.pct) + '%';
+        if (st.phase) renderSteps(st.mode, st.phase);
+        if (d) d.textContent = st.detail || '';
+        if (bar) {
+          // Most phases don't report a pct; fall back to how far through the
+          // step sequence we are so the bar still advances steadily.
+          const order = PHASE_ORDER[st.mode] || PHASE_ORDER.default;
+          const idx = order.indexOf(st.phase);
+          const stepPct = idx >= 0 ? Math.round(((idx + 1) / order.length) * 100) : 0;
+          const pct = Math.max(typeof st.pct === 'number' ? st.pct : 0, stepPct, 5);
+          bar.style.width = pct + '%';
+        }
         if (st.done && onDone) return onDone(st);
       } else {
         sawGone = true;
@@ -990,6 +1085,82 @@ async function loadInfo() {
       if (bar) bar.style.width = '100%';
       return true;  // stop polling
     }});
+  });
+})();
+
+// Server console (owner only) — mirrors the `python app.py` terminal output.
+// Polls /api/admin/logs incrementally (only lines newer than the last seq we
+// saw) and appends them to the dashboard panel. Runs only while the dashboard
+// tab is open and the viewer is the owner.
+const KaiConsole = (function () {
+  const MAX_DOM_LINES = 600;
+  let lastSeq = 0;
+  let timer = null;
+  let booted = false;     // cleared the "Connecting…" placeholder yet?
+  let isOwner = false;
+
+  const pre = () => document.getElementById('dash-console');
+
+  function classify(text) {
+    if (text.startsWith('[+]')) return 'ln ln-ok';
+    if (text.startsWith('[!]')) return 'ln ln-warn';
+    if (/\b(error|traceback|exception|failed)\b/i.test(text)) return 'ln ln-err';
+    if (text.startsWith('[~]') || text.startsWith('[debug]')) return 'ln ln-dim';
+    return 'ln';
+  }
+
+  function append(lines) {
+    const box = pre();
+    if (!box || !lines.length) return;
+    const auto = document.getElementById('dash-console-autoscroll');
+    const stick = !auto || auto.checked;
+    const frag = document.createDocumentFragment();
+    for (const ln of lines) {
+      const span = document.createElement('span');
+      span.className = classify(ln.text);
+      span.textContent = ln.text;
+      frag.appendChild(span);
+    }
+    box.appendChild(frag);
+    while (box.childElementCount > MAX_DOM_LINES) box.removeChild(box.firstElementChild);
+    if (stick) box.scrollTop = box.scrollHeight;
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch('/api/admin/logs?after=' + lastSeq);
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!booted) { const b = pre(); if (b) b.innerHTML = ''; booted = true; }
+      if (d.lines && d.lines.length) append(d.lines);
+      lastSeq = d.last_seq || lastSeq;
+    } catch { /* server may be restarting — keep trying */ }
+  }
+
+  return {
+    start() {
+      if (!isOwner || timer) return;
+      tick();
+      timer = setInterval(tick, 1200);
+    },
+    stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+    },
+    setOwner(owner) {
+      isOwner = owner;
+      const sec = document.getElementById('dash-console-section');
+      if (sec) sec.style.display = owner ? '' : 'none';
+      if (!owner) this.stop();
+    },
+  };
+})();
+
+// Console clear button — clears the on-screen view only (server keeps logging).
+(function initConsoleControls() {
+  const clearBtn = document.getElementById('dash-console-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    const box = document.getElementById('dash-console');
+    if (box) box.innerHTML = '';
   });
 })();
 
@@ -1270,6 +1441,7 @@ async function sendMessage() {
           if (fullText) playTTS(fullText);
           if (statusLog.length > 0) addActivityLog(content, statusLog);
           if (ev.message_id && fullText) addFeedbackBar(content.closest('.bubble'), ev.message_id, fullText);
+          if (ev.latency_ms != null && fullText) addLatencyBadge(content.closest('.bubble'), ev.latency_ms);
           if (pendingConfirm) {
             console.log('[confirm_tool] adding button for:', pendingConfirm.name);
             addConfirmBar(content.closest('.bubble'), pendingConfirm);
@@ -1348,6 +1520,18 @@ function addFeedbackBar(bubble, messageId, fullText) {
       submitFeedback(messageId, v, fullText);
     });
   });
+}
+
+// Show how long Kai took to generate this reply, as a subtle badge.
+function addLatencyBadge(bubble, ms) {
+  if (bubble == null || ms == null) return;
+  if (bubble.querySelector('.latency-badge')) return;  // don't double up
+  const badge = document.createElement('span');
+  badge.className = 'latency-badge';
+  const label = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  badge.textContent = `⏱ ${label}`;
+  badge.title = 'Response time';
+  bubble.appendChild(badge);
 }
 
 async function submitFeedback(messageId, value, fullText) {
@@ -1637,14 +1821,17 @@ function _getTtsCtx() {
 // Call on any user gesture so the AudioContext is already running before TTS fires.
 function _primeAudio() { _getTtsCtx(); }
 
+const ttsIcon = $('ttsIcon');
 function _applyTtsState() {
   if (!ttsBtn) return;
   if (_ttsEnabled) {
     ttsBtn.classList.add('tts-on');
     ttsBtn.title = 'Voice output ON — click to disable';
+    if (ttsIcon) ttsIcon.textContent = 'volume_up';
   } else {
     ttsBtn.classList.remove('tts-on');
     ttsBtn.title = 'Voice output OFF — click to enable';
+    if (ttsIcon) ttsIcon.textContent = 'volume_off';
   }
 }
 _applyTtsState();
@@ -1708,7 +1895,7 @@ async function _transcribeAndFill(audioBlob) {
     console.error('[voice] transcribe error:', e);
   } finally {
     micBtn.classList.remove('processing');
-    micIcon.textContent = 'mic';
+    micIcon.textContent = 'mic_off';
   }
 }
 
@@ -1843,7 +2030,7 @@ if (micBtn) {
         await _recorder.start();
         _micActive = true;
         micBtn.classList.add('recording');
-        micIcon.textContent = 'stop';
+        micIcon.textContent = 'mic';
       } catch (err) {
         console.error('[voice] mic start error:', err);
         alert('Microphone access denied or unavailable.');
@@ -1859,7 +2046,7 @@ if (micBtn) {
       await _recorder.start();
       _pttActive = true;
       micBtn.classList.add('recording');
-      micIcon.textContent = 'stop';
+      micIcon.textContent = 'mic';
     } catch (err) {
       console.error('[voice] PTT start error:', err);
     }
@@ -2689,6 +2876,7 @@ async function loadSessionIntoChat(sessionId) {
           <div class="bubble"><div class="content">${safeMarkdown(m.content || '')}</div></div>
         `;
         messagesEl.appendChild(wrap);
+        if (m.latency_ms != null) addLatencyBadge(wrap.querySelector('.bubble'), m.latency_ms);
       }
     }
     _activeSession = sessionId;

@@ -33,14 +33,15 @@ def append_message(
     content: str,
     turn_order: int,
     user_id: int = 0,
+    latency_ms: int | None = None,
 ) -> int:
     """Persist one message and return its row id."""
     now = datetime.now().isoformat()
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO session_messages (session_id, user_id, role, content, timestamp, turn_order) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (session_id, user_id, role, content, now, turn_order),
+        "INSERT INTO session_messages (session_id, user_id, role, content, timestamp, turn_order, latency_ms) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, user_id, role, content, now, turn_order, latency_ms),
     )
     conn.execute(
         "UPDATE sessions SET message_count = message_count + 1, last_active = ? "
@@ -92,14 +93,14 @@ def get_messages(session_id: str, user_id: int = 0) -> list[dict]:
     conn = get_conn()
     # Verify session ownership via JOIN — returns nothing if user_id doesn't match
     rows = conn.execute(
-        "SELECT sm.role, sm.content, sm.timestamp "
+        "SELECT sm.role, sm.content, sm.timestamp, sm.latency_ms "
         "FROM session_messages sm "
         "JOIN sessions s ON sm.session_id = s.id "
         "WHERE sm.session_id = ? AND s.user_id = ? "
         "ORDER BY sm.turn_order, sm.id",
         (session_id, user_id),
     ).fetchall()
-    return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
+    return [{"role": r[0], "content": r[1], "timestamp": r[2], "latency_ms": r[3]} for r in rows]
 
 
 def search_messages(query: str, limit: int = 10, user_id: int = 0) -> list[dict]:

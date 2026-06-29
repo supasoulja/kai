@@ -11,7 +11,6 @@ Usage:
 
 import json
 import os
-import socket
 import sys
 import threading
 import time
@@ -275,19 +274,40 @@ _SAVING_OVERLAY_JS = """
 _clean_quit_started = threading.Event()
 
 
+# Hard ceiling on the whole quit sequence. If anything wedges — a blocked
+# evaluate_js, a dead Ollama mid sleep-cycle/re-embed, a stuck background pool —
+# the process still dies instead of leaving the window frozen forever. The
+# ritual writes incrementally (INSERT OR REPLACE, idempotent), so a cut-off
+# embed just resumes on the next shutdown.
+_QUIT_WATCHDOG_SECS = 90.0
+
+
 def _clean_quit() -> None:
     """Run Kai's graceful shutdown, then exit. Idempotent across all quit paths."""
     if _clean_quit_started.is_set():
         return
     _clean_quit_started.set()
 
-    def _worker():
+    # Guarantee termination no matter what blocks below.
+    watchdog = threading.Timer(_QUIT_WATCHDOG_SECS, lambda: os._exit(0))
+    watchdog.daemon = True
+    watchdog.start()
+
+    # Show the "saving…" overlay best-effort and OFF the critical path. On GTK,
+    # evaluate_js from a worker thread can block indefinitely while the window is
+    # closing, so it must never gate the ritual (this was the freeze: the old
+    # code ran it first and the hang stalled the whole shutdown before it began).
+    def _show_overlay():
         try:
             if _window:
-                try:
-                    _window.evaluate_js(_SAVING_OVERLAY_JS)
-                except Exception:
-                    pass
+                _window.evaluate_js(_SAVING_OVERLAY_JS)
+        except Exception:
+            pass
+
+    threading.Thread(target=_show_overlay, name="kai-saving-overlay", daemon=True).start()
+
+    def _worker():
+        try:
             from kai.core import lifecycle
             lifecycle.graceful_shutdown(reason="desktop quit")
         except Exception as exc:
@@ -307,6 +327,43 @@ def _clean_quit() -> None:
 
 class _Api:
     """Methods callable from JavaScript via pywebview.api.*"""
+
+    def open_link(self, url: str):
+        """Open an external web link in its own window.
+
+        The whole app lives in a single chrome-less webview, so letting a chat
+        link navigate it strands the user on the target page with no Back
+        button. Spawning a separate window gives them the OS title-bar close
+        button as an escape hatch, and keeps the chat untouched behind it.
+        """
+        if not isinstance(url, str):
+            return
+        u = url.strip()
+        # Only real web links — never file://, javascript:, data:, etc.
+        if not (u.startswith("http://") or u.startswith("https://")):
+            return
+
+        import webview
+
+        # Offset the popup off the main window's top-left so it lands "next to"
+        # the chat rather than dead-centre on top of it.
+        x = y = None
+        if _window is not None:
+            try:
+                x = int(_window.x) + 60
+                y = int(_window.y) + 60
+            except Exception:
+                x = y = None
+
+        webview.create_window(
+            u,                # title — shows the URL until something better
+            u,
+            width=900,
+            height=800,
+            x=x,
+            y=y,
+            text_select=True,
+        )
 
     def close_action(self, action: str, remember: bool = False):
         if remember:

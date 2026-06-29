@@ -40,10 +40,9 @@ import kai.config as cfg
 from kai.core import bootstrap
 from kai.core import lifecycle
 from kai.util import log as _klog
-from kai.core.brain import Brain, _strip_thinking, _build_compress_messages
+from kai.core.brain import _strip_thinking, _build_compress_messages
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
-from kai.memory.procedural import seed_defaults
 from kai.tools import registry as tool_registry
 from kai.store import sessions as _sessions
 from kai.core import events as _events
@@ -550,7 +549,6 @@ async def memory_search(q: str, request: Request):
         return {"facts": [], "episodes": []}
 
     from kai.store.db import get_conn
-    from kai.memory import episodic as _episodic
     conn = get_conn()
 
     # Facts: simple substring match on key + value
@@ -729,7 +727,7 @@ async def get_preset(request: Request):
         key = cfg.DEFAULT_PRESET
     return {
         "preset": key,
-        "temperature": brain._final_temp,
+        "temperature": brain.final_temperature,
         "temp_min": cfg.TEMP_MIN,
         "temp_max": cfg.TEMP_MAX,
         "presets": _preset_list(brain.memory),
@@ -919,7 +917,7 @@ async def add_model(req: AddModelRequest, request: Request):
         entry = _models.add_model(name, ollama_id, req.think)
         return {"ok": True, "model": entry}
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @app.delete("/settings/models/{name}")
@@ -931,7 +929,7 @@ async def delete_model(name: str, request: Request):
             raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
         return {"ok": True}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/settings/models/active")
@@ -955,7 +953,7 @@ async def set_active_model(request: Request):
         raise HTTPException(
             status_code=400,
             detail=f"No API key stored for '{name}'. Connect this provider first.",
-        )
+        ) from None
     return {"ok": True, "model": entry["ollama_id"], "think": entry.get("think", False),
             **resolved}
 
@@ -1167,7 +1165,7 @@ _MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB max upload size
 @app.post("/docs/upload")
 async def upload_doc(file: UploadFile = File(...), request: Request = None):
     """Ingest an uploaded document: extract text, chunk, embed, store."""
-    import shutil, tempfile
+    import tempfile
     from pathlib import Path
     from kai.memory import documents as _docs
 
@@ -1223,20 +1221,17 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):
             f"{meta.get('chunk_count', '?')} chunks, "
             f"{meta.get('char_count', '?')} chars]"
         )
-        with brain._history_lock:
-            brain._session_history.append(
-                {"role": "user", "content": upload_note}
-            )
+        brain.append_external_turn("user", upload_note)
 
         return {"ok": True, **meta}
     except ValueError as e:
         # ValueError is raised intentionally by _extract_text for known-bad input;
         # safe to surface the message (it's ours, not a library traceback).
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception:
         # Log the real error server-side; never expose library tracebacks to client
         _log.exception("Document ingestion failed")
-        raise HTTPException(status_code=500, detail="Document ingestion failed. Check the server log for details.")
+        raise HTTPException(status_code=500, detail="Document ingestion failed. Check the server log for details.") from None
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -1295,6 +1290,8 @@ async def chat(req: ChatRequest, request: Request):
                         event = {"type": "done"}
                         if meta.get("message_id"):
                             event["message_id"] = meta["message_id"]
+                        if meta.get("latency_ms") is not None:
+                            event["latency_ms"] = meta["latency_ms"]
                     elif meta.get("confirm_tool"):
                         event = {"type": "confirm_tool", "name": meta["name"], "label": meta["label"]}
                         if meta.get("diff"):
@@ -1923,6 +1920,12 @@ def setup_app(host: str = "127.0.0.1", port: int = 7860,
     both the browser-based launcher and the desktop app shell can share
     the same init path.
     """
+    # Mirror console output into the in-memory ring buffer so the dashboard's
+    # Server Console panel shows what the launching terminal sees. Install first
+    # so init/model-load logs below are captured too.
+    from kai.util import logbuf
+    logbuf.install()
+
     origins = [
         f"{scheme}://localhost:{port}",
         f"{scheme}://127.0.0.1:{port}",

@@ -162,7 +162,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         _maybe_migrate_fresh(conn)
         _maybe_migrate_embed_dim(conn)
         _create_all_tables(conn)
+        _maybe_add_latency_column(conn)
         _schema_initialized = True
+
+
+def _maybe_add_latency_column(conn: sqlite3.Connection) -> None:
+    """Add session_messages.latency_ms to pre-existing DBs that lack it."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(session_messages)").fetchall()}
+    except Exception:
+        return  # table doesn't exist yet — _create_all_tables already made it fresh
+    if "latency_ms" in cols:
+        return
+    conn.execute("ALTER TABLE session_messages ADD COLUMN latency_ms INTEGER")
+    conn.commit()
 
 
 def _maybe_migrate_fresh(conn: sqlite3.Connection) -> None:
@@ -310,7 +323,8 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             content     TEXT    NOT NULL,
             timestamp   TEXT    NOT NULL,
             turn_order  INTEGER NOT NULL,
-            feedback    INTEGER DEFAULT NULL
+            feedback    INTEGER DEFAULT NULL,
+            latency_ms  INTEGER DEFAULT NULL
         );
 
         -- Tool aliases (global — shared across users)

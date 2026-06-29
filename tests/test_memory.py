@@ -164,6 +164,20 @@ def test_recent_sessions_recalls_previous_and_excludes_current():
     assert "disk space" not in other
 
 
+def test_append_message_stores_latency():
+    """Assistant messages persist their generation time; user messages don't."""
+    from kai.store import sessions as S
+
+    sid = S.new_session("timing test", user_id=0)
+    S.append_message(sid, "user", "how long did that take", 0, user_id=0)
+    S.append_message(sid, "assistant", "About two seconds.", 1, user_id=0, latency_ms=2345)
+
+    msgs = S.get_messages(sid, user_id=0)
+    by_role = {m["role"]: m for m in msgs}
+    assert by_role["assistant"]["latency_ms"] == 2345
+    assert by_role["user"]["latency_ms"] is None
+
+
 # ── Per-user DB connection cache (tree.py / state.py) ────────────────────────────
 
 def test_tree_connection_is_cached_and_reused(tmp_path, monkeypatch):

@@ -60,3 +60,15 @@ async def shutdown_status(request: Request):
     """Progress of an in-flight shutdown/restart (for the dashboard overlay)."""
     _require_owner(request)
     return lifecycle.get_progress()
+
+
+@router.get("/logs")
+async def logs(request: Request, after: int = 0):
+    """Console output mirror for the dashboard's Server Console panel.
+
+    Pass ?after=<seq> to fetch only lines newer than the last one seen, so the
+    panel can poll cheaply. Owner-only — these are raw server logs.
+    """
+    _require_owner(request)
+    from kai.util import logbuf
+    return logbuf.snapshot(after_seq=after)
