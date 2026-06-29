@@ -111,7 +111,10 @@ def _tool_to_specialist() -> dict[str, str]:
     return out
 
 
-_PROMPT_RE = re.compile(r"`([^`]+)`\s*(?:→|->)\s*\*\*([a-z][a-z0-9_.]+)\*\*", re.I)
+# Match: `prompt` [optional (parenthetical note)] → **tool.name**
+# The parenthetical (e.g. "(after a search)") is a human hint, not part of the prompt.
+_PROMPT_RE = re.compile(
+    r"`([^`]+)`\s*(?:\([^)]*\)\s*)?(?:→|->)\s*\*\*([a-z][a-z0-9_.]+)\*\*", re.I)
 
 
 def _canonical_prompts() -> dict[str, list[str]]:
