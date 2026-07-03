@@ -23,11 +23,10 @@ entry doesn't pin one.
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from collections.abc import Generator
 
 from kai.llm.client import register_provider
+from kai.llm.providers._http import BaseHTTPProvider, ProviderError  # noqa: F401  (re-exported)
 
 _DEFAULT_BASE = "https://api.anthropic.com"
 _DEFAULT_MODEL = "claude-opus-4-8"
@@ -35,13 +34,7 @@ _API_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 8192
 
 
-class ProviderError(RuntimeError):
-    def __init__(self, message: str, status: int | None = None):
-        super().__init__(message)
-        self.status = status
-
-
-class AnthropicClient:
+class AnthropicClient(BaseHTTPProvider):
     def __init__(self, api_key: str, base_url: str = _DEFAULT_BASE,
                  default_model: str = _DEFAULT_MODEL,
                  max_tokens: int = _DEFAULT_MAX_TOKENS):
@@ -50,41 +43,11 @@ class AnthropicClient:
         self.default_model = default_model or _DEFAULT_MODEL
         self.max_tokens = max_tokens
 
-    # ── HTTP seams (monkeypatched in tests) ────────────────────────────────
+    # ── HTTP seams (transport in BaseHTTPProvider; only auth headers differ) ─
     def _headers(self) -> dict:
         return {"content-type": "application/json",
                 "x-api-key": self.api_key,
                 "anthropic-version": _API_VERSION}
-
-    def _open(self, path: str, payload: dict | None, method: str, timeout: int):
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urllib.request.Request(
-            f"{self.base_url}{path}", data=data, headers=self._headers(), method=method,
-        )
-        try:
-            return urllib.request.urlopen(req, timeout=timeout)
-        except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            raise ProviderError(f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code) from e
-        except Exception as e:
-            raise ProviderError(f"{self.base_url}{path} unreachable: {e}") from e
-
-    def _post_json(self, path: str, payload: dict) -> dict:
-        with self._open(path, payload, "POST", 120) as r:
-            return json.loads(r.read().decode("utf-8"))
-
-    def _post_stream(self, path: str, payload: dict) -> Generator[str, None, None]:
-        with self._open(path, payload, "POST", 300) as r:
-            for raw in r:
-                yield raw.decode("utf-8") if isinstance(raw, bytes) else raw
-
-    def _get_json(self, path: str) -> dict:
-        with self._open(path, None, "GET", 15) as r:
-            return json.loads(r.read().decode("utf-8"))
 
     # ── Request normalization (Ollama-shaped → Anthropic) ──────────────────
     @staticmethod

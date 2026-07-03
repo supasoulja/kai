@@ -19,66 +19,27 @@ Tool *schemas* need no translation — Ollama already uses OpenAI's
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from collections.abc import Generator
 
-from kai.config import TEMPERATURE_TOOL, TEMPERATURE_FINAL
+from kai.config import TEMPERATURE_FINAL, TEMPERATURE_TOOL
 from kai.llm.client import register_provider
+from kai.llm.providers._http import BaseHTTPProvider, ProviderError  # noqa: F401  (re-exported)
 
 _DEFAULT_BASE = "https://api.openai.com/v1"
 _DEFAULT_MODEL = "gpt-4o-mini"
 
 
-class ProviderError(RuntimeError):
-    """A cloud call failed (auth, rate limit, network). Carries an HTTP status
-    when there is one so the caller can decide whether to fall back to local."""
-    def __init__(self, message: str, status: int | None = None):
-        super().__init__(message)
-        self.status = status
-
-
-class OpenAIClient:
+class OpenAIClient(BaseHTTPProvider):
     def __init__(self, api_key: str, base_url: str = _DEFAULT_BASE,
                  default_model: str = _DEFAULT_MODEL):
         self.api_key = api_key or ""
         self.base_url = (base_url or _DEFAULT_BASE).rstrip("/")
         self.default_model = default_model or _DEFAULT_MODEL
 
-    # ── HTTP seams (monkeypatched in tests) ────────────────────────────────
+    # ── HTTP seams (transport in BaseHTTPProvider; only auth headers differ) ─
     def _headers(self) -> dict:
         return {"Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}"}
-
-    def _open(self, path: str, payload: dict | None, method: str, timeout: int):
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urllib.request.Request(
-            f"{self.base_url}{path}", data=data, headers=self._headers(), method=method,
-        )
-        try:
-            return urllib.request.urlopen(req, timeout=timeout)
-        except urllib.error.HTTPError as e:
-            body = ""
-            try:
-                body = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            raise ProviderError(f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code) from e
-        except Exception as e:
-            raise ProviderError(f"{self.base_url}{path} unreachable: {e}") from e
-
-    def _post_json(self, path: str, payload: dict) -> dict:
-        with self._open(path, payload, "POST", 120) as r:
-            return json.loads(r.read().decode("utf-8"))
-
-    def _post_stream(self, path: str, payload: dict) -> Generator[str, None, None]:
-        with self._open(path, payload, "POST", 300) as r:
-            for raw in r:
-                yield raw.decode("utf-8") if isinstance(raw, bytes) else raw
-
-    def _get_json(self, path: str) -> dict:
-        with self._open(path, None, "GET", 15) as r:
-            return json.loads(r.read().decode("utf-8"))
 
     # ── Message normalization ──────────────────────────────────────────────
     @staticmethod
