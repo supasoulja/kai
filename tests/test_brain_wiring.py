@@ -9,6 +9,7 @@ os.environ.setdefault("KAI_TEST_MODE", "1")
 import pytest
 
 from kai.core.brain import Brain
+from kai.core.engine import TurnEngine
 from kai.config import CHAT_MODEL
 
 
@@ -52,6 +53,9 @@ def _brain():
     b._final_temp = 0.4
     b.user_id = 0
     b.model = CHAT_MODEL
+    # _chat / _chat_stream now live on the engine; it reads the runtime state set
+    # above (ollama, _chat_client, _chat_model, _final_temp) via host proxies.
+    b._engine = TurnEngine(b)
     return b
 
 

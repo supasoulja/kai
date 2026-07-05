@@ -172,7 +172,7 @@ class CrewRunner:
         ]
         tools_used: list[str] = []
 
-        answer = yield from self._brain._run_tool_rounds(
+        answer = yield from self._brain._engine._run_tool_rounds(
             messages, tools_schema, tools_used,
             query_emb=query_emb, user_input=subtask, trace_id=trace_id,
             on_status=on_status, keep_prose=True,
@@ -248,9 +248,9 @@ class CrewRunner:
         # Otto's model = his roles.json entry (defaults to the shared crew model).
         want = roles.crew_model_for("Otto")
         try:
-            tool_model = want if want in self._brain.ollama.installed_models() else self._brain._resolve_tool_model()[0]
+            tool_model = want if want in self._brain.ollama.installed_models() else self._brain._engine._resolve_tool_model()[0]
         except Exception:
-            tool_model = want or self._brain._resolve_tool_model()[0]
+            tool_model = want or self._brain._engine._resolve_tool_model()[0]
         facts = "\n".join(scratchpad) if scratchpad else "(nothing gathered yet)"
         user = (
             f"User request: {user_request}\n\n"
@@ -262,7 +262,7 @@ class CrewRunner:
             {"role": "user", "content": user},
         ]
         if tool_model is None:
-            resp = self._brain._chat(messages, think=False, temperature=cfg.TEMPERATURE_TOOL)
+            resp = self._brain._engine._chat(messages, think=False, temperature=cfg.TEMPERATURE_TOOL)
         else:
             resp = self._brain.ollama.chat(messages, model=tool_model, think=False, keep_alive=0)
         text = resp.get("message", {}).get("content", "")

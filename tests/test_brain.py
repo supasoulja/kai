@@ -385,7 +385,7 @@ def test_cerebellum_loop_counts_identical_calls_only(monkeypatch):
 # ── Narrated tool-call recovery ──────────────────────────────────────────────────
 
 def test_narrated_recovery_guards():
-    from kai.core.brain import _try_recover_tool_call
+    from kai.core.engine import _try_recover_tool_call
     known = {"files.read", "pc.deep_scan"}
     # Intent markers ("let me", "I'll use") fire recovery
     assert _try_recover_tool_call("Let me files.read that for you.", known) is not None
@@ -401,7 +401,7 @@ def test_narrated_intent_extracts_container_name():
     """Natural-language container creation fires lxc.create WITH the name — the
     session bug where 'creating a container named Kytest3 now' promised an action
     that never ran (recovery alone fires empty args; name is required)."""
-    from kai.core.brain import _try_recover_tool_call, _match_narrated_intent
+    from kai.core.engine import _try_recover_tool_call, _match_narrated_intent
     known = {"lxc.create", "files.read"}
     rec = _try_recover_tool_call("I'm creating an LXC container named Kytest3 now.", known)
     assert rec == {"function": {"name": "lxc.create", "arguments": {"name": "Kytest3"}}}

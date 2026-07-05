@@ -106,7 +106,7 @@ def test_brain_confirm_gate_matches_registry():
     between the gate and the single source of truth."""
     import kai.tools  # noqa: F401
     from kai.tools.registry import confirm_tool_names
-    from kai.core.brain import _CONFIRM_TOOLS
+    from kai.core.engine import _CONFIRM_TOOLS
     assert _CONFIRM_TOOLS == confirm_tool_names()
 
 
