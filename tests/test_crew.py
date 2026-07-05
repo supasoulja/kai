@@ -114,6 +114,17 @@ def test_boss_when_index_unavailable_and_keyword_gated():
     assert r.profile is Profile.BOSS
 
 
+def test_boss_exposes_matched_coverage_set():
+    # BOSS carries the top-2 distinct matched domains so run_crew can enforce coverage
+    r = triage(
+        tools_open=True, needs_think=False,
+        category_scores=[("disk_analysis", 0.69), ("containers", 0.66),
+                         ("startup_and_updates", 0.61)],
+    )
+    assert r.profile is Profile.BOSS
+    assert r.matched == ("Dewey", "Cargo")  # top-2 distinct owners, in score order
+
+
 # ── BACKGROUND: long-running beats lane ───────────────────────────────────────────
 
 def test_background_when_long_running():
@@ -334,6 +345,32 @@ def test_run_crew_dedup_guard_breaks_on_repeat_dispatch():
     findings = _drain(brain._crew.run_crew("is my cpu hot?"))
     assert findings.count("[Gus]") == 1   # ran once; the repeat dispatch was dropped
     assert "50C" in findings
+
+
+def test_run_crew_covers_all_matched_domains_when_otto_finishes_early():
+    # Otto tries to FINISH before dispatching anyone, but triage matched two
+    # domains (Dewey + Cargo). Coverage must force-dispatch BOTH before the loop
+    # ends — the "disk space AND containers → disk only" bug.
+    brain = _specialist_brain([
+        {"message": {"content": "FINISH: nothing to do"}},   # Otto — premature
+        {"message": {"content": "disk is 82% full"}},        # Dewey (forced by coverage)
+        {"message": {"content": "FINISH: got disk"}},        # Otto — still premature
+        {"message": {"content": "no containers running"}},   # Cargo (forced by coverage)
+        {"message": {"content": "FINISH: done"}},            # Otto — all covered → stop
+    ])
+    findings = _drain(brain._crew.run_crew(
+        "check my disk space and what containers are running",
+        expected=("Dewey", "Cargo"),
+    ))
+    assert "[Dewey]" in findings and "disk is 82% full" in findings
+    assert "[Cargo]" in findings and "no containers running" in findings
+
+
+def test_run_crew_no_coverage_when_expected_empty():
+    # Default expected=() → Otto's FINISH is honoured immediately (back-compat).
+    brain = _specialist_brain([{"message": {"content": "FINISH: nothing needed"}}])
+    findings = _drain(brain._crew.run_crew("hey"))
+    assert findings == ""
 
 
 # ── run_stream wiring (Brain._run_crew_turn, 3d) — triage stubbed ─────────────────

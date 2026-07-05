@@ -104,6 +104,10 @@ class TriageResult:
     specialist: str | None  # the FAST/FAST_THINK/BACKGROUND worker; None for CHAT/REASON/BOSS
     think: bool             # whether chain-of-thought is on
     tools: bool             # whether any tools run this turn
+    # Distinct specialists whose domains cleared the floor, in score order. For a
+    # BOSS turn this is the coverage set: every one of these has real work to do,
+    # so run_crew force-dispatches any Otto skips before it's allowed to FINISH.
+    matched: tuple[str, ...] = ()
 
     @property
     def lane(self) -> str:
@@ -213,13 +217,16 @@ def triage(
             tools=True,
         )
 
-    # ≥2 specialists, or low confidence, or nothing matched → Otto orchestrates.
+    # ≥2 specialists → Otto orchestrates. Pass the top-2 distinct domains as the
+    # coverage set so run_crew won't let Otto FINISH before every one is dispatched
+    # (granite likes to stop after the first, dropping the rest of a compound ask).
     # BOSS always reasons (the leaf table fixes think=on for orchestration).
     return TriageResult(
         profile=Profile.BOSS,
         specialist=None,
         think=not think_capped,
         tools=True,
+        matched=tuple(specialists[:2]),
     )
 
 

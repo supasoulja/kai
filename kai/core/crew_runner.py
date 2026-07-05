@@ -94,6 +94,7 @@ class CrewRunner:
             tools_used.append("crew")
             findings = yield from self.run_crew(
                 user_input, query_emb=query_emb, trace_id=trace_id, on_status=on_status,
+                expected=decision.matched,
             )
         else:
             tools_used.append(decision.specialist)
@@ -206,16 +207,24 @@ class CrewRunner:
         query_emb: list[float] | None = None,
         trace_id: str = "",
         on_status: "Callable[[str], None] | None" = None,
+        expected: tuple[str, ...] = (),
     ) -> "Generator[tuple[str, bool, dict], None, str]":
         """BOSS lane: Otto orchestrates specialists sequentially, accumulating a
         scratchpad. Returns the combined findings string (the evidence Kai's voice
         then synthesizes). Bounded by crew.MAX_DISPATCHES; a (specialist, subtask)
         dedup guards ping-pong; a `needs:` handback force-dispatches the named
         sibling next, preserving partial work.
+
+        `expected` is triage's coverage set — the matched domains for this turn.
+        Otto is not allowed to FINISH while any of them is still undispatched:
+        granite likes to stop after the first specialist, silently dropping the
+        rest of a compound request ("disk space AND containers" → disk only). When
+        Otto tries to finish with a domain uncovered, we force-dispatch it.
         """
         otto_prompt = crew.load_specialist_prompt("Otto")
         scratchpad: list[str] = []
         tried: set[tuple[str, str]] = set()
+        dispatched: set[str] = set()          # specialists actually run this turn
         forced: tuple[str, str] | None = None  # (specialist, subtask) from a needs: handback
 
         for _step in range(crew.MAX_DISPATCHES):
@@ -224,16 +233,24 @@ class CrewRunner:
             if forced:
                 specialist, subtask = forced
                 forced = None
-            else:
-                decision = self._otto_decide(otto_prompt, user_request, scratchpad, trace_id)
-                if not decision or decision[0] == "finish":
-                    break
+            elif (decision := self._otto_decide(otto_prompt, user_request, scratchpad, trace_id)) \
+                    and decision[0] == "dispatch":
                 _, specialist, subtask = decision
+            else:
+                # Otto wants to FINISH (or produced no routable line). Don't stop
+                # while a matched domain is still uncovered — force the next one.
+                missing = [s for s in expected if s not in dispatched]
+                if not missing:
+                    break
+                specialist, subtask = missing[0], user_request
+                flow_rec.record(trace_id, "coverage_dispatch", specialist=specialist,
+                                remaining=len(missing))
 
             sig = (specialist, subtask.strip()[:60].lower())
             if sig in tried:
                 break  # ping-pong / repeat guard
             tried.add(sig)
+            dispatched.add(specialist)
 
             result = yield from self.run_specialist(
                 specialist, subtask, list(scratchpad),
