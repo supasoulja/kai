@@ -75,11 +75,16 @@ _FINISH_RE = re.compile(r"\bFINISH\b\s*:?\s*(.*)", re.I)
 
 
 # ── Tuning knobs (cheap heuristics — no model) ───────────────────────────────────
-# A category must clear this cosine score to count as "matched" (mirrors the 0.15
-# floor in registry.select_tools_by_category).
-CATEGORY_FLOOR = 0.15
-# A single-specialist turn only takes the FAST lane when the top category is at
-# least this confident; below it, ambiguity routes UP to BOSS.
+# A category must clear this cosine score to count as "matched". Calibrated to the
+# active embedding model (qwen3-embedding): unrelated categories still score ~0.45–
+# 0.58, so a low floor let almost every query match 2–3 domains and fall through to
+# BOSS (Otto orchestration) even for a plain single-domain request. At 0.60 a
+# single-domain query resolves to ONE specialist (the FAST lane) while only a
+# genuine multi-domain request keeps ≥2. Retune if the embedding model changes.
+CATEGORY_FLOOR = 0.60
+# Secondary guard: even a single matched specialist needs the top category this
+# confident to take FAST. With CATEGORY_FLOOR at 0.60 a match already clears this,
+# so it's a subordinate floor kept as an explicit minimum.
 FAST_CONFIDENCE = 0.30
 
 
@@ -133,17 +138,23 @@ def triage(
     category_scores: list[tuple[str, float]],
     long_running: bool = False,
     think_capped: bool = False,
+    keyword_gated: bool = True,
 ) -> TriageResult:
     """Resolve a turn to one of the six execution profiles.
 
     All inputs are cheap signals the caller already has:
-      tools_open      — the tool gate (keyword ∪ learned tool-patterns) opened tools
+      tools_open      — tools were opened for this turn (keyword gate ∪ the fuzzy
+                        semantic tool axis)
       needs_think     — the think classifier (heuristic ∪ learned think-patterns)
       category_scores — registry.select_tools_by_category ranking, (category, cosine)
                         sorted DESC; pass the top few (e.g. top-3)
       long_running    — a long-running op was detected (see is_long_running_query)
       think_capped    — the active preset forbids thinking (a no-think preset always
                         wins; see config.GEN_PRESETS). When True, think is forced off.
+      keyword_gated   — tools were opened by a TRUSTED gate (keyword ∪ handoff-
+                        semantic), not just the fuzzy tool axis. Distinguishes a
+                        genuine-but-vague tool request from a chat turn the fuzzy
+                        axis mis-read (greetings/small-talk score ~0.5 on it).
 
     Ordering is tools-first; ambiguity routes UP to BOSS (its low-confidence default).
     """
@@ -170,6 +181,25 @@ def triage(
 
     # Tools branch. Q3 · DOMAIN SPREAD — single confident specialist → FAST, else BOSS.
     specialists = _specialists_for(category_scores)
+
+    # No domain cleared CATEGORY_FLOOR. Three sub-cases:
+    #   • keyword-gated → a genuine but vague tool request → let Otto (BOSS) work it.
+    #   • no category scores at all (tool index unavailable) → we can't judge the
+    #     domain; be safe and let Otto handle it rather than silently drop tools.
+    #   • scores existed but none cleared the floor → the fuzzy tool axis mis-read a
+    #     chat turn (greetings/small-talk score ~0.5 on every domain) → chat, so we
+    #     don't pay full Otto orchestration for "hey there".
+    if not specialists:
+        if keyword_gated or not category_scores:
+            return TriageResult(
+                profile=Profile.BOSS, specialist=None,
+                think=not think_capped, tools=True,
+            )
+        return TriageResult(
+            profile=Profile.REASON if think else Profile.CHAT,
+            specialist=None, think=think, tools=False,
+        )
+
     top_score = category_scores[0][1] if category_scores else 0.0
     single_confident = (
         len(specialists) == 1 and top_score >= FAST_CONFIDENCE

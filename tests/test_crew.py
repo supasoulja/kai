@@ -50,7 +50,7 @@ def test_fast_single_confident_specialist():
 def test_fast_think_when_single_specialist_and_think():
     r = triage(
         tools_open=True, needs_think=True,
-        category_scores=[("system_health", 0.55)],
+        category_scores=[("system_health", 0.65)],
     )
     assert r.profile is Profile.FAST_THINK
     assert r.specialist == "Gus" and r.think is True
@@ -64,42 +64,54 @@ def test_specialist_resolves_per_domain():
         "containers": "Cargo",
     }
     for cat, expected in cases.items():
-        r = triage(tools_open=True, needs_think=False, category_scores=[(cat, 0.5)])
+        # score must clear CATEGORY_FLOOR (0.60) to count as a matched domain
+        r = triage(tools_open=True, needs_think=False, category_scores=[(cat, 0.65)])
         assert r.specialist == expected, f"{cat} should route to {expected}"
 
 
 # ── BOSS: spread or low confidence (ambiguity routes up) ──────────────────────────
 
 def test_boss_when_two_specialists():
+    # two distinct owners, both clearing CATEGORY_FLOOR → genuine multi-domain → BOSS
     r = triage(
         tools_open=True, needs_think=False,
-        category_scores=[("file_operations", 0.50), ("notes_and_memory", 0.45)],
+        category_scores=[("file_operations", 0.65), ("notes_and_memory", 0.62)],
     )
     assert r.profile is Profile.BOSS
     assert r.specialist is None and r.tools is True
     assert r.think is True  # BOSS always reasons
 
 
-def test_boss_when_single_but_low_confidence():
-    # one specialist, but top score below FAST_CONFIDENCE → ambiguity routes up
+def test_chat_when_only_fuzzy_axis_opened_and_no_domain():
+    # Greeting case: the fuzzy tool axis opened tools (keyword_gated=False) but
+    # scores exist and none clears the floor → it's a chat turn, not Otto.
     r = triage(
-        tools_open=True, needs_think=False,
-        category_scores=[("system_health", 0.20)],
+        tools_open=True, keyword_gated=False, needs_think=False,
+        category_scores=[("system_health", 0.50), ("network", 0.47)],
     )
-    assert r.profile is Profile.BOSS
+    assert r.profile is Profile.CHAT and r.tools is False and r.specialist is None
 
 
 def test_boss_respects_think_cap():
     r = triage(
         tools_open=True, needs_think=False, think_capped=True,
-        category_scores=[("file_operations", 0.5), ("network", 0.5)],
+        category_scores=[("file_operations", 0.65), ("network", 0.62)],
     )
     assert r.profile is Profile.BOSS and r.think is False
 
 
 def test_boss_when_tools_open_but_nothing_matched():
-    r = triage(tools_open=True, needs_think=False, category_scores=[("network", 0.05)])
+    # keyword-gated (trusted) but no domain cleared the floor → Otto works it out
+    r = triage(tools_open=True, keyword_gated=True, needs_think=False,
+               category_scores=[("network", 0.30)])
     assert r.profile is Profile.BOSS and r.specialist is None
+
+
+def test_boss_when_index_unavailable_and_keyword_gated():
+    # No category scores at all (tool index down) → don't drop tools, let Otto handle
+    r = triage(tools_open=True, keyword_gated=True, needs_think=False,
+               category_scores=[])
+    assert r.profile is Profile.BOSS
 
 
 # ── BACKGROUND: long-running beats lane ───────────────────────────────────────────

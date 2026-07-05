@@ -70,8 +70,14 @@ class CrewRunner:
         needs_think = (
             _query_needs_thinking(user_input) or handoff_mode == "reasoning" or think_sem
         )
+        # `tools_open` (from _select_tool_schema) is the TRUSTED gate: keyword ∪
+        # handoff-semantic. `tool_sem` is the fuzzy tool axis — additive recall, but
+        # it mis-fires on greetings, so pass the trusted signal separately so triage
+        # doesn't send "hey there" to Otto.
         decision = self.triage(
-            user_input, query_emb, tools_open=tools_open or tool_sem, needs_think=needs_think,
+            user_input, query_emb,
+            tools_open=tools_open or tool_sem, keyword_gated=tools_open,
+            needs_think=needs_think,
         )
         think_decision = decision.think
         flow_rec.record(trace_id, "triage", profile=str(decision.profile),
@@ -121,7 +127,7 @@ class CrewRunner:
 
     def triage(
         self, user_input: str, query_emb: list[float] | None,
-        *, tools_open: bool, needs_think: bool,
+        *, tools_open: bool, needs_think: bool, keyword_gated: bool = True,
     ) -> "crew.TriageResult":
         """Run the model-free triage tree (Part C) → a crew.TriageResult.
         Category scores come from the same cached index the tool selector uses."""
@@ -139,6 +145,7 @@ class CrewRunner:
             category_scores=scores,
             long_running=crew.is_long_running_query(user_input),
             think_capped=not self._brain._think,
+            keyword_gated=keyword_gated,
         )
 
     def run_specialist(

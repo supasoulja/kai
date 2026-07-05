@@ -85,6 +85,10 @@ _FAST_PATHS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*(?:check|show|get|what(?:'?s| is)?)\s*(?:my\s+|the\s+)?disk\s+(?:usage|space|health)\b[^?.!]*[?.!]*\s*$", re.I), "files.disk_usage"),
 ]
 
+# A clause joiner ("... and ...", commas) means the message carries more than one
+# ask — the single-no-arg fast-path would drop everything after the first clause.
+_COMPOUND_REQUEST_RE = re.compile(r"\b(?:and|then|also|plus|as well as)\b|[,;]", re.I)
+
 
 def _match_fast_path(user_input: str) -> str | None:
     """Return the tool name for a whole-input fast-path command, or None.
@@ -94,6 +98,12 @@ def _match_fast_path(user_input: str) -> str | None:
     """
     text = user_input.strip()
     if not text or len(text) > 80:   # commands are short; long text is a real request
+        return None
+    # A compound request ("check my disk space AND what containers are running")
+    # must not fast-path to a single no-arg tool — the anchored patterns' trailing
+    # [^?.!]* would swallow the second clause and silently drop it. Any clause
+    # joiner means "more than one ask" → fall through to the full path.
+    if _COMPOUND_REQUEST_RE.search(text):
         return None
     for pattern, tool_name in _FAST_PATHS:
         if pattern.match(text):
