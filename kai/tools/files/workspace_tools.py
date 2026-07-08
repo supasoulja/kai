@@ -74,7 +74,10 @@ def workspace_write(filename: str, content: str) -> str:
         size = len(content.encode("utf-8"))
         return f"Written: {path}  ({size:,} bytes)"
     except Exception as e:
-        return f"Failed to write '{path}': {e}"
+        # A failed write must surface as success=False (raise), never a
+        # success-wrapped "Failed to…" string — otherwise the model reports the
+        # file as saved when it wasn't. See the lxc fabrication fix.
+        raise RuntimeError(f"Failed to write '{path}': {e}") from e
 
 
 # ── files.append ───────────────────────────────────────────────────────────────
@@ -111,7 +114,7 @@ def workspace_append(filename: str, content: str) -> str:
         path.write_text(existing + separator + content, encoding="utf-8")
         return f"Appended {len(content.encode('utf-8')):,} bytes to {path}"
     except Exception as e:
-        return f"Failed to append to '{path}': {e}"
+        raise RuntimeError(f"Failed to append to '{path}': {e}") from e
 
 
 # ── files.edit ─────────────────────────────────────────────────────────────────
@@ -151,28 +154,33 @@ def workspace_edit(filename: str, old_text: str, new_text: str, replace_all: boo
     path = _resolve(filename)
     if path is None:
         return f"Rejected: '{filename}' resolves outside the workspace."
+    # Below, every outcome where the edit did NOT happen raises → success=False,
+    # so the model can't report "done" for an edit it never made (the lxc lesson).
     if not path.exists():
-        return f"File not found: {path}"
+        raise FileNotFoundError(f"File not found: {path}")
     try:
         original = path.read_text(encoding="utf-8")
-        if old_text not in original:
-            # Give a helpful snippet of what's actually in the file
-            preview = original[:300].replace("\n", "↵")
-            return (
-                f"Text not found in '{path}'.\n"
-                f"old_text was: {old_text!r}\n"
-                f"File starts with: {preview}"
-            )
-        if replace_all:
-            updated = original.replace(old_text, new_text)
-            count = original.count(old_text)
-        else:
-            updated = original.replace(old_text, new_text, 1)
-            count = 1
-        path.write_text(updated, encoding="utf-8")
-        return f"Replaced {count} occurrence(s) in {path}"
     except Exception as e:
-        return f"Failed to edit '{path}': {e}"
+        raise RuntimeError(f"Failed to read '{path}' for editing: {e}") from e
+    if old_text not in original:
+        # Give a helpful snippet of what's actually in the file.
+        preview = original[:300].replace("\n", "↵")
+        raise ValueError(
+            f"Text not found in '{path}'.\n"
+            f"old_text was: {old_text!r}\n"
+            f"File starts with: {preview}"
+        )
+    if replace_all:
+        updated = original.replace(old_text, new_text)
+        count = original.count(old_text)
+    else:
+        updated = original.replace(old_text, new_text, 1)
+        count = 1
+    try:
+        path.write_text(updated, encoding="utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Failed to write edit to '{path}': {e}") from e
+    return f"Replaced {count} occurrence(s) in {path}"
 
 
 # ── workspace.git_clone ────────────────────────────────────────────────────────
@@ -239,21 +247,26 @@ def workspace_git_clone(url: str, folder_name: str = "") -> str:
             capture_output=True, text=True, timeout=120,
             encoding="utf-8", errors="replace",
         )
-        if result.returncode == 0:
-            try:
-                file_count = sum(1 for f in target.rglob("*") if f.is_file())
-            except Exception:
-                file_count = "?"
-            return f"Cloned {url} → {target}  ({file_count} files)"
-        else:
-            err = (result.stderr or result.stdout or "unknown error").strip()
-            return f"Git clone failed: {err[:500]}"
-    except subprocess.TimeoutExpired:
-        return "Git clone timed out (120s). The repo may be very large or the connection slow."
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            "Git clone timed out (120s). The repo may be very large or the connection slow."
+        ) from e
     except FileNotFoundError:
+        # Git missing is a relayable pre-condition (like lxc's "no client"), not a
+        # failed clone — return it as guidance the model passes on, not an error.
         return "Git is not installed or not in PATH. Install from https://git-scm.com/"
     except Exception as e:
-        return f"Failed to clone: {e}"
+        raise RuntimeError(f"Failed to clone: {e}") from e
+    # The clone command ran but exited non-zero — it did not clone. Raise so the
+    # result is success=False, never a success-wrapped "Git clone failed" string.
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "unknown error").strip()
+        raise RuntimeError(f"Git clone failed: {err[:500]}")
+    try:
+        file_count = sum(1 for f in target.rglob("*") if f.is_file())
+    except Exception:
+        file_count = "?"
+    return f"Cloned {url} → {target}  ({file_count} files)"
 
 
 # ── workspace.git_pull ─────────────────────────────────────────────────────────
@@ -288,17 +301,16 @@ def workspace_git_pull(folder_name: str) -> str:
             capture_output=True, text=True, timeout=60,
             encoding="utf-8", errors="replace",
         )
-        out = (result.stdout + result.stderr).strip()
-        if result.returncode == 0:
-            return f"Updated {target}:\n{out[:500]}"
-        else:
-            return f"Git pull failed:\n{out[:500]}"
-    except subprocess.TimeoutExpired:
-        return "Git pull timed out (60s)."
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("Git pull timed out (60s).") from e
     except FileNotFoundError:
-        return "Git is not installed or not in PATH."
+        return "Git is not installed or not in PATH."  # relayable pre-condition
     except Exception as e:
-        return f"Failed to pull: {e}"
+        raise RuntimeError(f"Failed to pull: {e}") from e
+    out = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        raise RuntimeError(f"Git pull failed:\n{out[:500]}")
+    return f"Updated {target}:\n{out[:500]}"
 
 
 # ── workspace.git_list_allowed ─────────────────────────────────────────────────
