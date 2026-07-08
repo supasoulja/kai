@@ -76,11 +76,17 @@ _FINISH_RE = re.compile(r"\bFINISH\b\s*:?\s*(.*)", re.I)
 
 # ── Tuning knobs (cheap heuristics — no model) ───────────────────────────────────
 # A category must clear this cosine score to count as "matched". Calibrated to the
-# active embedding model (qwen3-embedding): unrelated categories still score ~0.45–
-# 0.58, so a low floor let almost every query match 2–3 domains and fall through to
-# BOSS (Otto orchestration) even for a plain single-domain request. At 0.60 a
-# single-domain query resolves to ONE specialist (the FAST lane) while only a
-# genuine multi-domain request keeps ≥2. Retune if the embedding model changes.
+# LIVE triage embedder — kai.llm.embed / bge-small-en-v1.5 (the CPU model that
+# embeds the query and the category index at runtime), NOT the shutdown-only
+# qwen3-embedding. On bge-small, small talk tops out ~0.51 and a query's own domain
+# scores ~0.61–0.70, so a low floor let almost every query match 2–3 domains and
+# fall through to BOSS (Otto orchestration) even for a plain single-domain request.
+# At 0.60 a clean single-domain query resolves to ONE specialist (the FAST lane)
+# while a genuine multi-domain request keeps ≥2. The margin is thin, though —
+# runner-up categories sit right around 0.60, so some single-domain phrasings still
+# pull a 2nd specialist and over-route to BOSS. Retune if the embedding model
+# changes; tests/test_crew_calibration.py is the drift tripwire that fails loudly
+# (with the new distribution printed) when this floor stops separating the lanes.
 CATEGORY_FLOOR = 0.60
 # Secondary guard: even a single matched specialist needs the top category this
 # confident to take FAST. With CATEGORY_FLOOR at 0.60 a match already clears this,
