@@ -71,6 +71,27 @@ def _run(args: list[str], timeout: int = 60) -> tuple[bool, str]:
         return False, f"Error running {client}: {exc}"
 
 
+def _run_checked(args: list[str], timeout: int = 60) -> str:
+    """Run the client and return its output, RAISING on command failure.
+
+    _run() reports a failed command as (ok=False, message). The @registry.tool
+    functions call this instead so a failure becomes a raised exception — which
+    the registry turns into a success=False tool result. Returning that failure
+    text as a normal string (the old bug) made a failed `incus launch` look
+    successful: the classifier saw success=True, nothing escalated, and the voice
+    model then reported a healthy running container that never existed (confirmed
+    in the event log, 2026-06-28). Tools must never launder a failure into success.
+
+    Note this is only for commands that actually ran and failed; the "no client
+    installed" / Windows pre-conditions stay informational returns via _guard(),
+    which the model relays as guidance rather than a failure.
+    """
+    ok, out = _run(args, timeout=timeout)
+    if not ok:
+        raise RuntimeError(out)
+    return out
+
+
 def _guard() -> str | None:
     """Return an error message if containers can't be managed here, else None."""
     if _IS_WINDOWS:
@@ -138,10 +159,7 @@ def list_instances() -> str:
     err = _guard()
     if err:
         return err
-    ok, out = _run(["list"])
-    if not ok:
-        return out
-    return out or "No containers found."
+    return _run_checked(["list"]) or "No containers found."
 
 
 @registry.tool(
@@ -158,8 +176,7 @@ def instance_info(name: str) -> str:
     err = _guard()
     if err:
         return err
-    ok, out = _run(["info", name])
-    return out if ok else out
+    return _run_checked(["info", name])
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -197,9 +214,7 @@ def create_instance(name: str, image: str = "", vm: bool = False) -> str:
     args = ["launch", image, name]
     if vm:
         args.append("--vm")
-    ok, out = _run(args, timeout=300)
-    if not ok:
-        return out
+    out = _run_checked(args, timeout=300)
     kind = "VM" if vm else "container"
     return f"Created and started {kind} '{name}' from {image}.\n{out}".strip()
 
@@ -215,8 +230,8 @@ def start_instance(name: str) -> str:
     err = _guard()
     if err:
         return err
-    ok, out = _run(["start", name])
-    return out if not ok else f"Started '{name}'."
+    _run_checked(["start", name])
+    return f"Started '{name}'."
 
 
 @registry.tool(
@@ -237,8 +252,8 @@ def stop_instance(name: str, force: bool = False) -> str:
     args = ["stop", name]
     if force:
         args.append("--force")
-    ok, out = _run(args)
-    return out if not ok else f"Stopped '{name}'."
+    _run_checked(args)
+    return f"Stopped '{name}'."
 
 
 @registry.tool(
@@ -264,7 +279,5 @@ def delete_instance(name: str, force: bool = False) -> str:
     args = ["delete", name]
     if force:
         args.append("--force")
-    ok, out = _run(args)
-    if not ok:
-        return out
+    _run_checked(args)
     return f"Deleted '{name}'."
