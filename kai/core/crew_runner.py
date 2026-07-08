@@ -25,6 +25,7 @@ import kai.config as cfg
 from kai.core import crew
 from kai.core.crew import Profile
 from kai.core import flow as flow_rec
+from kai.core import crew_trace
 from kai.core.tool_gate import _query_needs_thinking
 from kai.llm import roles
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 class CrewRunner:
     def __init__(self, brain: "Brain") -> None:
         self._brain = brain
+        self._last_category_scores: list[tuple[str, float]] = []
 
     def run_turn(
         self,
@@ -83,6 +85,18 @@ class CrewRunner:
         flow_rec.record(trace_id, "triage", profile=str(decision.profile),
                         specialist=decision.specialist or "-", lane=decision.lane,
                         tools=decision.tools)
+        # Always-on crew telemetry: capture the coverage set (matched) and the raw
+        # category scores that produced it — the evidence for debugging routing /
+        # coverage-dispatch after the fact (flow_rec above only persists when
+        # FLOW_TRACE is on). See kai/core/crew_trace.py.
+        crew_trace.record(
+            trace_id, "triage", session_id=self._brain.session_id,
+            query=user_input, profile=str(decision.profile), lane=decision.lane,
+            specialist=decision.specialist or "-", tools=decision.tools,
+            think=decision.think, keyword_gated=tools_open,
+            expected=list(decision.matched),
+            scores=[[c, round(s, 3)] for c, s in self._last_category_scores],
+        )
 
         if not decision.tools:
             return think_decision  # CHAT / REASON — no tools; stream the answer directly
@@ -140,6 +154,9 @@ class CrewRunner:
                 )
             except Exception:
                 scores = []
+        # Surface the raw scores for crew_trace: they explain WHY a turn routed the
+        # way it did (e.g. a thin-margin runner-up dragging a query to BOSS).
+        self._last_category_scores = scores
         return crew.triage(
             tools_open=tools_open,
             needs_think=needs_think,
@@ -226,6 +243,8 @@ class CrewRunner:
         tried: set[tuple[str, str]] = set()
         dispatched: set[str] = set()          # specialists actually run this turn
         forced: tuple[str, str] | None = None  # (specialist, subtask) from a needs: handback
+        coverage_fired = 0                     # how many domains coverage force-dispatched
+        sid = self._brain.session_id
 
         for _step in range(crew.MAX_DISPATCHES):
             if self._brain._cancel.is_set():
@@ -233,9 +252,11 @@ class CrewRunner:
             if forced:
                 specialist, subtask = forced
                 forced = None
+                source = "needs_handback"
             elif (decision := self._otto_decide(otto_prompt, user_request, scratchpad, trace_id)) \
                     and decision[0] == "dispatch":
                 _, specialist, subtask = decision
+                source = "otto"
             else:
                 # Otto wants to FINISH (or produced no routable line). Don't stop
                 # while a matched domain is still uncovered — force the next one.
@@ -243,14 +264,26 @@ class CrewRunner:
                 if not missing:
                     break
                 specialist, subtask = missing[0], user_request
+                source = "coverage"
+                coverage_fired += 1
                 flow_rec.record(trace_id, "coverage_dispatch", specialist=specialist,
                                 remaining=len(missing))
+                crew_trace.record(trace_id, "coverage_dispatch", session_id=sid,
+                                  specialist=specialist, remaining=len(missing),
+                                  expected=list(expected), dispatched=sorted(dispatched))
 
             sig = (specialist, subtask.strip()[:60].lower())
             if sig in tried:
-                break  # ping-pong / repeat guard
+                # ping-pong / repeat guard — note it so an abandoned coverage set
+                # (loop broke with a domain still uncovered) is visible in the data.
+                crew_trace.record(trace_id, "stop", session_id=sid,
+                                  reason="ping_pong_guard", specialist=specialist,
+                                  source=source)
+                break
             tried.add(sig)
             dispatched.add(specialist)
+            crew_trace.record(trace_id, "dispatch", session_id=sid, specialist=specialist,
+                              source=source, subtask=subtask[:120])
 
             result = yield from self.run_specialist(
                 specialist, subtask, list(scratchpad),
@@ -258,9 +291,18 @@ class CrewRunner:
             )
             if result.findings:
                 scratchpad.append(f"[{specialist}] {result.findings}")
+            crew_trace.record(trace_id, "specialist_result", session_id=sid,
+                              specialist=specialist, status=result.status,
+                              findings_len=len(result.findings or ""),
+                              needs=result.needs or "-", blocked=result.blocked)
             if result.needs and not result.blocked:
                 forced = (result.needs, result.for_ or subtask)
 
+        crew_trace.record(trace_id, "finish", session_id=sid,
+                          expected=list(expected), dispatched=sorted(dispatched),
+                          coverage_dispatches=coverage_fired,
+                          uncovered=[s for s in expected if s not in dispatched],
+                          findings_chars=sum(len(p) for p in scratchpad))
         return "\n\n".join(scratchpad)
 
     def _otto_decide(
