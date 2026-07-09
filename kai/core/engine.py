@@ -338,11 +338,17 @@ class TurnEngine:
 
     def _run_fast_path(
         self, tool_name: str, messages: list[dict], tools_used: list[str], *,
+        args: dict | None = None,
         query_emb: list[float] | None, user_input: str, trace_id: str,
         on_status: "Callable[[str], None] | None",
     ) -> "Generator[tuple[str, bool, dict], None, None]":
-        """Execute a deterministically-matched no-arg tool WITHOUT a tool-round
-        model call (the pre-LLM fast-path — see _match_fast_path).
+        """Execute a deterministically-matched tool WITHOUT a tool-round model
+        call (the pre-LLM fast-path — see _match_fast_path).
+
+        Most fast-path tools are no-arg; `args` carries any deterministically
+        extracted arguments (e.g. weather.current's location) so the fast-path is
+        correct, not just fast — a no-arg weather call silently returns the
+        IP-geolocated city instead of the one the user named.
 
         Synthesizes the tool_call and runs it through the normal execution path
         (_execute_tool_calls: dedup/confirm/cerebellum/result-append) so the tool
@@ -350,7 +356,7 @@ class TurnEngine:
         streams the grounded answer. Saves a whole LLM round on common commands.
         """
         from kai.memory.cerebellum import call_signature as _sig_of
-        tool_calls = [{"function": {"name": tool_name, "arguments": {}}}]
+        tool_calls = [{"function": {"name": tool_name, "arguments": args or {}}}]
         flow_rec.record(trace_id, "fast_path", name=tool_name, input=user_input)
         messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
         # Reuse the batch executor; safe no-arg tools never hit the confirm gate,

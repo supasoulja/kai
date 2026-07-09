@@ -268,13 +268,22 @@ def test_fast_path_matches_exact_commands_only():
     command (so a passing mention or a compound request never short-circuits
     the model)."""
     from kai.core.brain import _match_fast_path
-    # Exact commands → their no-arg tool
-    assert _match_fast_path("what time is it?") == "time.now"
-    assert _match_fast_path("what's the date") == "time.now"
-    assert _match_fast_path("list containers") == "lxc.list"
-    assert _match_fast_path("check the weather") == "weather.current"
-    assert _match_fast_path("show my temps") == "system.temps"
-    assert _match_fast_path("what's my disk usage") == "files.disk_usage"
+    # Exact commands → (tool, args). No-arg tools carry {}.
+    assert _match_fast_path("what time is it?") == ("time.now", {})
+    assert _match_fast_path("what's the date") == ("time.now", {})
+    assert _match_fast_path("list containers") == ("lxc.list", {})
+    assert _match_fast_path("check the weather") == ("weather.current", {})
+    assert _match_fast_path("show my temps") == ("system.temps", {})
+    assert _match_fast_path("what's my disk usage") == ("files.disk_usage", {})
+    # Weather carries the extracted location so the fast-path can't drop the city
+    # (the Boise→Denver bug: a no-arg weather call returns the IP-geo city).
+    assert _match_fast_path("what's the weather in boise") == ("weather.current", {"location": "boise"})
+    assert _match_fast_path("check the weather in London") == ("weather.current", {"location": "London"})
+    assert _match_fast_path("what's the weather in Austin, TX") == ("weather.current", {"location": "Austin, TX"})
+    # A time phrase is NOT a place → local weather ({}), not a bogus location
+    assert _match_fast_path("what's the weather for tomorrow") == ("weather.current", {})
+    # A real joiner still falls through, even for weather
+    assert _match_fast_path("weather in Austin and list containers") is None
     # Anything ambiguous, compound, or detailed falls through to the LLM
     assert _match_fast_path("tell me the current time please") is None
     assert _match_fast_path("what time is it and what's the weather") is None

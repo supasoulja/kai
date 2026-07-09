@@ -88,26 +88,69 @@ _FAST_PATHS: list[tuple[re.Pattern, str]] = [
 # A clause joiner ("... and ...", commas) means the message carries more than one
 # ask — the single-no-arg fast-path would drop everything after the first clause.
 _COMPOUND_REQUEST_RE = re.compile(r"\b(?:and|then|also|plus|as well as)\b|[,;]", re.I)
+# Weather's compound guard excludes the comma: a place legitimately contains one
+# ("weather in Austin, TX"), but a real joiner still means more than one ask.
+_WEATHER_COMPOUND_RE = re.compile(r"\b(?:and|then|also|plus|as well as)\b|[;]", re.I)
+
+# ── Weather location extraction ──────────────────────────────────────────────
+# A weather request usually names a place ("weather in Boise"). The fast-path
+# MUST pass that as `location` — calling weather.current with no args silently
+# returns the IP-geolocated city instead (the Boise→Denver bug). Extract it
+# here so the deterministic path is correct, not just fast.
+_WEATHER_LOC_RE = re.compile(
+    r"\bweather\b[^?.!]*?\b(?:in|for|at|near|around|of)\s+(?P<loc>.+?)\s*[?.!]*$", re.I)
+# Phrases that follow "in/for/at" but name a TIME, not a place — never a location.
+_NOT_A_PLACE = re.compile(
+    r"^(?:the\s+)?(?:today|tomorrow|tonight|now|right\s+now|later|this\s+\w+|next\s+\w+|"
+    r"the\s+(?:morning|afternoon|evening|weekend|week|day)|a\s+(?:bit|while|moment)|"
+    r"noon|midnight|lunch)\b", re.I)
+_TRAILING_TIME_RE = re.compile(
+    r"\s+(?:today|tomorrow|tonight|right\s+now|now|later|"
+    r"this\s+(?:morning|afternoon|evening|week|weekend)|next\s+week)\s*$", re.I)
 
 
-def _match_fast_path(user_input: str) -> str | None:
-    """Return the tool name for a whole-input fast-path command, or None.
+def _weather_location(text: str) -> str:
+    """Extract the place from a weather request, or '' for local/none.
+
+    Conservative on purpose: a time phrase ('for tomorrow', 'in the morning') is
+    NOT a place, and an over-long capture is rejected. When '' is returned the
+    tool uses IP geolocation (correct for a plain 'what's the weather')."""
+    m = _WEATHER_LOC_RE.search(text)
+    if not m:
+        return ""
+    loc = m.group("loc").strip().strip("\"'").rstrip(".,!?").strip()
+    loc = _TRAILING_TIME_RE.sub("", loc).strip()
+    if not loc or _NOT_A_PLACE.match(loc) or len(loc) > 40:
+        return ""
+    return loc
+
+
+def _match_fast_path(user_input: str) -> tuple[str, dict] | None:
+    """Return (tool_name, args) for a whole-input fast-path command, or None.
 
     Deliberately strict — only an exact command match fires. Anything else (extra
     detail, a question, a follow-up clause) falls through to the normal LLM path.
+    Most fast-paths are no-arg ({}), but weather carries its extracted location.
     """
     text = user_input.strip()
     if not text or len(text) > 80:   # commands are short; long text is a real request
         return None
-    # A compound request ("check my disk space AND what containers are running")
-    # must not fast-path to a single no-arg tool — the anchored patterns' trailing
-    # [^?.!]* would swallow the second clause and silently drop it. Any clause
-    # joiner means "more than one ask" → fall through to the full path.
-    if _COMPOUND_REQUEST_RE.search(text):
-        return None
     for pattern, tool_name in _FAST_PATHS:
-        if pattern.match(text):
-            return tool_name
+        if not pattern.match(text):
+            continue
+        # Weather carries its extracted location and tolerates a comma in the place;
+        # a real joiner ("weather in X AND containers") still falls through.
+        if tool_name == "weather.current":
+            if _WEATHER_COMPOUND_RE.search(text):
+                return None
+            loc = _weather_location(text)
+            return tool_name, ({"location": loc} if loc else {})
+        # Other fast-paths are no-arg. A compound request ("disk space AND
+        # containers") must not fast-path one — the trailing [^?.!]* would swallow
+        # the second clause. Any clause joiner → fall through to the full path.
+        if _COMPOUND_REQUEST_RE.search(text):
+            return None
+        return tool_name, {}
     return None
 
 
@@ -624,11 +667,12 @@ class Brain:
         # ── Pre-LLM fast-path: an exact, unambiguous command runs its tool
         # directly and skips the whole tool-round model call. Falls through to
         # the streamed answer with the result already grounded in `messages`.
-        fast_tool = _match_fast_path(user_input) if self.tool_registry else None
-        if fast_tool and fast_tool in set(self.tool_registry.list_tools()):
-            flow_rec.record(trace_id, "fast_path_hit", name=fast_tool)
+        fast = _match_fast_path(user_input) if self.tool_registry else None
+        if fast and fast[0] in set(self.tool_registry.list_tools()):
+            fast_tool, fast_args = fast
+            flow_rec.record(trace_id, "fast_path_hit", name=fast_tool, args=fast_args)
             yield from self._engine._run_fast_path(
-                fast_tool, messages, tools_used,
+                fast_tool, messages, tools_used, args=fast_args,
                 query_emb=query_emb, user_input=user_input,
                 trace_id=trace_id, on_status=on_status,
             )
