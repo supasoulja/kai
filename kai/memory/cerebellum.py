@@ -82,6 +82,26 @@ _ERROR_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# ── Answer-hedge patterns (post-answer grounding check) ────────────────────────
+# The "denies/can't despite tools ran" failure: the turn executed tools, but the
+# final answer says it couldn't get the data or asks the user for permission to do
+# what it could just do ("I don't have Boise weather… want me to try again?").
+# Matched only when tools ran — "I don't have that" is a fine answer on a chat turn.
+_HEDGE_DENIAL_RE = re.compile(
+    r"\b(?:"
+    r"i (?:don'?t|do not) have (?:the|any|specific|access|enough|that|it|current)"
+    r"|i (?:couldn'?t|could not|was ?n'?t able to|cannot|can'?t|am unable to|wasn'?t able to)"
+    r"\s+(?:find|get|retrieve|access|determine|locate|pull|obtain|complete|confirm)"
+    r"|i (?:don'?t|do not) (?:have|see) (?:any )?(?:data|info|information|results?|access)"
+    r"|(?:the )?(?:last|previous|earlier) (?:check|result|search|attempt|lookup)"
+    r"\s+(?:provided|returned|gave|showed|was for)"
+    r"|no (?:data|information|results?|reading) (?:available|found|returned|for)"
+    r"|unable to (?:find|get|retrieve|access|determine|complete|confirm)"
+    r"|i wasn'?t able to (?:find|get|retrieve|pull|determine)"
+    r")",
+    re.IGNORECASE,
+)
+
 _bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cerebellum-log")
 
 
@@ -205,6 +225,32 @@ def post_check(
             0.0,
         )
 
+    return CerebellarResult(Verdict.CLEAR, "ok", 0.0)
+
+
+def verify_answer(answer: str, user_input: str, tools_used: list[str]) -> CerebellarResult:
+    """Deterministic post-answer grounding check (no model, no embedding).
+
+    Flags the "hedge/deny despite tools" failure: the turn ran tools, but the
+    final answer says it couldn't get the data or asks permission to do what it
+    could just do (the Boise → "I don't have that, want me to check?" case). The
+    caller nudges once and regenerates on FLAG. Two guards keep it precise:
+
+      • Only tool turns are checked — "I don't have that" is a legitimate answer
+        when nothing was supposed to run (a chat turn is always CLEAR).
+      • It keys on an explicit denial/inability phrase, NOT a trailing offer — so
+        "CPU is 52°C. Want me to check the GPU too?" (a helpful follow-up after a
+        real answer) does not trip it; only a leading/standalone "I couldn't get
+        it" does.
+    """
+    if not tools_used or not (answer or "").strip():
+        return CerebellarResult(Verdict.CLEAR, "no-tools-or-empty", 0.0)
+    if _HEDGE_DENIAL_RE.search(answer):
+        return CerebellarResult(
+            Verdict.FLAG,
+            f"answer denies/can't-complete despite {len(tools_used)} tool(s) run",
+            1.0,
+        )
     return CerebellarResult(Verdict.CLEAR, "ok", 0.0)
 
 

@@ -218,6 +218,18 @@ EVIDENCE_PROMPT = (
     "KEY EVIDENCE:\n"
 )
 
+# Injected when the post-answer grounding check flags a hedge (see
+# cerebellum.verify_answer): the turn ran tools but the draft answer said it
+# couldn't get the data or asked permission to retry. Nudge it to ACT, once.
+ANSWER_REVERIFY_NUDGE = (
+    "Your draft reply says you couldn't get the information or asks the user "
+    "whether to try — but you have the tools to get it yourself. Do NOT ask "
+    "permission. If a tool result above already has the answer, use it. If a "
+    "previous call used the wrong input (e.g. the wrong location or name), call "
+    "the tool again with the correct input from the user's request, then answer "
+    "directly. Only say you can't if no tool can do it."
+)
+
 
 # Friendly tool-status labels (_TOOL_LABELS) now live in kai/core/engine.py with
 # the tool loop that uses them — sourced from the registry (single source of truth).
@@ -715,12 +727,37 @@ class Brain:
         # swallowed into <think> tags, producing "[no response]".
         final_think = use_think and not tools_used
 
+        # Post-answer grounding check (Part 3). A tool turn can still hedge/deny
+        # despite the evidence ("I don't have that, want me to check?"). Buffer the
+        # answer (generate without streaming), verify it, silently retry once on a
+        # flag, THEN reveal — so the user never sees the hedge. Chat turns have no
+        # evidence to contradict and stream live as before. The check is
+        # deterministic (cerebellum.verify_answer) — no second model per turn.
+        verify = bool(tools_used) and not self._cancel.is_set()
+        streamed_live = not verify
+
         full_text, had_think = yield from self._stream_answer(
             messages, think=final_think, forward_thinking=True,
+            forward_tokens=streamed_live,
         )
+        _, clean_text = _strip_thinking(full_text)
+
+        if verify and clean_text:
+            from kai.memory import cerebellum as _cb
+            v = _cb.verify_answer(clean_text, user_input, tools_used)
+            _cb.log_result("answer", "verify", v, self.user_id,
+                           output_snippet=clean_text[:500])
+            if v.verdict >= _cb.Verdict.FLAG:
+                flow_rec.record(trace_id, "answer_reverify", reason=v.reason)
+                messages.append({"role": "system", "content": ANSWER_REVERIFY_NUDGE})
+                full_text, had_think = yield from self._stream_answer(
+                    messages, think=False, forward_thinking=False, forward_tokens=False,
+                )
+                _, clean_text = _strip_thinking(full_text)
+
         flow_rec.record(trace_id, "final_answer", think=final_think,
                         had_think=had_think, text=full_text)
-        _, clean_text = _strip_thinking(full_text)
+
         if not clean_text and not self._cancel.is_set():
             # Model produced no visible output — thinking swallowed the answer, a
             # tool round left nothing, or the tool model returned no call and the
@@ -731,15 +768,18 @@ class Brain:
                 "Do not call any tools."
             )})
             retry_text, _ = yield from self._stream_answer(
-                messages, think=False, forward_thinking=False,
+                messages, think=False, forward_thinking=False, forward_tokens=streamed_live,
             )
             flow_rec.record(trace_id, "retry_answer", text=retry_text)
             _, clean_text = _strip_thinking(retry_text)
         if not clean_text:
             clean_text = self._fallback_text(tools_used)
             flow_rec.record(trace_id, "fallback", text=clean_text)
-            # The fallback was never streamed — without this yield the web UI
-            # shows an empty bubble while the DB quietly stores a reply.
+            streamed_live = False  # the fallback text was never streamed
+
+        # Reveal any answer not already shown live — a buffered (verified) tool
+        # turn or the fallback path — so the UI shows it instead of an empty bubble.
+        if not streamed_live and clean_text:
             if self.session_id:
                 events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
             yield clean_text, False, {}
@@ -977,6 +1017,7 @@ class Brain:
         messages: list[dict],
         think: bool,
         forward_thinking: bool,
+        forward_tokens: bool = True,
     ) -> Generator[tuple[str, bool, dict], None, tuple[str, bool]]:
         """Stream one model response, yielding (token, False, meta) chunks.
 
@@ -985,8 +1026,11 @@ class Brain:
         Returns (full_text, had_think) — grab it with
         ``text, had_think = yield from self._stream_answer(...)``.
         forward_thinking=True passes think tokens/blocks through to the UI;
-        False swallows them. Honors the Stop button: a set cancel flag ends
-        the stream early and keeps whatever was generated.
+        False swallows them. forward_tokens=False BUFFERS the answer (collects the
+        text without emitting or yielding it) so the caller can verify it before it
+        reaches the user, then reveal it — used by the tool-turn grounding check so
+        a hedge is caught before it's shown. Honors the Stop button: a set cancel
+        flag ends the stream early and keeps whatever was generated.
         """
         _tokens: list[str] = []
         had_think = False
@@ -1014,9 +1058,10 @@ class Brain:
                     yield "", False, {"think": True, "text": block_text}
                 continue
             _tokens.append(token)
-            if self.session_id:
-                events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=token)
-            yield token, False, {}
+            if forward_tokens:
+                if self.session_id:
+                    events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=token)
+                yield token, False, {}
         return "".join(_tokens), had_think
 
     def _fallback_text(self, tools_used: list[str]) -> str:
