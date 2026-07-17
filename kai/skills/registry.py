@@ -234,6 +234,17 @@ class SkillRegistry:
 
         return count
 
+    def reload(self, extra_dirs: list[Path] | None = None) -> int:
+        """Clear all registered skills and re-run discovery.
+
+        Used after a recipe (SKILL.md) is created or deleted so the live set
+        matches what's on disk. Mutates this same instance in place, so every
+        Brain holding a reference sees the change on the next turn. Returns the
+        number of skills now registered.
+        """
+        self._skills.clear()
+        return self.discover(extra_dirs=extra_dirs)
+
     def _scan_python_dir(self, directory: Path, package: str | None = None) -> int:
         """Import .py files that contain Skill subclasses."""
         count = 0

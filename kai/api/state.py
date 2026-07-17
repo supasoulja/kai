@@ -29,6 +29,31 @@ from kai.tools import registry as tool_registry
 ollama: OllamaClient | None = None
 shared_tool_index: dict[str, list[float]] = {}
 shared_domain_index: dict[str, list[float]] = {}
+skill_registry = None  # shared kai.skills.SkillRegistry, built once (lazy)
+
+
+def ensure_skill_registry():
+    """Build the shared skill registry once (lazy) and return it.
+
+    Skills are process-global — one registry shared across every Brain.
+    Discovery covers built-in skills plus user_skills/ (SKILL.md recipes and
+    first-party Python skills). Returns None if unavailable; never blocks Brain
+    creation — the skills path is guarded everywhere it's used.
+    """
+    global skill_registry
+    if skill_registry is None:
+        from kai.skills import build_skill_registry
+        skill_registry = build_skill_registry(tool_registry)
+    return skill_registry
+
+
+def reload_skills() -> int:
+    """Re-scan user_skills/ after a recipe is added or removed. Returns the
+    number of skills now registered (0 if the registry is unavailable)."""
+    sr = ensure_skill_registry()
+    if sr is None:
+        return 0
+    return sr.reload(extra_dirs=[cfg.ROOT_DIR / "user_skills"])
 
 # ── Per-user Brain + MemoryManager instances ─────────────────────────────────
 user_brains: dict[int, Brain] = {}
@@ -67,6 +92,7 @@ def get_or_create_brain(user_id: int) -> Brain:
             model=cfg.CHAT_MODEL,
             ollama=ollama,
             tool_registry=tool_registry,
+            skill_registry=ensure_skill_registry(),
             think=True,
             user_id=user_id,
         )

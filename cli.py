@@ -463,8 +463,10 @@ def main() -> None:
     bootstrap.run_migrations_and_seed()   # migrate stale keys + seed procedural rules
 
     # ── Initialize brain ───────────────────────────────────────────────────────
+    from kai.skills import build_skill_registry
     brain = Brain(memory=memory, model=active_model, ollama=ollama,
-                  tool_registry=tool_registry)
+                  tool_registry=tool_registry,
+                  skill_registry=build_skill_registry(tool_registry))
     # Apply generation mode: CLI flag overrides the saved preference.
     _preset = args.mode if args.mode != cfg.DEFAULT_PRESET else (
         memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET)
