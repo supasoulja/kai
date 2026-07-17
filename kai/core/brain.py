@@ -270,6 +270,7 @@ class Brain:
         self._cancel = threading.Event()  # set by request_stop() to abort the current turn
         self.user_id = user_id
         self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
+        self._disabled_tools: set[str] = self._load_disabled_tools()  # Settings → Tools off
         self._history = HistoryManager()         # session history, lock, turn counters, compression
         self.session_id: str | None = None       # current persisted session UUID
         self._tool_index: dict[str, list[float]] = {}  # name → embedding vector, built lazily
@@ -311,6 +312,42 @@ class Brain:
 
         # Re-apply a persisted cloud brain selection (best-effort; no-op if local).
         self._restore_active_brain()
+
+    # ── Per-user tool enablement (Settings → Tools on/off) ───────────────────
+    def _load_disabled_tools(self) -> set[str]:
+        """Read the user's turned-off tool set from persistent settings.
+
+        Stored as a JSON list under the `disabled_tools` fact — the same
+        per-user fact mechanism the generation preset and tool level use.
+        """
+        raw = self.memory.get_fact("disabled_tools")
+        if not raw:
+            return set()
+        try:
+            data = json.loads(raw)
+            return {str(t) for t in data} if isinstance(data, list) else set()
+        except (json.JSONDecodeError, TypeError):
+            return set()
+
+    @property
+    def disabled_tools(self) -> set[str]:
+        """Tool names the user turned off — hidden from the model's schema and
+        blocked at dispatch. The engine reads this via a proxy property."""
+        return self._disabled_tools
+
+    def set_tool_disabled(self, name: str, disabled: bool) -> set[str]:
+        """Turn a tool off (disabled=True) or back on. Persists the change and
+        updates the live set so it takes effect on the next turn. Returns the
+        new disabled set."""
+        if disabled:
+            self._disabled_tools.add(name)
+        else:
+            self._disabled_tools.discard(name)
+        self.memory.set_fact(
+            "disabled_tools", json.dumps(sorted(self._disabled_tools)),
+            source="user_setting",
+        )
+        return self._disabled_tools
 
     def apply_preset(self, key: str, custom_temps: dict[str, float] | None = None) -> dict:
         """Apply a generation preset — sets think mode + final-answer temperature.
@@ -939,15 +976,16 @@ class Brain:
                 except Exception:
                     pass
 
+        excluded = self._disabled_tools or None   # tools the user turned off
         if self._tool_index and selection_emb:
             try:
                 tools_schema = self.tool_registry.select_tools_by_category(
-                    selection_emb, self._tool_index, top_k=2
+                    selection_emb, self._tool_index, top_k=2, exclude=excluded
                 )
             except Exception:
-                tools_schema = self.tool_registry.get_schema()
+                tools_schema = self.tool_registry.get_schema(exclude=excluded)
         else:
-            tools_schema = self.tool_registry.get_schema()
+            tools_schema = self.tool_registry.get_schema(exclude=excluded)
 
         # Inject skill schemas so the model can call skills as tools (skill.name)
         if tools_schema and self.skill_registry:

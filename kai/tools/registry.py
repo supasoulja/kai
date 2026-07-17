@@ -124,10 +124,13 @@ class ToolRegistry:
 
     # ── Alias schema helpers ──────────────────────────────────────────────────
 
-    def _alias_schemas(self, for_names: set[str] | None = None) -> list[dict]:
+    def _alias_schemas(self, for_names: set[str] | None = None,
+                       exclude: set[str] | None = None) -> list[dict]:
         """
         Build schemas for known aliases.
         If for_names is given, only include aliases whose target is in that set.
+        If exclude is given, drop aliases whose target is turned off — so a
+        disabled tool can't sneak back in under an alias name.
         """
         schemas = []
         for alias, target in self._aliases.items():
@@ -135,14 +138,27 @@ class ToolRegistry:
                 continue  # stale alias, target was removed
             if for_names is not None and target not in for_names:
                 continue
+            if exclude and target in exclude:
+                continue
             schema = copy.deepcopy(self._tools[target]["schema"])
             schema["function"]["name"] = alias
             schemas.append(schema)
         return schemas
 
-    def tool(self, name: str, description: str, parameters: dict | None = None):
+    def tool(self, name: str, description: str, parameters: dict | None = None,
+             *, category: str | None = None, label: str | None = None,
+             risk: str | None = None, category_description: str | None = None):
         """
         Decorator to register a function as a tool.
+
+        Metadata (category / label / risk) may be declared INLINE so a new tool
+        is self-describing — no need to also hand-edit the central category,
+        label, and risk tables. Inline values are reflected into those tables at
+        registration (see _register_metadata), so every existing consumer — the
+        confirm gate, semantic tool-selection, and the metadata audit — keeps
+        working unchanged. Omit them and the tool falls back to whatever the
+        central tables say, exactly as before. This is the seam that makes tools
+        (and, later, marketplace packs) pluggable without touching core files.
 
         @registry.tool(
             name="time.now",
@@ -150,30 +166,97 @@ class ToolRegistry:
         )
         def get_time() -> str:
             ...
+
+        @registry.tool(
+            name="acme.deploy_check",
+            description="Run pre-deploy health checks.",
+            parameters={"env": {"type": "string", "required": True}},
+            category="workspace_and_code",   # existing category, or a brand-new one
+            label="Running deploy checks",    # shown in the UI while it runs
+            risk="caution",                   # safe | caution | destructive
+        )
+        def deploy_check(env: str) -> str:
+            ...
         """
         def decorator(fn: Callable) -> Callable:
-            self._tools[name] = {
+            entry: dict[str, Any] = {
                 "fn": fn,
                 "schema": _build_schema(name, description, parameters or {}),
             }
+            # Keep inline metadata on the entry too, so future per-tool lookups
+            # (e.g. pack ownership / entitlement filtering) have a single home.
+            if category is not None:
+                entry["category"] = category
+            if label is not None:
+                entry["label"] = label
+            if risk is not None:
+                entry["risk"] = risk
+            self._tools[name] = entry
+            self._register_metadata(
+                name, category=category, label=label, risk=risk,
+                category_description=category_description,
+            )
             return fn
         return decorator
 
-    def get_schema(self) -> list[dict]:
-        """Return the list of tool schemas to pass to Ollama, including aliases."""
-        self._ensure_aliases_loaded()
-        return [t["schema"] for t in self._tools.values()] + self._alias_schemas()
+    @staticmethod
+    def _register_metadata(name: str, *, category: str | None = None,
+                           label: str | None = None, risk: str | None = None,
+                           category_description: str | None = None) -> None:
+        """Reflect a tool's inline metadata into the central tables.
 
-    def schema_for(self, names) -> list[dict]:
+        This is what lets a tool ship its own category/label/risk instead of
+        forcing an author to edit three separate dicts. TOOL_LABELS, _TOOL_RISK,
+        and _TOOL_CATEGORIES stay the runtime source of truth and are simply
+        also-populated here. A tool that names a new category creates its bucket;
+        category_description feeds the semantic tool-selection embedding, so a
+        pack should supply a real one.
+        """
+        if label is not None:
+            TOOL_LABELS[name] = label
+        if risk is not None:
+            if risk not in _RISK_TIERS:
+                raise ValueError(
+                    f"tool {name!r}: risk must be one of {sorted(_RISK_TIERS)}, got {risk!r}"
+                )
+            _TOOL_RISK[name] = risk
+        if category is not None:
+            bucket = _TOOL_CATEGORIES.get(category)
+            if bucket is None:
+                _TOOL_CATEGORIES[category] = {
+                    "description": category_description or category.replace("_", " "),
+                    "tools": [name],
+                }
+            else:
+                if category_description and not bucket.get("description"):
+                    bucket["description"] = category_description
+                if name not in bucket.setdefault("tools", []):
+                    bucket["tools"].append(name)
+
+    def get_schema(self, exclude: set[str] | None = None) -> list[dict]:
+        """Return the list of tool schemas to pass to Ollama, including aliases.
+
+        `exclude` drops those tool names (and any alias pointing at them) — used
+        to hide tools a user has turned off in Settings.
+        """
+        self._ensure_aliases_loaded()
+        tools = [t["schema"] for n, t in self._tools.items()
+                 if not (exclude and n in exclude)]
+        return tools + self._alias_schemas(exclude=exclude)
+
+    def schema_for(self, names, exclude: set[str] | None = None) -> list[dict]:
         """Return schemas for just the named tools (+ their aliases).
 
         Used by the crew to narrow a specialist's tool schema to its slice.
         Unknown names are silently skipped — the slice is authoritative.
+        `exclude` drops turned-off tools (and their aliases) from the slice.
         """
         self._ensure_aliases_loaded()
         sel = set(names)
+        if exclude:
+            sel -= exclude
         schemas = [t["schema"] for n, t in self._tools.items() if n in sel]
-        return schemas + self._alias_schemas(for_names=sel)
+        return schemas + self._alias_schemas(for_names=sel, exclude=exclude)
 
     @staticmethod
     def category_tool_map() -> dict[str, list[str]]:
@@ -207,6 +290,18 @@ class ToolRegistry:
         if target and target in self._tools:
             return self._tools[target]["fn"](**args)
         raise KeyError(f"Unknown tool: {name!r}")
+
+    def resolve_name(self, name: str) -> str:
+        """Return the real tool name for `name`, resolving a learned alias.
+
+        Returns `name` unchanged if it's already a real tool or has no known
+        alias. Callers use this to key enablement/risk decisions on the true
+        target, so a disabled tool can't be reached under an alias.
+        """
+        if name in self._tools:
+            return name
+        self._ensure_aliases_loaded()
+        return self._aliases.get(name, name)
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
@@ -267,15 +362,17 @@ class ToolRegistry:
         query_embedding: list[float],
         category_index: dict[str, list[float]],
         top_k: int = 2,
+        exclude: set[str] | None = None,
     ) -> list[dict]:
         """
         Rank the 10 categories by cosine similarity, return every tool that belongs
         to the top-k categories. This guarantees related tools always arrive as a
         complete set — e.g. all system_health tools together — not scattered picks.
         Falls back to the full schema if the index is empty.
+        `exclude` drops tools the user has turned off (and their aliases).
         """
         if not category_index:
-            return self.get_schema()
+            return self.get_schema(exclude=exclude)
         scores = sorted(
             ((cat, _cosine(query_embedding, emb)) for cat, emb in category_index.items()),
             key=lambda t: t[1],
@@ -287,17 +384,19 @@ class ToolRegistry:
                 break
             selected.update(_TOOL_CATEGORIES.get(cat_name, {}).get("tools", []))
         if not selected:
-            return self.get_schema()
+            return self.get_schema(exclude=exclude)
         # search.web is always included regardless of category — it's the universal
         # fallback when a system tool returns an error code and the model needs to look it up.
         if "search.web" in self._tools:
             selected.add("search.web")
+        if exclude:                       # a turned-off tool is never offered
+            selected -= exclude
         if cfg.DEBUG:
             chosen = [(c, f"{s:.2f}") for c, s in scores[:top_k]]
             print(f"[tool select] categories={chosen}  tools={len(selected)}")
         schemas = [t["schema"] for name, t in self._tools.items() if name in selected]
         # Include alias schemas for selected tools so the model can call either form
-        schemas += self._alias_schemas(for_names=selected)
+        schemas += self._alias_schemas(for_names=selected, exclude=exclude)
         return schemas
 
 
@@ -597,6 +696,7 @@ TOOL_LABELS: dict[str, str] = {
 # Anything not listed defaults to "safe" — the read-only majority. Only the risky
 # minority is enumerated, so this stays small and auditable.
 _RISK_DEFAULT = "safe"
+_RISK_TIERS = {"safe", "caution", "destructive"}  # valid inline risk values (see tool())
 _TOOL_RISK: dict[str, str] = {
     # ── destructive: irreversible, or heavy enough the user should opt in ──
     "pc.deep_scan":                  "destructive",  # ~2 min full scan

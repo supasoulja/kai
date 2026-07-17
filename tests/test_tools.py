@@ -39,6 +39,39 @@ def test_registry_registers_and_lists():
     assert "test.ping" in reg.list_tools()
 
 
+def test_tool_inline_metadata_populates_central_tables():
+    """A tool can declare its own category/label/risk inline; the registry
+    reflects them into the central tables so the confirm gate, semantic
+    selection, and the metadata audit all work without editing core dicts.
+    This is the pluggability seam for marketplace packs."""
+    from kai.tools.registry import ToolRegistry, TOOL_LABELS, _TOOL_RISK, _TOOL_CATEGORIES
+    reg = ToolRegistry()
+
+    @reg.tool(name="packtest.do_thing", description="Pluggable tool declared inline.",
+              category="packtest_domain",
+              category_description="Test domain for a pluggable pack tool.",
+              label="Doing the thing", risk="caution")
+    def do_thing():
+        return "done"
+
+    try:
+        assert reg.label_for("packtest.do_thing") == "Doing the thing"
+        assert reg.risk_for("packtest.do_thing") == "caution"
+        assert "packtest.do_thing" in _TOOL_CATEGORIES["packtest_domain"]["tools"]
+        # New category carries a description for the semantic-selection embedding.
+        assert _TOOL_CATEGORIES["packtest_domain"]["description"]
+        # An unknown risk tier is rejected loudly, not silently accepted.
+        with pytest.raises(ValueError):
+            @reg.tool(name="packtest.bad", description="x", risk="nope")
+            def bad():
+                return "x"
+    finally:
+        # Leave the shared module-level tables clean for the other tests.
+        TOOL_LABELS.pop("packtest.do_thing", None)
+        _TOOL_RISK.pop("packtest.do_thing", None)
+        _TOOL_CATEGORIES.pop("packtest_domain", None)
+
+
 def test_every_tool_has_label_and_category():
     """Each registered tool must have a UI label and belong to a category.
 
@@ -165,6 +198,70 @@ def test_alias_rejects_incompatible_args():
     assert reg.learn_alias("system.tempss", args={"command": "dir"}) is None
     # Without conflicting args the same name redirects fine
     assert reg.learn_alias("system.tempss") == "system.temps"
+
+
+def test_schema_exclude_hides_tool_and_its_alias():
+    """A turned-off tool — and any alias pointing at it — must not appear in the
+    schema handed to the model."""
+    reg = ToolRegistry()
+
+    @reg.tool(name="demo.keep", description="keep me")
+    def keep():
+        return "k"
+
+    @reg.tool(name="demo.drop", description="drop me")
+    def drop():
+        return "d"
+
+    reg.learn_alias("demo.dropp")  # register an alias → demo.drop
+    names = {s["function"]["name"] for s in reg.get_schema(exclude={"demo.drop"})}
+    assert "demo.keep" in names
+    assert "demo.drop" not in names
+    assert "demo.dropp" not in names  # the alias is hidden too
+
+
+def test_resolve_name_follows_alias():
+    reg = ToolRegistry()
+
+    @reg.tool(name="pc.startup_programs", description="list startup programs")
+    def startup():
+        return "ok"
+
+    assert reg.resolve_name("pc.startup_programs") == "pc.startup_programs"
+    reg.learn_alias("pc.startups")
+    assert reg.resolve_name("pc.startups") == "pc.startup_programs"
+    assert reg.resolve_name("totally.unknown") == "totally.unknown"
+
+
+def test_disabled_tool_is_blocked_at_dispatch():
+    """The authoritative enablement gate: a turned-off tool must not execute even
+    if named directly or via an alias — belt-and-suspenders behind the schema
+    filter, covering the crew and hallucination paths too."""
+    from types import SimpleNamespace
+    from kai.core.engine import TurnEngine
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="demo.run", description="runs a thing")
+    def run():
+        return "ran"
+
+    host = SimpleNamespace(skill_registry=None, tool_registry=reg,
+                           user_id=0, session_id=None, disabled_tools={"demo.run"})
+    eng = TurnEngine(host)
+
+    blocked = eng._execute_tool("demo.run", {}, "t")
+    assert blocked["success"] is False and "turned off" in blocked["error"]
+
+    # An alias to a disabled tool is blocked as well (learn_alias would else
+    # resurrect it under the hallucinated name).
+    aliased = eng._execute_tool("demo.runn", {}, "t")
+    assert aliased["success"] is False and "turned off" in aliased["error"]
+
+    # Re-enabling it lets it run normally.
+    host.disabled_tools = set()
+    ok = eng._execute_tool("demo.run", {}, "t")
+    assert ok["success"] is True and ok["output"] == "ran"
 
 
 # ── Memory tree ──────────────────────────────────────────────────────────────

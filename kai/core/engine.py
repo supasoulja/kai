@@ -205,6 +205,10 @@ class TurnEngine:
         return self._host.user_id
 
     @property
+    def disabled_tools(self) -> set[str]:
+        return self._host.disabled_tools
+
+    @property
     def session_id(self):
         return self._host.session_id
 
@@ -829,6 +833,15 @@ class TurnEngine:
 
         if not self.tool_registry:
             return {"success": False, "error": f"No tool registry — cannot run '{name}'"}
+        # ── Enablement gate ──────────────────────────────────────────────────
+        # A tool the user turned off in Settings must never run — even if the
+        # model names it directly, through a learned alias, or via a crew
+        # specialist whose slice still listed it. The schema filter hides
+        # disabled tools from the model; this is the authoritative block.
+        disabled = self.disabled_tools
+        if disabled and self.tool_registry.resolve_name(name) in disabled:
+            return {"success": False,
+                    "error": f"'{name}' is turned off in Settings and was not run."}
         # Set thread-local user_id (per-user DB scoping) and session_id (so
         # memory tools can exclude the live conversation from "past sessions").
         from kai.core._app_state import set_current_user_id, set_current_session_id
@@ -843,6 +856,9 @@ class TurnEngine:
             # can't accept them is rejected instead of called with garbage.
             target = self.tool_registry.learn_alias(name, args=args)
             if target:
+                if disabled and self.tool_registry.resolve_name(target) in disabled:
+                    return {"success": False,
+                            "error": f"'{target}' is turned off in Settings and was not run."}
                 if cfg.DEBUG:
                     print(f"[brain] alias redirect: {name!r} → {target!r}")
                 try:
