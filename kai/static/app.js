@@ -148,6 +148,7 @@ function switchTab(tabName) {
   if (tabName === 'dashboard') { loadDashboard(); KaiConsole.start(); }
   else KaiConsole.stop();
   if (tabName === 'study') loadStudy();
+  if (tabName === 'settings') loadToolsSettings();
   if (tabName === 'memory') loadMemoryBrowser();
   if (tabName === 'chat') {
     if (inputEl) inputEl.focus();
@@ -2347,6 +2348,92 @@ async function loadModels() {
   } catch { /* ignore */ }
 }
 
+// ── Tools on/off (Settings → Tools) ──────────────────────────────────────────
+function _catLabel(cat) {
+  const s = String(cat).replace(/_/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+async function loadToolsSettings() {
+  const el = $('tools-list');
+  if (!el) return;
+  try {
+    const d = await fetch('/settings/tools').then(r => r.json());
+    renderToolsSettings(d);
+  } catch {
+    el.innerHTML = '<div class="empty-hint">Couldn\'t load tools.</div>';
+  }
+}
+
+function renderToolsSettings(d) {
+  const el = $('tools-list');
+  if (!el) return;
+  const groups = d.groups || [];
+  const badge = $('tools-count');
+  if (badge) badge.textContent = `${d.enabled || 0}/${d.total || 0} on`;
+
+  el.innerHTML = groups.map(g => {
+    const on = g.tools.filter(t => t.enabled).length;
+    const rows = g.tools.map(t => `
+      <label class="tool-row">
+        <span class="tool-row-info">
+          <span class="tool-row-name">${esc(t.name)}</span>
+          <span class="tool-row-desc">${esc(t.label)}</span>
+        </span>
+        <span class="tool-row-right">
+          <span class="tool-risk r-${esc(t.risk)}">${esc(t.risk)}</span>
+          <span class="switch">
+            <input type="checkbox" class="tool-toggle" data-name="${esc(t.name)}" ${t.enabled ? 'checked' : ''}>
+            <span class="slider"></span>
+          </span>
+        </span>
+      </label>`).join('');
+    return `<details class="tool-group">
+      <summary class="tool-group-hdr">
+        <span class="tool-group-name">${esc(_catLabel(g.category))}</span>
+        <span class="tool-group-count">${on}/${g.tools.length}</span>
+      </summary>
+      ${rows}
+    </details>`;
+  }).join('');
+
+  el.querySelectorAll('.tool-toggle').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const name = cb.dataset.name;
+      const enabled = cb.checked;
+      cb.disabled = true;
+      try {
+        const r = await fetch('/settings/tools', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, enabled }),
+        });
+        if (!r.ok) throw new Error('bad status');
+        _refreshToolCounts();
+      } catch {
+        cb.checked = !enabled;   // revert on failure
+      } finally {
+        cb.disabled = false;
+      }
+    });
+  });
+}
+
+function _refreshToolCounts() {
+  const el = $('tools-list');
+  if (!el) return;
+  let total = 0, enabled = 0;
+  el.querySelectorAll('.tool-group').forEach(g => {
+    const cbs = g.querySelectorAll('.tool-toggle');
+    const on = [...cbs].filter(c => c.checked).length;
+    total += cbs.length; enabled += on;
+    const c = g.querySelector('.tool-group-count');
+    if (c) c.textContent = `${on}/${cbs.length}`;
+  });
+  const badge = $('tools-count');
+  if (badge) badge.textContent = `${enabled}/${total} on`;
+}
+
 function renderModelList() {
   const el = $('model-list');
   if (!el) return;
@@ -3126,6 +3213,7 @@ loadModels();
 loadSessions();
 loadDocs();
 loadDashboard();
+$('tools-refresh')?.addEventListener('click', loadToolsSettings);
 
 // Start on dashboard tab
 switchTab('dashboard');

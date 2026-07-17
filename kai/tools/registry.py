@@ -306,6 +306,29 @@ class ToolRegistry:
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
 
+    def describe_catalog(self) -> list[dict]:
+        """Grouped tool inventory for the Settings → Tools UI.
+
+        One group per category, each with its tools' name/label/risk. Per-user
+        on/off state is layered on by the caller (it isn't the registry's job).
+        Only currently-registered tools are included, so a stale category entry
+        never shows a phantom tool.
+        """
+        registered = set(self._tools)
+        groups: list[dict] = []
+        for cat, info in _TOOL_CATEGORIES.items():
+            tools = [
+                {"name": n, "label": self.label_for(n), "risk": self.risk_for(n)}
+                for n in info.get("tools", []) if n in registered
+            ]
+            if tools:
+                groups.append({
+                    "category": cat,
+                    "description": info.get("description", ""),
+                    "tools": sorted(tools, key=lambda t: t["name"]),
+                })
+        return groups
+
     # ── Tool metadata (labels + categories) ────────────────────────────────────
 
     def risk_for(self, name: str) -> str:

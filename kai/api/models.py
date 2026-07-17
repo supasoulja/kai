@@ -42,6 +42,10 @@ class PresetTempsRequest(BaseModel):
 class ToolLevelRequest(BaseModel):
     level: str   # "light" | "balanced" | "deep" | "off" — which model runs tool rounds
 
+class ToolToggleRequest(BaseModel):
+    name: str      # tool name, e.g. "system.kill_process"
+    enabled: bool  # True = on, False = turned off for this user
+
 class GreetingRequest(BaseModel):
     fresh: bool = False   # True = new-chat clean-start greeting (no welcome-back note)
 

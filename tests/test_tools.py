@@ -264,6 +264,26 @@ def test_disabled_tool_is_blocked_at_dispatch():
     assert ok["success"] is True and ok["output"] == "ran"
 
 
+def test_describe_catalog_groups_registered_tools_with_metadata():
+    """The Settings → Tools inventory groups registered tools by category and
+    carries each tool's label + risk for the toggle UI."""
+    import kai.tools  # noqa: F401 — register every tool
+    from kai.tools.registry import registry
+
+    groups = registry.describe_catalog()
+    assert groups, "catalog should not be empty"
+    flat = {}
+    for g in groups:
+        assert g["category"] and isinstance(g["tools"], list)
+        for t in g["tools"]:
+            assert t["name"] in registry.list_tools()
+            assert t["label"] and t["risk"] in {"safe", "caution", "destructive"}
+            flat[t["name"]] = t
+    # Metadata is accurate: a known destructive tool reads as destructive.
+    assert flat["system.kill_process"]["risk"] == "destructive"
+    assert flat["weather.current"]["risk"] == "safe"
+
+
 # ── Memory tree ──────────────────────────────────────────────────────────────
 
 def test_tree_seed_is_idempotent(tmp_path, monkeypatch):

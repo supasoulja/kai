@@ -419,6 +419,55 @@
       border: 1px solid var(--outline-v);
     }
 
+    /* Tools on/off list */
+    .tools-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .tool-group { border: 1px solid var(--outline-v); border-radius: 8px; overflow: hidden; }
+    .tool-group[open] > .tool-group-hdr { border-bottom: 1px solid var(--outline-v); }
+    .tool-group-hdr {
+      display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+      padding: 8px 12px; background: var(--surface-high); user-select: none;
+    }
+    .tool-group-hdr::-webkit-details-marker { display: none; }
+    .tool-group-hdr::before {
+      content: '\25B8'; font-size: 10px; color: var(--primary); transition: transform .15s;
+    }
+    .tool-group[open] > .tool-group-hdr::before { transform: rotate(90deg); }
+    .tool-group-name {
+      font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 12px;
+      color: var(--text); text-transform: capitalize;
+    }
+    .tool-group-count { margin-left: auto; font-family: 'Space Grotesk', monospace; font-size: 10px; color: var(--primary); }
+    .tool-row {
+      display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+      border-top: 1px solid var(--outline-v); cursor: pointer;
+    }
+    .tool-row:first-of-type { border-top: none; }
+    .tool-row-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .tool-row-name { font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text); }
+    .tool-row-desc {
+      font-size: 10px; color: var(--text); opacity: .55;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tool-row-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+    .tool-risk {
+      font-family: 'Space Grotesk', monospace; font-size: 8px; text-transform: uppercase;
+      letter-spacing: .06em; padding: 1px 5px; border-radius: 7px;
+      border: 1px solid var(--outline-v); color: var(--text); opacity: .55;
+    }
+    .tool-risk.r-caution { color: #b5842e; border-color: #b5842e66; opacity: 1; }
+    .tool-risk.r-destructive { color: #c0492f; border-color: #c0492f66; opacity: 1; }
+    /* toggle switch */
+    .switch { position: relative; display: inline-block; width: 34px; height: 20px; flex: none; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider { position: absolute; inset: 0; background: var(--outline-v); border-radius: 20px; transition: .18s; }
+    .switch .slider::before {
+      content: ''; position: absolute; height: 14px; width: 14px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: .18s;
+    }
+    .switch input:checked + .slider { background: var(--primary); }
+    .switch input:checked + .slider::before { transform: translateX(14px); }
+    .switch input:focus-visible + .slider { outline: 2px solid var(--primary); outline-offset: 2px; }
+
     /* Mode selector */
     .mode-selector-wrap { position: relative; margin-top: 8px; }
     .mode-pill {
@@ -1800,6 +1849,17 @@
               <button class="btn btn-sm btn-muted" id="model-cancel-btn">Cancel</button>
             </div>
           </div>
+        </div>
+
+        <!-- Tools -->
+        <div class="settings-section">
+          <div class="settings-header">
+            <span class="settings-label">Tools</span>
+            <span class="badge" id="tools-count">0/0 on</span>
+            <button class="settings-view-btn" id="tools-refresh">Refresh</button>
+          </div>
+          <div class="temp-slider-hint" style="margin-top:6px">Turn capabilities on or off. Off means Kai won't see or run it.</div>
+          <div id="tools-list" class="tools-list"></div>
         </div>
 
         <!-- Memory -->

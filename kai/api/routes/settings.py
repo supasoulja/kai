@@ -18,6 +18,7 @@ from kai.api.models import (
     PresetTempsRequest,
     TemperatureRequest,
     ToolLevelRequest,
+    ToolToggleRequest,
 )
 from kai.api.state import brain_for, custom_preset_temps
 
@@ -185,6 +186,33 @@ async def set_tool_level(req: ToolLevelRequest, request: Request):
         brain.apply_tool_level, noun="level",
     )
     return {"ok": True, **resolved, "levels": _tool_level_list()}
+
+
+# ── Tools (per-user enable/disable) ───────────────────────────────────────────
+
+@router.get("/settings/tools")
+async def get_tools(request: Request):
+    """Grouped tool inventory with each tool's on/off state for this user."""
+    brain = brain_for(request)
+    disabled = brain.disabled_tools
+    groups = brain.tool_registry.describe_catalog()
+    total = enabled = 0
+    for g in groups:
+        for t in g["tools"]:
+            t["enabled"] = t["name"] not in disabled
+            total += 1
+            enabled += t["enabled"]
+    return {"groups": groups, "total": total, "enabled": enabled}
+
+
+@router.post("/settings/tools")
+async def set_tool(req: ToolToggleRequest, request: Request):
+    """Turn one tool on or off for this user. Takes effect on the next turn."""
+    brain = brain_for(request)
+    if req.name not in brain.tool_registry.list_tools():
+        raise HTTPException(status_code=404, detail=f"Unknown tool: {req.name}")
+    brain.set_tool_disabled(req.name, disabled=not req.enabled)
+    return {"ok": True, "name": req.name, "enabled": req.enabled}
 
 
 # ── Model management ──────────────────────────────────────────────────────────
