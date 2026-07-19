@@ -16,11 +16,12 @@ from kai.api.models import (
     ModeRequest,
     PresetRequest,
     PresetTempsRequest,
+    RecipeRequest,
     TemperatureRequest,
     ToolLevelRequest,
     ToolToggleRequest,
 )
-from kai.api.state import brain_for, custom_preset_temps
+from kai.api.state import brain_for, custom_preset_temps, reload_skills
 
 router = APIRouter()
 
@@ -213,6 +214,39 @@ async def set_tool(req: ToolToggleRequest, request: Request):
         raise HTTPException(status_code=404, detail=f"Unknown tool: {req.name}")
     brain.set_tool_disabled(req.name, disabled=not req.enabled)
     return {"ok": True, "name": req.name, "enabled": req.enabled}
+
+
+# ── Recipes (low-code: chain existing tools into a new skill.<name>) ───────────
+
+@router.get("/settings/recipes")
+async def get_recipes(request: Request):
+    """List the user-authored recipes (SKILL.md workflows)."""
+    brain_for(request)  # auth gate
+    from kai.skills import recipes as _recipes
+    return {"recipes": _recipes.list_recipes()}
+
+
+@router.post("/settings/recipes")
+async def add_recipe(req: RecipeRequest, request: Request):
+    """Create (or replace) a recipe from existing tools, then make it live."""
+    brain_for(request)  # auth gate
+    from kai.skills import recipes as _recipes
+    try:
+        recipe = _recipes.create_recipe(req.name, req.description, req.triggers, req.steps)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skills()
+    return {"ok": True, "recipe": recipe}
+
+
+@router.delete("/settings/recipes/{name}")
+async def delete_recipe(name: str, request: Request):
+    """Delete a recipe and refresh the live skill set."""
+    brain_for(request)  # auth gate
+    from kai.skills import recipes as _recipes
+    removed = _recipes.delete_recipe(name)
+    reload_skills()
+    return {"ok": removed}
 
 
 # ── Model management ──────────────────────────────────────────────────────────

@@ -148,7 +148,7 @@ function switchTab(tabName) {
   if (tabName === 'dashboard') { loadDashboard(); KaiConsole.start(); }
   else KaiConsole.stop();
   if (tabName === 'study') loadStudy();
-  if (tabName === 'settings') loadToolsSettings();
+  if (tabName === 'settings') { loadToolsSettings(); loadRecipes(); }
   if (tabName === 'memory') loadMemoryBrowser();
   if (tabName === 'chat') {
     if (inputEl) inputEl.focus();
@@ -2434,6 +2434,85 @@ function _refreshToolCounts() {
   if (badge) badge.textContent = `${enabled}/${total} on`;
 }
 
+// ── Recipes (chain existing tools into a skill.<name>) ───────────────────────
+const _RECIPE_HELP = "One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.";
+
+function _recipeHint(msg, isError) {
+  const e = $('recipe-error');
+  if (!e) return;
+  e.textContent = msg;
+  e.classList.toggle('error', !!isError);
+}
+
+function _toggleRecipeForm(show) {
+  const f = $('recipe-form');
+  if (!f) return;
+  f.style.display = show ? 'flex' : 'none';
+  if (show) {
+    $('recipe-name').value = '';
+    $('recipe-triggers').value = '';
+    $('recipe-steps').value = '';
+    _recipeHint(_RECIPE_HELP, false);
+    $('recipe-name').focus();
+  }
+}
+
+async function loadRecipes() {
+  const el = $('recipe-list');
+  if (!el) return;
+  try {
+    const d = await fetch('/settings/recipes').then(r => r.json());
+    renderRecipes(d.recipes || []);
+  } catch { el.innerHTML = '<div class="empty-hint">Couldn\'t load recipes.</div>'; }
+}
+
+function renderRecipes(recipes) {
+  const el = $('recipe-list');
+  if (!el) return;
+  const badge = $('recipes-count');
+  if (badge) badge.textContent = recipes.length;
+  if (!recipes.length) { el.innerHTML = '<div class="empty-hint">No recipes yet.</div>'; return; }
+  el.innerHTML = recipes.map(r => `
+    <div class="recipe-item">
+      <div class="recipe-item-info">
+        <span class="recipe-item-name">${esc(r.name)}</span>
+        <span class="recipe-item-steps">${esc((r.steps || []).join(' → '))}</span>
+      </div>
+      <button class="recipe-del" data-name="${esc(r.name)}" title="Delete recipe">&times;</button>
+    </div>`).join('');
+  el.querySelectorAll('.recipe-del').forEach(b => {
+    b.addEventListener('click', async () => {
+      if (!confirm(`Delete recipe "${b.dataset.name}"?`)) return;
+      try {
+        await fetch(`/settings/recipes/${encodeURIComponent(b.dataset.name)}`, { method: 'DELETE' });
+        loadRecipes();
+      } catch { /* ignore */ }
+    });
+  });
+}
+
+async function saveRecipe() {
+  const name = $('recipe-name').value.trim();
+  const triggers = $('recipe-triggers').value.split(',').map(s => s.trim()).filter(Boolean);
+  const steps = $('recipe-steps').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!name) { _recipeHint('Give the recipe a name.', true); return; }
+  if (!steps.length) { _recipeHint('Add at least one tool (one per line).', true); return; }
+  try {
+    const r = await fetch('/settings/recipes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, triggers, steps }),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      _recipeHint(d.detail || 'Could not save recipe.', true);
+      return;
+    }
+    _toggleRecipeForm(false);
+    loadRecipes();
+  } catch { _recipeHint('Could not save recipe.', true); }
+}
+
 function renderModelList() {
   const el = $('model-list');
   if (!el) return;
@@ -3214,6 +3293,9 @@ loadSessions();
 loadDocs();
 loadDashboard();
 $('tools-refresh')?.addEventListener('click', loadToolsSettings);
+$('recipe-new-btn')?.addEventListener('click', () => _toggleRecipeForm(true));
+$('recipe-cancel-btn')?.addEventListener('click', () => _toggleRecipeForm(false));
+$('recipe-save-btn')?.addEventListener('click', saveRecipe);
 
 // Start on dashboard tab
 switchTab('dashboard');

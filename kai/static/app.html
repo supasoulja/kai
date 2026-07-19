@@ -468,6 +468,31 @@
     .switch input:checked + .slider::before { transform: translateX(14px); }
     .switch input:focus-visible + .slider { outline: 2px solid var(--primary); outline-offset: 2px; }
 
+    /* Recipe builder */
+    .recipe-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .recipe-input, .recipe-textarea {
+      width: 100%; background: var(--surface-high); border: 1px solid var(--outline-v);
+      border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; font-family: inherit;
+    }
+    .recipe-textarea { font-family: 'Space Grotesk', monospace; font-size: 12px; resize: vertical; }
+    .recipe-hint { font-size: 11px; color: var(--muted); }
+    .recipe-hint.error { color: #c0492f; }
+    .recipe-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .recipe-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+      border: 1px solid var(--outline-v); border-radius: 8px;
+    }
+    .recipe-item-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .recipe-item-name { font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text); }
+    .recipe-item-steps {
+      font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .recipe-del {
+      margin-left: auto; flex: none; background: none; border: 1px solid var(--outline-v);
+      color: var(--muted); border-radius: 6px; width: 24px; height: 24px; cursor: pointer; font-size: 15px;
+    }
+    .recipe-del:hover { border-color: #c0492f; color: #c0492f; }
+
     /* Mode selector */
     .mode-selector-wrap { position: relative; margin-top: 8px; }
     .mode-pill {
@@ -1860,6 +1885,27 @@
           </div>
           <div class="temp-slider-hint" style="margin-top:6px">Turn capabilities on or off. Off means Kai won't see or run it.</div>
           <div id="tools-list" class="tools-list"></div>
+        </div>
+
+        <!-- Recipes -->
+        <div class="settings-section">
+          <div class="settings-header">
+            <span class="settings-label">Recipes</span>
+            <span class="badge" id="recipes-count">0</span>
+            <button class="settings-view-btn" id="recipe-new-btn">+ New</button>
+          </div>
+          <div class="temp-slider-hint" style="margin-top:6px">Chain existing tools into a one-step shortcut Kai can run.</div>
+          <div id="recipe-form" class="recipe-form" style="display:none">
+            <input id="recipe-name" class="recipe-input" type="text" placeholder="Name (e.g. speed-up-pc)" maxlength="64">
+            <input id="recipe-triggers" class="recipe-input" type="text" placeholder="Trigger words, comma-separated (optional)">
+            <textarea id="recipe-steps" class="recipe-textarea" rows="4" placeholder="One tool per line, e.g. system.clear_temp_files"></textarea>
+            <div class="recipe-hint" id="recipe-error">One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.</div>
+            <div class="model-add-actions">
+              <button class="btn btn-sm" id="recipe-save-btn">Save</button>
+              <button class="btn btn-sm btn-muted" id="recipe-cancel-btn">Cancel</button>
+            </div>
+          </div>
+          <div id="recipe-list" class="recipe-list"></div>
         </div>
 
         <!-- Memory -->

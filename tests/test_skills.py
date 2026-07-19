@@ -424,3 +424,32 @@ def test_brain_skill_schemas():
     assert len(schemas) == 1
     assert schemas[0]["function"]["name"] == "skill.echo"
     assert schemas[0]["function"]["description"] == "Echo back the input."
+
+
+# ── Recipes (low-code SKILL.md CRUD) ─────────────────────────────────────────
+
+def test_recipes_crud(tmp_path, monkeypatch):
+    """create/list/delete recipes, with validation that steps reference real
+    tools and names are filename-safe — the low-code 'add a tool' backend."""
+    import kai.tools  # noqa: F401 — register every tool
+    from kai.skills import recipes
+    monkeypatch.setattr(recipes, "recipes_dir", lambda: tmp_path)
+
+    r = recipes.create_recipe("t-clock", "tell time", ["clock"], ["time.now"])
+    assert r["filename"] == "t-clock.md" and r["steps"] == ["time.now"]
+    assert [x["name"] for x in recipes.list_recipes()] == ["t-clock"]
+
+    # A step must reference a real, namespaced tool.
+    with pytest.raises(ValueError):
+        recipes.create_recipe("t-bad", "", [], ["not_a_real_tool"])
+    with pytest.raises(ValueError):
+        recipes.create_recipe("t-bad", "", [], ["rm -rf /"])
+    # At least one step is required, and the name must be filename-safe.
+    with pytest.raises(ValueError):
+        recipes.create_recipe("t-empty", "", [], [])
+    with pytest.raises(ValueError):
+        recipes.create_recipe("Bad Name!", "", [], ["time.now"])
+
+    assert recipes.delete_recipe("t-clock") is True
+    assert recipes.list_recipes() == []
+    assert recipes.delete_recipe("does-not-exist") is False

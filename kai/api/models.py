@@ -46,6 +46,12 @@ class ToolToggleRequest(BaseModel):
     name: str      # tool name, e.g. "system.kill_process"
     enabled: bool  # True = on, False = turned off for this user
 
+class RecipeRequest(BaseModel):
+    name: str                       # lowercase, filename-safe
+    description: str = ""
+    triggers: list[str] = []        # keyword hints
+    steps: list[str] = []           # ordered tool calls, e.g. "system.info"
+
 class GreetingRequest(BaseModel):
     fresh: bool = False   # True = new-chat clean-start greeting (no welcome-back note)
 
