@@ -633,3 +633,30 @@ def test_recipes_crud(tmp_path, monkeypatch):
     assert recipes.delete_recipe("t-clock") is True
     assert recipes.list_recipes() == []
     assert recipes.delete_recipe("does-not-exist") is False
+
+
+def test_recipes_accept_named_steps_and_refs(tmp_path, monkeypatch):
+    """The builder accepts the executor's full grammar — named steps and {{ref}}
+    data-flow — and refuses the structural mistakes the runtime would refuse, so
+    what you can save in the GUI is exactly what the runtime can run."""
+    import kai.tools  # noqa: F401 — register every tool
+    from kai.skills import recipes
+    monkeypatch.setattr(recipes, "recipes_dir", lambda: tmp_path)
+
+    # A named step, plus a later step consuming its output.
+    r = recipes.create_recipe(
+        "t-dag", "named + ref", [],
+        ["clock = time.now", "files.read path={{clock}}"],
+    )
+    assert r["steps"] == ["clock = time.now", "files.read path={{clock}}"]
+
+    # Structural problems are caught up front, matching the executor.
+    with pytest.raises(ValueError, match="unknown step"):
+        recipes.create_recipe("t-x", "", [], ["files.read path={{nope}}"])
+    with pytest.raises(ValueError, match="duplicate step id"):
+        recipes.create_recipe("t-x", "", [], ["a = time.now", "a = time.now"])
+    with pytest.raises(ValueError, match="references itself"):
+        recipes.create_recipe("t-x", "", [], ["a = files.read path={{a}}"])
+    # An unregistered tool is still rejected — the executor only checks the shape.
+    with pytest.raises(ValueError, match="not a known tool"):
+        recipes.create_recipe("t-x", "", [], ["fake.tool"])

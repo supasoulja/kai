@@ -17,8 +17,8 @@ import kai.config as cfg
 
 # Recipe (and skill) names: lowercase, filename-safe. Mirrors kai.skills.registry.
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-# A step must start with a namespaced tool call (blocks bare shell commands).
-_TOOL_RE = re.compile(r"^[a-zA-Z0-9_]+\.[a-zA-Z0-9_.]+$")
+# Step grammar is NOT redefined here — it lives in the executor (_parse_steps),
+# and _validate_steps below borrows it so the builder and the runtime can't drift.
 
 
 def recipes_dir() -> Path:
@@ -53,16 +53,27 @@ def list_recipes() -> list[dict]:
     return [r for r in out if r]
 
 
-def _tool_of(step: str) -> str:
-    return step.strip().split(maxsplit=1)[0] if step.strip() else ""
+def _validate_steps(steps: list[str]) -> None:
+    """Validate a recipe's steps using the executor's own grammar.
 
+    Borrows kai.skills.registry._parse_steps (same package) instead of
+    re-implementing the grammar, so what the builder accepts is exactly what the
+    runtime can run. That parser understands the optional ``id = tool args``
+    prefix and ``{{ref}}`` data-flow, and raises on a malformed tool name, a
+    duplicate step id, a self-reference, or a reference to an unknown step.
 
-def _valid_step(step: str) -> bool:
-    tool = _tool_of(step)
-    if not _TOOL_RE.match(tool):
-        return False
+    On top of it we require every tool to actually be registered — the executor
+    only checks the *shape* of a tool name, not that the tool exists.
+    Raises ValueError with a user-facing message.
+    """
+    from kai.skills.registry import _parse_steps
     from kai.tools.registry import registry
-    return tool in registry.list_tools()
+
+    parsed = _parse_steps(steps)          # structural problems raise ValueError
+    known = set(registry.list_tools())
+    for p in parsed:
+        if p.tool_name not in known:
+            raise ValueError(f"Step “{p.tool_name}” is not a known tool (e.g. system.info).")
 
 
 def create_recipe(name: str, description: str, triggers: list[str],
@@ -78,9 +89,7 @@ def create_recipe(name: str, description: str, triggers: list[str],
     steps = [s.strip() for s in (steps or []) if s and s.strip()]
     if not steps:
         raise ValueError("A recipe needs at least one step.")
-    for s in steps:
-        if not _valid_step(s):
-            raise ValueError(f"Step “{s}” must start with a known tool (e.g. system.info).")
+    _validate_steps(steps)
     triggers = [t.strip() for t in (triggers or []) if t and t.strip()]
     _path_for(name).write_text(_render(name, description or "", triggers, steps), encoding="utf-8")
     return {"name": name, "description": description or "", "triggers": triggers,
