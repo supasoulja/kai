@@ -6,6 +6,8 @@ and brain integration.
 import os
 import tempfile
 import textwrap
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -285,17 +287,21 @@ def test_md_skill_execution(tmp_path):
     assert skill is not None
 
     mock_reg = MagicMock()
-    mock_reg.execute.side_effect = ["result-1", "result-2"]
+    # Keyed by tool name, not call order — independent steps run on separate
+    # threads, so a positional side_effect list would race.
+    mock_reg.execute.side_effect = lambda name, args: f"result-{name}"
     skill.bind(mock_reg)
 
     result = skill.execute({})
     assert result.success
-    assert "result-1" in result.output
-    assert "result-2" in result.output
+    assert "result-tool.first" in result.output
+    assert "result-tool.second" in result.output
     assert result.tool_calls == ["tool.first", "tool.second"]
 
 
-def test_md_skill_tool_error(tmp_path):
+def test_md_skill_tool_error_does_not_stop_independent_steps(tmp_path):
+    """One failing probe must not sink the whole recipe: independent steps all
+    still run, the failure is reported inline, and success flips to False."""
     md = tmp_path / "fail.md"
     md.write_text(textwrap.dedent("""\
         ---
@@ -306,18 +312,192 @@ def test_md_skill_tool_error(tmp_path):
         ## Steps
         - tool.ok
         - tool.broken
-        - tool.never_reached
+        - tool.also_ok
     """))
 
     skill = _parse_md_skill(md)
+
+    def fake(name, args):
+        if name == "tool.broken":
+            raise RuntimeError("boom")
+        return f"ran-{name}"
+
     mock_reg = MagicMock()
-    mock_reg.execute.side_effect = ["ok", Exception("boom")]
+    mock_reg.execute.side_effect = fake
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert not result.success                     # a step errored
+    assert "boom" in result.output
+    assert "ran-tool.ok" in result.output         # sibling still ran
+    assert "ran-tool.also_ok" in result.output    # and so did the one after it
+    assert result.tool_calls == ["tool.ok", "tool.broken", "tool.also_ok"]
+
+
+# ── Recipe fan-out: parallel independent steps (Phase 1) ────────────────────
+
+def _md(tmp_path, name, steps):
+    """Write a minimal SKILL.md with the given step lines and parse it."""
+    body = "\n".join(f"- {s}" for s in steps)
+    path = tmp_path / f"{name}.md"
+    path.write_text(
+        f"---\nname: {name}\ndescription: t\ntriggers: {name}\n---\n## Steps\n{body}\n")
+    return _parse_md_skill(path)
+
+
+def test_independent_steps_run_concurrently(tmp_path):
+    """Steps with no {{ref}} must run in parallel, not in sequence.
+
+    A 3-way barrier proves it: every step blocks until all three are in flight.
+    Run sequentially, the first would block until the barrier timed out and the
+    recipe would fail — so success here is only reachable via true concurrency.
+    """
+    skill = _md(tmp_path, "fanout", ["tool.a", "tool.b", "tool.c"])
+    barrier = threading.Barrier(3, timeout=5)
+
+    def fake(name, args):
+        barrier.wait()          # only clears when all 3 threads arrive
+        return f"ok-{name}"
+
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = fake
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert result.success, f"steps did not run concurrently: {result.output}"
+    assert result.tool_calls == ["tool.a", "tool.b", "tool.c"]
+
+
+def test_output_follows_declaration_order_not_completion_order(tmp_path):
+    """A fan-out recipe must read the same every run even when the last step
+    finishes first."""
+    skill = _md(tmp_path, "ordered", ["tool.slow", "tool.fast"])
+
+    def fake(name, args):
+        if name == "tool.slow":
+            time.sleep(0.15)    # finishes last, must still print first
+        return f"out-{name}"
+
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = fake
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert result.success
+    assert result.output.index("out-tool.slow") < result.output.index("out-tool.fast")
+
+
+def test_step_reference_pipes_output_and_forces_order(tmp_path):
+    """A step referencing {{id}} waits for that step and receives its output."""
+    skill = _md(tmp_path, "piped", [
+        "first = tool.alpha",
+        "tool.beta value={{first}}",
+    ])
+    seen: dict = {}
+
+    def fake(name, args):
+        if name == "tool.alpha":
+            return "ALPHA_OUT"
+        seen.update(args)
+        return "beta-done"
+
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = fake
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert result.success
+    assert seen["value"] == "ALPHA_OUT"      # piped, not left as a literal token
+
+
+def test_dependent_step_skipped_when_dependency_fails(tmp_path):
+    """Downstream work still stops — but only for steps that actually depend
+    on the failure, not for unrelated siblings."""
+    skill = _md(tmp_path, "brokenpipe", [
+        "first = tool.alpha",
+        "tool.beta value={{first}}",
+        "tool.unrelated",
+    ])
+
+    def fake(name, args):
+        if name == "tool.alpha":
+            raise RuntimeError("alpha exploded")
+        return f"ran-{name}"
+
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = fake
     skill.bind(mock_reg)
 
     result = skill.execute({})
     assert not result.success
-    assert "boom" in result.output
-    assert "tool.never_reached" not in result.tool_calls
+    assert "skipped" in result.output and "first" in result.output
+    assert "tool.beta" not in result.tool_calls        # never invoked
+    assert "tool.unrelated" in result.tool_calls       # independent, still ran
+
+
+def test_reference_cycle_runs_nothing(tmp_path):
+    skill = _md(tmp_path, "cyclic", [
+        "a = tool.one x={{b}}",
+        "b = tool.two y={{a}}",
+    ])
+    mock_reg = MagicMock()
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert not result.success
+    assert "unresolved dependency" in result.output
+    mock_reg.execute.assert_not_called()
+
+
+def test_malformed_recipe_runs_no_tools(tmp_path):
+    """Structural errors are caught up front — a bad step must not leave a
+    valid sibling half-executed."""
+    for steps, expected in [
+        (["tool.ok", "tool.two x={{nope}}"], "unknown step"),
+        (["a = tool.one", "a = tool.two"], "duplicate step id"),
+        (["tool.ok", "rm -rf /"], "invalid tool name"),
+    ]:
+        skill = _md(tmp_path, "bad", steps)
+        mock_reg = MagicMock()
+        skill.bind(mock_reg)
+        result = skill.execute({})
+        assert not result.success
+        assert expected in result.output
+        mock_reg.execute.assert_not_called()
+
+
+def test_parallel_steps_inherit_user_context(tmp_path):
+    """user_id/session_id live in threading.local(), so the executor must
+    re-establish them inside each worker or per-user DB scoping silently
+    falls back to the default user."""
+    from kai.core._app_state import (
+        set_current_user_id, set_current_session_id, get_current_user_id,
+        get_current_session_id,
+    )
+    set_current_user_id(42)
+    set_current_session_id("sess-abc")
+
+    skill = _md(tmp_path, "ctx", ["tool.a", "tool.b"])
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = (
+        lambda name, args: f"{get_current_user_id()}/{get_current_session_id()}")
+    skill.bind(mock_reg)
+
+    result = skill.execute({})
+    assert result.success
+    assert result.output.count("42/sess-abc") == 2
+
+
+def test_caller_args_are_overridden_by_inline_args(tmp_path):
+    skill = _md(tmp_path, "argprec", ["tool.a key=inline"])
+    seen: dict = {}
+    mock_reg = MagicMock()
+    mock_reg.execute.side_effect = lambda name, args: seen.update(args) or "ok"
+    skill.bind(mock_reg)
+
+    skill.execute({"key": "caller", "extra": "kept"})
+    assert seen["key"] == "inline"      # inline wins
+    assert seen["extra"] == "kept"      # caller args still pass through
 
 
 # ── Discovery ───────────────────────────────────────────────────────────────
