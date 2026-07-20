@@ -2454,7 +2454,7 @@ function _refreshToolCounts() {
 }
 
 // ── Recipes (chain existing tools into a skill.<name>) ───────────────────────
-const _RECIPE_HELP = "One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.";
+const _RECIPE_HELP = "One tool per line. Name a step to reuse its output: 'disk = files.disk_usage path=/' then 'files.read path={{disk}}'. Steps that don't reference each other run in parallel.";
 
 function _recipeHint(msg, isError) {
   const e = $('recipe-error');

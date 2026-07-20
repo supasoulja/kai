@@ -2001,7 +2001,7 @@
               <input id="recipe-name" class="recipe-input" type="text" placeholder="Name (e.g. speed-up-pc)" maxlength="64">
               <input id="recipe-triggers" class="recipe-input" type="text" placeholder="Trigger words, comma-separated (optional)">
               <textarea id="recipe-steps" class="recipe-textarea" rows="4" placeholder="One tool per line, e.g. system.clear_temp_files"></textarea>
-              <div class="recipe-hint" id="recipe-error">One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.</div>
+              <div class="recipe-hint" id="recipe-error">One tool per line. Name a step to reuse its output: "disk = files.disk_usage path=/" then "files.read path={{disk}}". Steps that don't reference each other run in parallel.</div>
               <div class="model-add-actions">
                 <button class="btn btn-sm" id="recipe-save-btn">Save</button>
                 <button class="btn btn-sm btn-muted" id="recipe-cancel-btn">Cancel</button>
