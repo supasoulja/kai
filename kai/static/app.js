@@ -148,7 +148,7 @@ function switchTab(tabName) {
   if (tabName === 'dashboard') { loadDashboard(); KaiConsole.start(); }
   else KaiConsole.stop();
   if (tabName === 'study') loadStudy();
-  if (tabName === 'settings') { loadToolsSettings(); loadRecipes(); }
+  if (tabName === 'settings') settingsBackToHub();
   if (tabName === 'memory') loadMemoryBrowser();
   if (tabName === 'chat') {
     if (inputEl) inputEl.focus();
@@ -2513,6 +2513,28 @@ async function saveRecipe() {
   } catch { _recipeHint('Could not save recipe.', true); }
 }
 
+// ── Settings hub (drill-down navigation) ─────────────────────────────────────
+function openSettingsSub(name) {
+  const hub = $('settings-hub');
+  if (hub) hub.style.display = 'none';
+  document.querySelectorAll('.settings-sub').forEach(s => {
+    s.style.display = (s.id === 'settings-sub-' + name) ? 'block' : 'none';
+  });
+  // Refresh the data the opened page shows.
+  if (name === 'brains') { loadModels(); loadToolLevel(); loadToolsSettings(); }
+  else if (name === 'skills') loadRecipes();
+  const pane = $('panel-settings');
+  if (pane) pane.scrollTop = 0;
+}
+
+function settingsBackToHub() {
+  document.querySelectorAll('.settings-sub').forEach(s => { s.style.display = 'none'; });
+  const hub = $('settings-hub');
+  if (hub) hub.style.display = 'flex';
+  const pane = $('panel-settings');
+  if (pane) pane.scrollTop = 0;
+}
+
 function renderModelList() {
   const el = $('model-list');
   if (!el) return;
@@ -3296,6 +3318,10 @@ $('tools-refresh')?.addEventListener('click', loadToolsSettings);
 $('recipe-new-btn')?.addEventListener('click', () => _toggleRecipeForm(true));
 $('recipe-cancel-btn')?.addEventListener('click', () => _toggleRecipeForm(false));
 $('recipe-save-btn')?.addEventListener('click', saveRecipe);
+document.querySelectorAll('.settings-nav-item').forEach(b =>
+  b.addEventListener('click', () => openSettingsSub(b.dataset.sub)));
+document.querySelectorAll('.settings-back').forEach(b =>
+  b.addEventListener('click', settingsBackToHub));
 
 // Start on dashboard tab
 switchTab('dashboard');

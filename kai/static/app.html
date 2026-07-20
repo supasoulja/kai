@@ -493,6 +493,31 @@
     }
     .recipe-del:hover { border-color: #c0492f; color: #c0492f; }
 
+    /* Settings hub (drill-down navigation) */
+    .settings-hub { display: flex; flex-direction: column; gap: 8px; }
+    .settings-nav-item {
+      display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+      padding: 14px 16px; background: var(--surface-high); border: 1px solid var(--outline-v);
+      border-radius: 12px; cursor: pointer; color: var(--text); transition: border-color .15s, background .15s;
+    }
+    .settings-nav-item:hover { border-color: var(--primary); }
+    .settings-nav-item .material-symbols-outlined { color: var(--primary); font-size: 24px; flex: none; }
+    .settings-nav-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .settings-nav-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; }
+    .settings-nav-sub { font-size: 11px; color: var(--muted); }
+    .settings-nav-chev { margin-left: auto; color: var(--muted); flex: none; }
+    .settings-sub-hdr {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+      padding-bottom: 12px; border-bottom: 1px solid var(--outline-v);
+    }
+    .settings-back {
+      display: inline-flex; align-items: center; gap: 4px; background: none; border: none;
+      color: var(--primary); cursor: pointer; font-family: 'Space Grotesk', sans-serif;
+      font-size: 13px; padding: 4px 8px 4px 4px; border-radius: 6px;
+    }
+    .settings-back:hover { background: var(--surface-high); }
+    .settings-sub-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 16px; color: var(--text); }
+
     /* Mode selector */
     .mode-selector-wrap { position: relative; margin-top: 8px; }
     .mode-pill {
@@ -1747,260 +1772,313 @@
     <div id="panel-settings" class="tab-pane" style="flex: 1; overflow-y: auto;">
       <div class="max-w-2xl mx-auto py-8 px-8">
 
-        <!-- Response Mode -->
-        <div class="settings-section">
-          <div class="settings-label">Response Mode</div>
-          <div class="mode-selector-wrap">
-            <button class="mode-pill" id="mode-pill" onclick="toggleModeDropdown()">
-              <span id="mode-label">Short answers</span>
-              <span class="mode-arrow">&#9662;</span>
-            </button>
-            <div id="mode-dropdown" class="mode-dropdown">
-              <button class="mode-option" data-mode="short">
-                <strong>short</strong>
-                <span class="mode-option-desc">Brief, concise answers</span>
+        <!-- ── Settings hub (menu) ── -->
+        <div id="settings-hub" class="settings-hub">
+          <button class="settings-nav-item" data-sub="you">
+            <span class="material-symbols-outlined">person</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">You</span><span class="settings-nav-sub">Account &amp; sign-out</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+          <button class="settings-nav-item" data-sub="talk">
+            <span class="material-symbols-outlined">forum</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">How Kai talks</span><span class="settings-nav-sub">Response style, creativity, temperature</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+          <button class="settings-nav-item" data-sub="brains">
+            <span class="material-symbols-outlined">psychology</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">Brains</span><span class="settings-nav-sub">Models &amp; tools</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+          <button class="settings-nav-item" data-sub="skills">
+            <span class="material-symbols-outlined">bolt</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">Skills</span><span class="settings-nav-sub">Your saved tool shortcuts</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+          <button class="settings-nav-item" data-sub="memory">
+            <span class="material-symbols-outlined">database</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">Memory &amp; privacy</span><span class="settings-nav-sub">What Kai remembers, your documents</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+          <button class="settings-nav-item" data-sub="system">
+            <span class="material-symbols-outlined">tune</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">System</span><span class="settings-nav-sub">Appearance, developer mode, restart</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
+        </div>
+
+        <!-- ── Sub: You ── -->
+        <div class="settings-sub" id="settings-sub-you" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">You</span></div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">User</span>
+            </div>
+            <div class="settings-user-row">
+              <span id="settings-user-name"></span>
+              <button class="btn btn-sm btn-muted" id="settings-logout">Logout</button>
+            </div>
+          </div>
+
+          <div class="settings-section" id="add-user-section" style="display:none">
+            <div class="settings-header">
+              <span class="settings-label">Add User</span>
+              <button class="settings-view-btn" id="user-add-btn">+ Add</button>
+            </div>
+            <div id="user-add-form" class="model-add-form" style="display:none">
+              <input id="user-add-name" class="model-name-input" type="text"
+                     placeholder="Name" maxlength="64" autocomplete="off">
+              <input id="user-add-pin" class="model-name-input" type="password"
+                     placeholder="PIN (4-8 digits)" maxlength="8" autocomplete="new-password">
+              <div class="model-add-actions">
+                <button class="btn btn-sm" id="user-save-btn">Save</button>
+                <button class="btn btn-sm btn-muted" id="user-cancel-btn">Cancel</button>
+              </div>
+            </div>
+            <div id="user-add-msg" class="settings-label" style="margin-top:6px"></div>
+          </div>
+        </div>
+
+        <!-- ── Sub: How Kai talks ── -->
+        <div class="settings-sub" id="settings-sub-talk" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">How Kai talks</span></div>
+
+          <div class="settings-section">
+            <div class="settings-label">Response Mode</div>
+            <div class="mode-selector-wrap">
+              <button class="mode-pill" id="mode-pill" onclick="toggleModeDropdown()">
+                <span id="mode-label">Short answers</span>
+                <span class="mode-arrow">&#9662;</span>
               </button>
-              <button class="mode-option" data-mode="long">
-                <strong>long</strong>
-                <span class="mode-option-desc">Detailed explanations</span>
+              <div id="mode-dropdown" class="mode-dropdown">
+                <button class="mode-option" data-mode="short">
+                  <strong>short</strong>
+                  <span class="mode-option-desc">Brief, concise answers</span>
+                </button>
+                <button class="mode-option" data-mode="long">
+                  <strong>long</strong>
+                  <span class="mode-option-desc">Detailed explanations</span>
+                </button>
+                <button class="mode-option" data-mode="chat">
+                  <strong>chat</strong>
+                  <span class="mode-option-desc">Conversational style</span>
+                </button>
+                <button class="mode-option" data-mode="research">
+                  <strong>research</strong>
+                  <span class="mode-option-desc">In-depth analysis</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-label">Mode</div>
+            <div class="mode-selector-wrap">
+              <button class="mode-pill" id="preset-pill" onclick="togglePresetDropdown()">
+                <span id="preset-label">Normal</span>
+                <span class="mode-arrow">&#9662;</span>
               </button>
-              <button class="mode-option" data-mode="chat">
-                <strong>chat</strong>
-                <span class="mode-option-desc">Conversational style</span>
-              </button>
-              <button class="mode-option" data-mode="research">
-                <strong>research</strong>
-                <span class="mode-option-desc">In-depth analysis</span>
-              </button>
+              <div id="preset-dropdown" class="mode-dropdown">
+                <button class="mode-option preset-option" data-preset="thinking">
+                  <strong>Thinking</strong>
+                  <span class="mode-option-desc">Reasons step-by-step before answering</span>
+                </button>
+                <button class="mode-option preset-option" data-preset="normal">
+                  <strong>Normal</strong>
+                  <span class="mode-option-desc">Balanced everyday responses</span>
+                </button>
+                <button class="mode-option preset-option" data-preset="creative">
+                  <strong>Creative</strong>
+                  <span class="mode-option-desc">Looser and more imaginative</span>
+                </button>
+                <button class="mode-option preset-option" data-preset="crazy">
+                  <strong>Crazy</strong>
+                  <span class="mode-option-desc">Maximum chaos &mdash; anything goes</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Temperature slider (this chat only) -->
+            <div class="temp-slider-wrap">
+              <div class="temp-slider-head">
+                <span class="settings-label" style="margin:0">Temperature</span>
+                <span id="temp-value">0.40</span>
+              </div>
+              <input type="range" id="temp-slider" min="0" max="2" step="0.01" value="0.399">
+              <div class="temp-slider-hint">Adjusts this chat only</div>
+            </div>
+
+            <!-- Advanced: editable + saved preset temperatures -->
+            <button class="settings-view-btn" id="preset-adv-toggle" onclick="togglePresetAdvanced()"
+                    style="margin-top:10px">Advanced</button>
+            <div id="preset-advanced" class="preset-advanced" style="display:none">
+              <div class="preset-adv-hint">Set the temperature each mode uses (saved for you).</div>
+              <div class="preset-adv-row">
+                <label>Thinking</label>
+                <input type="number" min="0" max="2" step="0.01" id="adv-thinking">
+              </div>
+              <div class="preset-adv-row">
+                <label>Normal</label>
+                <input type="number" min="0" max="2" step="0.01" id="adv-normal">
+              </div>
+              <div class="preset-adv-row">
+                <label>Creative</label>
+                <input type="number" min="0" max="2" step="0.01" id="adv-creative">
+              </div>
+              <div class="preset-adv-row">
+                <label>Crazy</label>
+                <input type="number" min="0" max="2" step="0.01" id="adv-crazy">
+              </div>
+              <div class="model-add-actions">
+                <button class="btn btn-sm" id="preset-adv-save" onclick="savePresetTemps()">Save</button>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Generation mode (thinking + temperature) -->
-        <div class="settings-section">
-          <div class="settings-label">Mode</div>
-          <div class="mode-selector-wrap">
-            <button class="mode-pill" id="preset-pill" onclick="togglePresetDropdown()">
-              <span id="preset-label">Normal</span>
-              <span class="mode-arrow">&#9662;</span>
-            </button>
-            <div id="preset-dropdown" class="mode-dropdown">
-              <button class="mode-option preset-option" data-preset="thinking">
-                <strong>Thinking</strong>
-                <span class="mode-option-desc">Reasons step-by-step before answering</span>
-              </button>
-              <button class="mode-option preset-option" data-preset="normal">
-                <strong>Normal</strong>
-                <span class="mode-option-desc">Balanced everyday responses</span>
-              </button>
-              <button class="mode-option preset-option" data-preset="creative">
-                <strong>Creative</strong>
-                <span class="mode-option-desc">Looser and more imaginative</span>
-              </button>
-              <button class="mode-option preset-option" data-preset="crazy">
-                <strong>Crazy</strong>
-                <span class="mode-option-desc">Maximum chaos &mdash; anything goes</span>
-              </button>
+        <!-- ── Sub: Brains (models + tools) ── -->
+        <div class="settings-sub" id="settings-sub-brains" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">Brains</span></div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Models</span>
+              <button class="settings-view-btn" id="model-add-btn">+ Add</button>
+            </div>
+            <div id="model-list"></div>
+            <div id="model-add-form" class="model-add-form" style="display:none">
+              <select id="model-add-ollama" class="model-select">
+                <option value="">Select an Ollama model...</option>
+              </select>
+              <input id="model-add-name" class="model-name-input" type="text"
+                     placeholder="Friendly name (e.g. Coder)" maxlength="30">
+              <label class="model-think-label">
+                <input type="checkbox" id="model-add-think"> Reasoning
+              </label>
+              <div class="model-add-actions">
+                <button class="btn btn-sm" id="model-save-btn">Save</button>
+                <button class="btn btn-sm btn-muted" id="model-cancel-btn">Cancel</button>
+              </div>
             </div>
           </div>
 
           <!-- Tool model level (which model runs tool calls) -->
-          <div class="settings-label" style="margin-top:14px">Tool model</div>
-          <div class="mode-selector-wrap">
-            <button class="mode-pill" id="toollevel-pill" onclick="toggleToolLevelDropdown()">
-              <span id="toollevel-label">Light (3B)</span>
-              <span class="mode-arrow">&#9662;</span>
+          <div class="settings-section">
+            <div class="settings-label">Tool model</div>
+            <div class="temp-slider-hint" style="margin:4px 0 6px">Which model runs tool calls.</div>
+            <div class="mode-selector-wrap">
+              <button class="mode-pill" id="toollevel-pill" onclick="toggleToolLevelDropdown()">
+                <span id="toollevel-label">Light (3B)</span>
+                <span class="mode-arrow">&#9662;</span>
+              </button>
+              <div id="toollevel-dropdown" class="mode-dropdown"></div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Tools</span>
+              <span class="badge" id="tools-count">0/0 on</span>
+              <button class="settings-view-btn" id="tools-refresh">Refresh</button>
+            </div>
+            <div class="temp-slider-hint" style="margin-top:6px">Turn capabilities on or off. Off means Kai won't see or run it.</div>
+            <div id="tools-list" class="tools-list"></div>
+          </div>
+        </div>
+
+        <!-- ── Sub: Skills ── -->
+        <div class="settings-sub" id="settings-sub-skills" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">Skills</span></div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Skills</span>
+              <span class="badge" id="recipes-count">0</span>
+              <button class="settings-view-btn" id="recipe-new-btn">+ New</button>
+            </div>
+            <div class="temp-slider-hint" style="margin-top:6px">Chain existing tools into a one-step shortcut Kai can run.</div>
+            <div id="recipe-form" class="recipe-form" style="display:none">
+              <input id="recipe-name" class="recipe-input" type="text" placeholder="Name (e.g. speed-up-pc)" maxlength="64">
+              <input id="recipe-triggers" class="recipe-input" type="text" placeholder="Trigger words, comma-separated (optional)">
+              <textarea id="recipe-steps" class="recipe-textarea" rows="4" placeholder="One tool per line, e.g. system.clear_temp_files"></textarea>
+              <div class="recipe-hint" id="recipe-error">One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.</div>
+              <div class="model-add-actions">
+                <button class="btn btn-sm" id="recipe-save-btn">Save</button>
+                <button class="btn btn-sm btn-muted" id="recipe-cancel-btn">Cancel</button>
+              </div>
+            </div>
+            <div id="recipe-list" class="recipe-list"></div>
+          </div>
+        </div>
+
+        <!-- ── Sub: Memory & privacy ── -->
+        <div class="settings-sub" id="settings-sub-memory" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">Memory &amp; privacy</span></div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Memory</span>
+              <span class="badge" id="s-fact-count">0</span>
+              <button class="settings-view-btn" onclick="openMemoryPanel()">View All</button>
+            </div>
+            <div id="s-highlights" class="mt-2"></div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Documents</span>
+              <span class="badge" id="s-doc-count">0</span>
+              <button class="settings-view-btn" onclick="openDocsPanel()">Manage</button>
+            </div>
+            <div id="s-docs-preview" class="mt-2"></div>
+          </div>
+        </div>
+
+        <!-- ── Sub: System ── -->
+        <div class="settings-sub" id="settings-sub-system" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">System</span></div>
+
+          <div class="settings-section">
+            <div class="settings-label">Theme</div>
+            <div class="theme-swatches">
+              <button class="theme-swatch" data-theme-pick="nebula" title="Nebula"
+                      style="background: linear-gradient(135deg, #12121d 50%, #c1c1ff 50%)">
+                <span class="swatch-check">✓</span>
+              </button>
+              <button class="theme-swatch" data-theme-pick="terminal" title="Terminal"
+                      style="background: linear-gradient(135deg, #080c08 50%, #00e535 50%)">
+                <span class="swatch-check">✓</span>
+              </button>
+              <button class="theme-swatch" data-theme-pick="slate" title="Slate"
+                      style="background: linear-gradient(135deg, #0f1117 50%, #7aa2f7 50%)">
+                <span class="swatch-check">✓</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <button id="dev-toggle">
+              <span>Developer Mode</span>
+              <span id="dev-state">Off</span>
             </button>
-            <!-- options are rendered by JS from /settings/tool-level so
-                 uninstalled models can be labeled with their pull command -->
-            <div id="toollevel-dropdown" class="mode-dropdown"></div>
+            <div class="temp-slider-hint" style="margin-top:6px">Surfaces live system stats (temps, network, disk) on the dashboard.</div>
           </div>
 
-          <!-- Temperature slider (this chat only) -->
-          <div class="temp-slider-wrap">
-            <div class="temp-slider-head">
-              <span class="settings-label" style="margin:0">Temperature</span>
-              <span id="temp-value">0.40</span>
+          <div class="settings-section" id="system-control-section" style="display:none">
+            <div class="settings-header">
+              <span class="settings-label">System control</span>
             </div>
-            <input type="range" id="temp-slider" min="0" max="2" step="0.01" value="0.399">
-            <div class="temp-slider-hint">Adjusts this chat only</div>
-          </div>
-
-          <!-- Advanced: editable + saved preset temperatures -->
-          <button class="settings-view-btn" id="preset-adv-toggle" onclick="togglePresetAdvanced()"
-                  style="margin-top:10px">Advanced</button>
-          <div id="preset-advanced" class="preset-advanced" style="display:none">
-            <div class="preset-adv-hint">Set the temperature each mode uses (saved for you).</div>
-            <div class="preset-adv-row">
-              <label>Thinking</label>
-              <input type="number" min="0" max="2" step="0.01" id="adv-thinking">
+            <div class="temp-slider-hint" style="margin-bottom:8px">
+              Restart or shut down Kai. A shutdown finishes saving the session
+              (welcome-back note + embeddings) before exiting.
             </div>
-            <div class="preset-adv-row">
-              <label>Normal</label>
-              <input type="number" min="0" max="2" step="0.01" id="adv-normal">
+            <div class="model-add-actions" style="flex-wrap:wrap; gap:8px">
+              <button class="btn btn-sm" id="sys-restart-soft" title="Reload brains in place; models stay warm">Soft restart</button>
+              <button class="btn btn-sm" id="sys-restart-hard" title="Save session, then restart the whole app">Hard restart</button>
+              <button class="btn btn-sm btn-muted" id="sys-shutdown" title="Save session, then exit">Shut down</button>
             </div>
-            <div class="preset-adv-row">
-              <label>Creative</label>
-              <input type="number" min="0" max="2" step="0.01" id="adv-creative">
-            </div>
-            <div class="preset-adv-row">
-              <label>Crazy</label>
-              <input type="number" min="0" max="2" step="0.01" id="adv-crazy">
-            </div>
-            <div class="model-add-actions">
-              <button class="btn btn-sm" id="preset-adv-save" onclick="savePresetTemps()">Save</button>
-            </div>
+            <div id="sys-control-msg" class="settings-label" style="margin-top:8px"></div>
           </div>
-        </div>
-
-        <!-- Models -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">Models</span>
-            <button class="settings-view-btn" id="model-add-btn">+ Add</button>
-          </div>
-          <div id="model-list"></div>
-          <div id="model-add-form" class="model-add-form" style="display:none">
-            <select id="model-add-ollama" class="model-select">
-              <option value="">Select an Ollama model...</option>
-            </select>
-            <input id="model-add-name" class="model-name-input" type="text"
-                   placeholder="Friendly name (e.g. Coder)" maxlength="30">
-            <label class="model-think-label">
-              <input type="checkbox" id="model-add-think"> Reasoning
-            </label>
-            <div class="model-add-actions">
-              <button class="btn btn-sm" id="model-save-btn">Save</button>
-              <button class="btn btn-sm btn-muted" id="model-cancel-btn">Cancel</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tools -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">Tools</span>
-            <span class="badge" id="tools-count">0/0 on</span>
-            <button class="settings-view-btn" id="tools-refresh">Refresh</button>
-          </div>
-          <div class="temp-slider-hint" style="margin-top:6px">Turn capabilities on or off. Off means Kai won't see or run it.</div>
-          <div id="tools-list" class="tools-list"></div>
-        </div>
-
-        <!-- Recipes -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">Recipes</span>
-            <span class="badge" id="recipes-count">0</span>
-            <button class="settings-view-btn" id="recipe-new-btn">+ New</button>
-          </div>
-          <div class="temp-slider-hint" style="margin-top:6px">Chain existing tools into a one-step shortcut Kai can run.</div>
-          <div id="recipe-form" class="recipe-form" style="display:none">
-            <input id="recipe-name" class="recipe-input" type="text" placeholder="Name (e.g. speed-up-pc)" maxlength="64">
-            <input id="recipe-triggers" class="recipe-input" type="text" placeholder="Trigger words, comma-separated (optional)">
-            <textarea id="recipe-steps" class="recipe-textarea" rows="4" placeholder="One tool per line, e.g. system.clear_temp_files"></textarea>
-            <div class="recipe-hint" id="recipe-error">One tool per line. Use a tool's full name (e.g. system.info); add args after it like files.read path=/tmp/x.</div>
-            <div class="model-add-actions">
-              <button class="btn btn-sm" id="recipe-save-btn">Save</button>
-              <button class="btn btn-sm btn-muted" id="recipe-cancel-btn">Cancel</button>
-            </div>
-          </div>
-          <div id="recipe-list" class="recipe-list"></div>
-        </div>
-
-        <!-- Memory -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">Memory</span>
-            <span class="badge" id="s-fact-count">0</span>
-            <button class="settings-view-btn" onclick="openMemoryPanel()">View All</button>
-          </div>
-          <div id="s-highlights" class="mt-2"></div>
-        </div>
-
-        <!-- Documents -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">Documents</span>
-            <span class="badge" id="s-doc-count">0</span>
-            <button class="settings-view-btn" onclick="openDocsPanel()">Manage</button>
-          </div>
-          <div id="s-docs-preview" class="mt-2"></div>
-        </div>
-
-        <!-- Developer Mode -->
-        <div class="settings-section">
-          <button id="dev-toggle">
-            <span>Developer Mode</span>
-            <span id="dev-state">Off</span>
-          </button>
-          <div class="temp-slider-hint" style="margin-top:6px">Surfaces live system stats (temps, network, disk) on the dashboard.</div>
-        </div>
-
-        <!-- Theme -->
-        <div class="settings-section">
-          <div class="settings-label">Theme</div>
-          <div class="theme-swatches">
-            <button class="theme-swatch" data-theme-pick="nebula" title="Nebula"
-                    style="background: linear-gradient(135deg, #12121d 50%, #c1c1ff 50%)">
-              <span class="swatch-check">✓</span>
-            </button>
-            <button class="theme-swatch" data-theme-pick="terminal" title="Terminal"
-                    style="background: linear-gradient(135deg, #080c08 50%, #00e535 50%)">
-              <span class="swatch-check">✓</span>
-            </button>
-            <button class="theme-swatch" data-theme-pick="slate" title="Slate"
-                    style="background: linear-gradient(135deg, #0f1117 50%, #7aa2f7 50%)">
-              <span class="swatch-check">✓</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- User -->
-        <div class="settings-section">
-          <div class="settings-header">
-            <span class="settings-label">User</span>
-          </div>
-          <div class="settings-user-row">
-            <span id="settings-user-name"></span>
-            <button class="btn btn-sm btn-muted" id="settings-logout">Logout</button>
-          </div>
-        </div>
-
-        <!-- Add User (owner only) -->
-        <div class="settings-section" id="add-user-section" style="display:none">
-          <div class="settings-header">
-            <span class="settings-label">Add User</span>
-            <button class="settings-view-btn" id="user-add-btn">+ Add</button>
-          </div>
-          <div id="user-add-form" class="model-add-form" style="display:none">
-            <input id="user-add-name" class="model-name-input" type="text"
-                   placeholder="Name" maxlength="64" autocomplete="off">
-            <input id="user-add-pin" class="model-name-input" type="password"
-                   placeholder="PIN (4-8 digits)" maxlength="8" autocomplete="new-password">
-            <div class="model-add-actions">
-              <button class="btn btn-sm" id="user-save-btn">Save</button>
-              <button class="btn btn-sm btn-muted" id="user-cancel-btn">Cancel</button>
-            </div>
-          </div>
-          <div id="user-add-msg" class="settings-label" style="margin-top:6px"></div>
-        </div>
-
-        <!-- System control (owner only) -->
-        <div class="settings-section" id="system-control-section" style="display:none">
-          <div class="settings-header">
-            <span class="settings-label">System control</span>
-          </div>
-          <div class="temp-slider-hint" style="margin-bottom:8px">
-            Restart or shut down Kai. A shutdown finishes saving the session
-            (welcome-back note + embeddings) before exiting.
-          </div>
-          <div class="model-add-actions" style="flex-wrap:wrap; gap:8px">
-            <button class="btn btn-sm" id="sys-restart-soft" title="Reload brains in place; models stay warm">Soft restart</button>
-            <button class="btn btn-sm" id="sys-restart-hard" title="Save session, then restart the whole app">Hard restart</button>
-            <button class="btn btn-sm btn-muted" id="sys-shutdown" title="Save session, then exit">Shut down</button>
-          </div>
-          <div id="sys-control-msg" class="settings-label" style="margin-top:8px"></div>
         </div>
 
       </div>
