@@ -714,21 +714,6 @@ function setFace(state) {
   }, 150);
 }
 
-function setComposedFace(eyeName, mouthName, flairName) {
-  if (!faceEl) return;
-  const face = composeFace(eyeName, mouthName, flairName);
-
-  // Blink transition
-  const blinkFace = composeFace('closed', mouthName, flairName);
-  faceEl.textContent = blinkFace.full;
-  if (currentAvatar) currentAvatar.textContent = blinkFace.compact;
-
-  setTimeout(() => {
-    if (faceEl) faceEl.textContent = face.full;
-    if (currentAvatar) currentAvatar.textContent = face.compact;
-  }, 150);
-}
-
 function startIdleBlink() {
   stopIdleBlink();
   function scheduleBlink() {
@@ -755,36 +740,68 @@ function stopIdleBlink() {
   if (_blinkTimer) { clearTimeout(_blinkTimer); _blinkTimer = null; }
 }
 
-// ── Face Tag Parser ──────────────────────────────────────────────────────────
-// Strips <face:...> tags from Kai's response and applies them.
-// Two forms:
-//   <face:annoyed>       → named shortcut
-//   <face eyes=smug mouth=smirk flair=sparkle> → compositional
+// ── Face Tag Stripper ────────────────────────────────────────────────────────
+// The model is no longer asked to emit <face:...> tags — the persona's ## Face
+// section was removed because it cost ~87 tokens every turn and bought a face
+// in only 7.1% of responses (and `amused` was half of those; the compositional
+// <face eyes= mouth= flair=> form was never used once). Faces are now derived
+// locally by pickFaceFromText() below, at zero model cost.
+// This stripper stays as belt-and-braces so a stray tag from an old prompt or
+// a fine-tuned checkpoint never renders as literal text in the chat.
 
 const FACE_TAG_RE = /<face(?::(\w+)|(\s+[^>]+))>/g;
 
-function parseFaceTags(text) {
-  let cleaned = text;
-  let match;
-  FACE_TAG_RE.lastIndex = 0;
-  while ((match = FACE_TAG_RE.exec(text)) !== null) {
-    if (match[1]) {
-      // Named shortcut: <face:annoyed>
-      const name = match[1];
-      if (FACE_PRESETS[name]) {
-        setFace(name);
-      }
-    } else if (match[2]) {
-      // Compositional: <face eyes=smug mouth=smirk flair=sparkle>
-      const attrs = match[2];
-      const eyes  = (attrs.match(/eyes=(\w+)/) || [])[1] || 'neutral';
-      const mouth = (attrs.match(/mouth=(\w+)/) || [])[1] || 'flat';
-      const flair = (attrs.match(/flair=(\w+)/) || [])[1] || 'none';
-      setComposedFace(eyes, mouth, flair);
-    }
-    cleaned = cleaned.replace(match[0], '');
+function stripFaceTags(text) {
+  return text.replace(FACE_TAG_RE, '');
+}
+
+// ── Local Face Picker (zero model tokens) ────────────────────────────────────
+// Derives an emotional face from Kai's own words. Deliberately CONSERVATIVE:
+// returns null (→ neutral) unless the opener clearly supports an emotion, so we
+// never stamp a confident-wrong face on a greeting or a status line.
+// Validated against 598 stored responses: fires on 4.5%, every pick defensible.
+
+// Emotion lives in the opening beat — a failure word buried deep in a long
+// technical answer must not recolour the face. Read the first ~2 sentences.
+function _faceOpener(text, n = 220) {
+  const head = text.slice(0, n + 80);
+  const out = head.split(/(?<=[.!?])\s+/).slice(0, 2).join(' ');
+  return out.slice(0, n);
+}
+
+function pickFaceFromText(text) {
+  if (!text) return null;
+  const t = _faceOpener(text).toLowerCase();
+
+  // UI/marker-only turns ("[stopped]") carry no emotion.
+  if (/^\s*\[?\s*(stopped|cancelled|canceled|interrupted)\s*\]?\s*$/.test(t)) return null;
+
+  // 1. Kai HERSELF hit a failure — not merely explaining an error code.
+  //    The second test suppresses "the error 0x.. means…" / "that code indicates…".
+  if (/\b(traceback|segfault|kernel panic|hit (a snag|an error)|i (couldn'?t|could not|failed to|was unable to|wasn'?t able to)\b|i can'?t (find|reach|connect|access|complete|run)\b|(it|that|the command|the operation) failed\b)/.test(t)
+      && !/error code|0x[0-9a-f]{3,}|\bmeans\b|\bstands for\b|\bindicates\b/.test(t)) {
+    return 'error';
   }
-  return cleaned;
+  // 2. Apology / empathy / bad news softened
+  if (/\b(sorry|apolog|unfortunately|i'?m afraid|that'?s (frustrating|rough|a pain)|i (know|understand) (that'?s|this is))\b/.test(t)) return 'sympathetic';
+  // 3. Completion / verified accomplishment
+  if (/\b(all set|all done|done[.!]|shipped|fixed|verified|it works|works now|tests? (pass|are passing)|passing|got it working|up and running|good to go|landed)\b/.test(t)) return 'proud';
+  // 4. Genuine enthusiasm
+  if (/(!!|\blet'?s\b.*!|\b(awesome|amazing|brilliant|excellent|love (it|this)|so cool|can'?t wait)\b)/.test(t)) return 'excited';
+  // 5. Surprise
+  if (/\b(whoa|wow|huh[.!]|didn'?t expect|surprising|turns out|wait[,.])/.test(t)) return 'surprised';
+  // 6. Annoyance
+  if (/\b(ugh|seriously\?|again\?|of course it|classic|yet again|still (broken|failing|not))\b/.test(t)) return 'annoyed';
+  // 7. Confusion / uncertainty
+  if (/\b(not sure|unclear|hmm+\b|that'?s (odd|strange|weird)|i'?m confused|doesn'?t (make sense|add up)|unexpected|can'?t tell)\b/.test(t)) return 'confused';
+  // 8. Low energy
+  if (/\b(long day|exhausting|worn out|running on fumes|late (night|here))\b/.test(t)) return 'tired';
+  // 9. Wry / amused — hardest to catch from vocabulary; strongest tells only.
+  if (/(\bheh\b|\blol\b|;\)|\bironically\b|\bof course\b|\bnaturally\b|\bpredictably\b|\bshocking(ly)?\b)/.test(t)) return 'amused';
+  // 10. Plain warmth
+  if (/\b(glad|happy to|nice[.!]|great[,.!]|good (call|catch|question)|you'?re welcome|thanks?)\b/.test(t)) return 'happy';
+
+  return null;   // neutral — the common case (~95%)
 }
 
 // ── Waking up animation ──────────────────────────────────────────────────────
@@ -834,10 +851,12 @@ function faceOnStatus(statusText) {
   }
 }
 
-function faceOnDone(hadError) {
+// `text`, when given, is Kai's finished response — the local picker reads it to
+// colour the completion face. Falls back to 'done' when nothing clearly applies.
+function faceOnDone(hadError, text) {
   stopIdleBlink();
   if (_doneTimer) clearTimeout(_doneTimer);
-  setFace(hadError ? 'error' : 'done');
+  setFace(hadError ? 'error' : (pickFaceFromText(text) || 'done'));
   _doneTimer = setTimeout(() => {
     currentAvatar = null;
     setFace('idle');
@@ -1386,8 +1405,8 @@ async function sendMessage() {
           totalTokens++;
           const tokEl = $('s-tokens');
           if (tokEl) tokEl.textContent = totalTokens.toLocaleString();
-          // Parse and strip face tags from token text before display
-          const cleanToken = parseFaceTags(ev.text);
+          // Strip any stray face tag from token text before display
+          const cleanToken = stripFaceTags(ev.text);
           if (cleanToken) appendText(content, cleanToken);
 
         } else if (ev.type === 'done') {
@@ -1438,7 +1457,7 @@ async function sendMessage() {
             const el = $('s-think');
             if (el) el.textContent = (avg / 1000).toFixed(1) + 's';
           }
-          faceOnDone(!!streamError);
+          faceOnDone(!!streamError, fullText);
           if (fullText) playTTS(fullText);
           if (statusLog.length > 0) addActivityLog(content, statusLog);
           if (ev.message_id && fullText) addFeedbackBar(content.closest('.bubble'), ev.message_id, fullText);
@@ -1639,7 +1658,7 @@ async function streamGreeting(fresh = false) {
         if (ev.type === 'token') {
           if (!hasTokens) { hideStatus(si); hasTokens = true; stopWakingAnimation(); setFace('responding'); }
           fullText += ev.text;
-          const cleanToken = parseFaceTags(ev.text);
+          const cleanToken = stripFaceTags(ev.text);
           if (cleanToken) appendText(content, cleanToken);
         } else if (ev.type === 'done') {
           fullText = fullText.replace(FACE_TAG_RE, '');
@@ -1652,7 +1671,7 @@ async function streamGreeting(fresh = false) {
             messageCount = Math.max(0, messageCount - 1);
             if (messageCount === 0 && welcomeEl) { messagesEl.appendChild(welcomeEl); welcomeEl.style.display = ''; }
           }
-          faceOnDone(false);
+          faceOnDone(false, fullText);
           break;
         }
       }

@@ -378,18 +378,8 @@ def _compute_persona_update(section: str, content: str) -> tuple[str, str, bool]
         # Replace existing section
         updated = persona[:match.start()] + new_section_text + "\n---\n\n" + persona[match.end():]
     else:
-        # Append before the last section (Face) to keep it at the end
-        face_match = re.search(r"^---\s*\n\n## Face", persona, re.MULTILINE)
-        if face_match:
-            insert_point = face_match.start()
-            updated = (
-                persona[:insert_point]
-                + "---\n\n" + new_section_text + "\n"
-                + persona[insert_point:]
-            )
-        else:
-            # Fallback: append at end
-            updated = persona.rstrip() + "\n\n---\n\n" + new_section_text
+        # New section — append at the end
+        updated = persona.rstrip() + "\n\n---\n\n" + new_section_text
 
     return persona, updated, bool(match)
 
