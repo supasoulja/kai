@@ -37,7 +37,7 @@ CREW_CATEGORIES: dict[str, list[str]] = {
     "Dewey": ["file_operations", "disk_analysis", "workspace_and_code"],
     "Scout": ["search_and_info", "web_content", "study_library", "media_understanding"],
     "Remy":  ["notes_and_memory", "goals_and_tasks", "self_inspection", "docs_rag"],
-    "Cargo": ["containers", "remote_cluster"],
+    "Cargo": ["containers"],
 }
 
 # Reverse lookup: category → specialist. Built once at import.
@@ -49,7 +49,7 @@ CATEGORY_TO_SPECIALIST: dict[str, str] = {
 
 # Tools that take long enough to warrant the BACKGROUND lane (fire-and-forget).
 LONG_RUNNING_TOOLS: frozenset[str] = frozenset({
-    "pc.deep_scan", "network.full_diagnostic", "cluster.broadcast_scan",
+    "pc.deep_scan", "network.full_diagnostic",
 })
 
 # All worker specialists (Otto is the boss, not a worker). Envoy is MCP-only and
@@ -241,7 +241,7 @@ def triage(
 # phrasings reliably mean a long job. Refine against real usage later.
 _LONG_RUNNING_HINTS = (
     "deep scan", "deep-scan", "full diagnostic", "full scan", "scan everything",
-    "scan all", "broadcast", "scan every node", "scan the cluster", "scan all nodes",
+    "scan all",
 )
 
 

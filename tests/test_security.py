@@ -13,7 +13,6 @@ Covers:
   - WebSocket auth rejection
   - Protected endpoint auth guard (H2a, H2b)
   - Cross-user session isolation (IDOR)
-  - Watchdog join-code owner-only gate
   - Voice upload size cap (M1)
   - TTS text size cap (M4)
   - Path traversal resistance
@@ -38,10 +37,7 @@ import kai.config as cfg
 
 _tmp_main = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp_main.close()
-_tmp_wd = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_tmp_wd.close()
 cfg.DB_PATH   = Path(_tmp_main.name)
-cfg.WATCHDOG_DB = Path(_tmp_wd.name)
 
 from kai.store.db import _reset_for_tests, get_conn
 _reset_for_tests()
@@ -409,34 +405,6 @@ class TestDataExport:
         # The user's own content is included.
         msgs = data["tables"].get("session_messages", [])
         assert any(m["content"] == "remember this fact" for m in msgs)
-
-
-# ── Watchdog owner gate (M-NEW-2) ─────────────────────────────────────────────
-
-class TestWatchdogOwnerGate:
-    def setup_method(self):
-        _clear_users()
-        # owner = first registered user (lowest id)
-        self.owner_id = _create_user("owner_user", "1234")
-        self.other_id = _create_user(_unique_name("nonowner"), "1234")
-        self.owner_tok = _make_session(self.owner_id, "owner_user")
-        self.other_tok = _make_session(self.other_id, "nonowner")
-        self.c = _fresh_client()
-
-    def test_owner_can_mint_join_code(self):
-        self.c.cookies.set("kai_session", self.owner_tok)
-        r = self.c.post("/api/watchdog/join-code")
-        assert r.status_code == 200
-        assert "join_code" in r.json()
-
-    def test_non_owner_cannot_mint_join_code(self):
-        self.c.cookies.set("kai_session", self.other_tok)
-        r = self.c.post("/api/watchdog/join-code")
-        assert r.status_code == 403
-
-    def test_unauthenticated_cannot_mint_join_code(self):
-        r = self.c.post("/api/watchdog/join-code")
-        assert r.status_code == 401
 
 
 # ── Voice upload size cap (M1) ────────────────────────────────────────────────

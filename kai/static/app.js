@@ -267,24 +267,6 @@ async function loadDashboard() {
     }
   } catch { /* ignore */ }
 
-  // Cluster nodes
-  try {
-    const nodes = await fetch('/api/cluster/nodes').then(r => r.json());
-    const container = $('dash-nodes');
-    if (container && nodes.length) {
-      const now = Date.now() / 1000;
-      const rows = nodes.map(n => {
-        const online = n.last_seen && (now - n.last_seen) < 120;
-        const cls = online ? 'online' : 'offline';
-        const label = online ? 'online' : _timeAgo(n.last_seen);
-        return `<div class="dash-node-row"><span class="dash-dot ${cls}"></span><span style="font-size:13px;color:var(--text)">${_esc(n.label)}</span><span class="dash-node-label">${label}</span></div>`;
-      }).join('');
-      // Keep the host row, append cluster nodes
-      const host = container.querySelector('.dash-node-row');
-      container.innerHTML = (host ? host.outerHTML : '') + rows;
-    }
-  } catch { /* ignore */ }
-
   // Active goals
   try {
     const goals = await fetch('/goals/active').then(r => r.json());
@@ -412,15 +394,6 @@ function _updateGoalsBanner(goals) {
   const more = goals.length > 2 ? ` +${goals.length - 2} more` : '';
   textEl.textContent = names + more;
   banner.style.display = 'flex';
-}
-
-function _timeAgo(ts) {
-  if (!ts) return 'never';
-  const diff = Math.floor(Date.now() / 1000 - ts);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-  return `${Math.floor(diff/86400)}d ago`;
 }
 
 function _esc(s) {
@@ -2750,27 +2723,6 @@ if (goalsBannerLink) {
 const dashOpenMemory = $('dash-open-memory');
 if (dashOpenMemory) {
   dashOpenMemory.addEventListener('click', () => switchTab('memory'));
-}
-
-// Dashboard node refresh button
-const dashNodesRefresh = $('dash-nodes-refresh');
-if (dashNodesRefresh) {
-  dashNodesRefresh.addEventListener('click', () => {
-    // Force reload cluster nodes
-    fetch('/api/cluster/nodes').then(r => r.json()).then(nodes => {
-      const container = $('dash-nodes');
-      if (!container || !nodes.length) return;
-      const now = Date.now() / 1000;
-      const hostRow = container.querySelector('.dash-node-row');
-      const rows = nodes.map(n => {
-        const online = n.last_seen && (now - n.last_seen) < 120;
-        const cls = online ? 'online' : 'offline';
-        const label = online ? 'online' : _timeAgo(n.last_seen);
-        return `<div class="dash-node-row"><span class="dash-dot ${cls}"></span><span style="font-size:13px;color:var(--text)">${_esc(n.label)}</span><span class="dash-node-label">${label}</span></div>`;
-      }).join('');
-      container.innerHTML = (hostRow ? hostRow.outerHTML : '') + rows;
-    }).catch(() => {});
-  });
 }
 
 // Container panel: refresh button + delegated start/stop/delete actions

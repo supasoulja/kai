@@ -558,17 +558,6 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "self.recent_changes",
         ],
     },
-    "remote_cluster": {
-        "description": (
-            "Check on other paired machines (the cluster): list connected nodes, "
-            "see a node's status, run a diagnostic scan on one node or broadcast a scan "
-            "to all of them, and fetch the results. How is my other PC, scan the server."
-        ),
-        "tools": [
-            "cluster.list_nodes", "cluster.node_status", "cluster.node_scan",
-            "cluster.broadcast_scan", "cluster.get_result",
-        ],
-    },
     "study_library": {
         "description": (
             "Find and study academic papers and books: search for research papers, "
@@ -687,11 +676,6 @@ TOOL_LABELS: dict[str, str] = {
     "audio.transcribe":              "Transcribing audio",
     "browser.read_page":             "Reading web page",
     "browser.screenshot":            "Taking screenshot",
-    "cluster.list_nodes":            "Listing cluster nodes",
-    "cluster.node_status":           "Checking node status",
-    "cluster.node_scan":             "Scanning remote node",
-    "cluster.broadcast_scan":        "Scanning all nodes",
-    "cluster.get_result":            "Fetching node result",
     "research.fetch_url":            "Fetching URL",
     "research.add_to_library":       "Filing page to library",
     "self.recent_changes":           "Reviewing recent changes",

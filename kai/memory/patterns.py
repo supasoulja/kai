@@ -29,8 +29,6 @@ _TOOL_SUGGEST: dict[str, str] = {
     "pc.network_info":        "check your network",
     "files.disk_usage":       "check disk space",
     "files.find_large":       "scan for large files",
-    "cluster.broadcast_scan": "scan your cluster nodes",
-    "cluster.node_scan":      "scan your nodes",
     "pc.event_logs":          "scan event logs",
     "search.web":             "search the web",
 }

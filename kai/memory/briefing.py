@@ -2,8 +2,6 @@
 Daily briefing generator.
 
 Runs at BRIEFING_TIME each day, assembles a data-driven summary from:
-  - Pending watchdog alerts (node events since last delivery)
-  - Registered cluster nodes and their last-seen status
   - Active goals that have gone stale (no progress in GOAL_STALE_DAYS)
 
 The briefing is stored as a pending_briefings row and surfaced in context.py
@@ -34,55 +32,16 @@ def generate_and_store(user_id: int = 0) -> None:
     sections: list[str] = []
     today = datetime.now().strftime("%A, %B %-d")
 
-    # ── 1. Watchdog alerts ────────────────────────────────────────────────────
-    try:
-        from kai import watchdog_queue
-        events = watchdog_queue.get_pending_events(limit=20)
-        if events:
-            crit = [e for e in events if e["severity"] in ("critical", "warning")]
-            if crit:
-                lines = [f"[ALERTS — {len(crit)} pending]"]
-                for e in crit[:5]:
-                    when = datetime.fromtimestamp(e["ts"]).strftime("%H:%M")
-                    lines.append(f"  • {e['label']}: {e['message']} ({when})")
-                if len(crit) > 5:
-                    lines.append(f"  … and {len(crit) - 5} more")
-                sections.append("\n".join(lines))
-    except Exception:
-        pass
-
-    # ── 2. Cluster node status ─────────────────────────────────────────────────
-    try:
-        from kai import watchdog_queue
-        devices = watchdog_queue.get_all_devices()
-        active = [d for d in devices if d["status"] == "active"]
-        if active:
-            now = time.time()
-            online = [d for d in active if d["last_seen"] and (now - d["last_seen"]) < 300]
-            offline = [d for d in active if d not in online]
-            status_parts = []
-            if online:
-                status_parts.append(f"{len(online)} online")
-            if offline:
-                status_parts.append(f"{len(offline)} offline")
-            node_line = f"[CLUSTER — {', '.join(status_parts)}]"
-            if offline and cfg.BRIEFING_DEPTH == "full":
-                node_line += "\n" + "\n".join(f"  • {d['label']} — offline" for d in offline[:3])
-            sections.append(node_line)
-    except Exception:
-        pass
-
-    # ── 3. Stale goals ─────────────────────────────────────────────────────────
-    try:
-        stale = _get_stale_goals(user_id)
-        if stale:
-            lines = [f"[GOALS — {len(stale)} stalled]"]
-            for g in stale[:3]:
-                days_ago = int((time.time() - g["last_active"]) / 86400)
-                lines.append(f"  • {g['title']} — no progress for {days_ago}d")
-            sections.append("\n".join(lines))
-    except Exception:
-        pass
+    # ── Stale goals ────────────────────────────────────────────────────────────
+    # _get_stale_goals swallows its own DB errors and returns [], so a bare
+    # try/except here would only hide bugs in the formatting below.
+    stale = _get_stale_goals(user_id)
+    if stale:
+        lines = [f"[GOALS — {len(stale)} stalled]"]
+        for g in stale[:3]:
+            days_ago = int((time.time() - g["last_active"]) / 86400)
+            lines.append(f"  • {g['title']} — no progress for {days_ago}d")
+        sections.append("\n".join(lines))
 
     if not sections:
         return  # nothing worth reporting

@@ -80,7 +80,6 @@ READ_ONLY: frozenset[str] = frozenset({
     # self-inspection (reads)
     "self.inspect", "self.list_tools", "self.check_persona", "self.recent_changes",
     # cluster reads
-    "cluster.list_nodes", "cluster.node_status", "cluster.get_result",
     # study / web reads
     "study.search_papers", "study.search_books", "study.find_free",
     "study.get_book_url", "study.ask_library",

@@ -64,7 +64,6 @@ _WRITE_TOOLS: frozenset[str] = frozenset({
 _DATA_TOOLS: frozenset[str] = frozenset({
     "system.info", "system.temps", "system.crashes",
     "pc.network_info", "pc.event_logs", "pc.startup_programs",
-    "cluster.node_scan", "cluster.broadcast_scan", "cluster.node_status",
     "files.read", "files.list", "files.find_large", "files.find_old",
     "search.web", "docs.search",
     "network.full_diagnostic",

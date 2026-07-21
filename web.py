@@ -174,11 +174,8 @@ class _AuthGuard:
         "/login", "/users", "/users/login", "/users/register",
         "/api/show-window",  # single-instance lock (desktop app)
         "/voice/test",       # audio pipeline test — no auth, no kokoro
-        "/api/watchdog/register",  # device pairing — authenticates via join code, not cookies
-        "/api/watchdog/event",     # scanner intake — authenticates via device_id/device_key
-        "/watchdog/download",      # agent bundle — contains no secrets, safe to serve openly
     })
-    _PUBLIC_PREFIXES = ("/static/", "/ws/", "/computer", "/api/node/")
+    _PUBLIC_PREFIXES = ("/static/", "/ws/", "/computer")
 
     # Routes that parse the cookie but don't reject if missing
     # /dashboard/stats is NOT here — it requires auth to prevent user_id=0 data leaks.
@@ -298,11 +295,11 @@ from kai.api.routes import (
     settings as _settings_router,
     debug as _debug_router,
     documents as _documents_router,
-    cluster as _cluster_router,
+    system as _system_router,
 )
 for _r in (_voice_router, _study_router, _admin_router, _pages_router,
            _dashboard_router, _memory_router, _sessions_router, _feedback_router,
-           _settings_router, _debug_router, _documents_router, _cluster_router):
+           _settings_router, _debug_router, _documents_router, _system_router):
     app.include_router(_r.router)
 
 # Brain registry + shared singletons now live in kai/api/state.py so route
@@ -727,8 +724,8 @@ async def list_event_sessions():
 # Voice endpoints moved to kai/api/voice.py (mounted via include_router).
 
 
-# Watchdog device pairing, node command API, containers, and dev-stats moved to
-# kai/api/routes/cluster.py (mounted via include_router).
+# Container control and dev-stats moved to kai/api/routes/system.py
+# (mounted via include_router).
 # Study mode endpoints moved to kai/api/study.py (mounted via include_router).
 
 

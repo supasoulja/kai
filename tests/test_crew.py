@@ -147,7 +147,7 @@ def test_long_running_needs_tools_open():
 def test_is_long_running_query():
     assert is_long_running_query("run a deep scan of my system")
     assert is_long_running_query("do a full diagnostic")
-    assert is_long_running_query("scan all nodes in the cluster")
+    assert is_long_running_query("scan everything on this box")
     assert not is_long_running_query("what are my temps")
 
 

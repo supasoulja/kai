@@ -109,9 +109,6 @@ def build(
     # New-chat greetings opt out so they don't consume/show the morning note.
     welcome_back = _get_and_clear_welcome_back() if include_welcome_back else ""
     if include_welcome_back:
-        watchdog_note = _get_and_clear_watchdog_events()
-        if watchdog_note:
-            welcome_back = f"{welcome_back}\n\n{watchdog_note}" if welcome_back else watchdog_note
         briefing = _get_and_clear_briefing(user_id=user_id)
         if briefing:
             welcome_back = f"{welcome_back}\n\n{briefing}" if welcome_back else briefing
@@ -192,53 +189,6 @@ def mark_welcome_back_delivered():
         msg = load_welcome_back()
         if msg:
             clear_welcome_back()
-    except Exception:
-        pass
-
-
-_watchdog_events_used = False
-_pending_watchdog_ids: list[int] = []
-
-def _get_and_clear_watchdog_events() -> str:
-    """
-    Load any pending watchdog reports on first call this session, return empty
-    after. Mirrors _get_and_clear_welcome_back: doesn't mark them delivered
-    here — call mark_watchdog_events_delivered() after a successful response
-    so a report survives a crash/timeout and gets surfaced again next time.
-    """
-    global _watchdog_events_used, _pending_watchdog_ids
-    if _watchdog_events_used:
-        return ""
-    _watchdog_events_used = True
-    try:
-        from kai import watchdog_queue
-        events = watchdog_queue.get_pending_events()
-    except Exception:
-        return ""
-    if not events:
-        return ""
-
-    _pending_watchdog_ids = [e["id"] for e in events]
-    lines = ["[WATCHDOG REPORTS — from monitoring scripts on the network]"]
-    for e in events:
-        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["ts"]))
-        lines.append(
-            f"- [{e['severity']}] {e['label']}/{e['script_id']} at {when}: "
-            f"{e['message']} — {e['suggestion']}"
-        )
-    return "\n".join(lines)
-
-
-def mark_watchdog_events_delivered():
-    """Mark this session's surfaced watchdog reports delivered after a successful
-    first response — mirrors mark_welcome_back_delivered's crash-survival semantics."""
-    global _pending_watchdog_ids
-    if not _pending_watchdog_ids:
-        return
-    try:
-        from kai import watchdog_queue
-        watchdog_queue.mark_delivered(_pending_watchdog_ids)
-        _pending_watchdog_ids = []
     except Exception:
         pass
 

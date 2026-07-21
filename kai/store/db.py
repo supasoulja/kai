@@ -29,10 +29,10 @@ Storage conventions across the codebase (there are three — know which to use):
      connection per call via a local _connect()/_conn() (also WAL); they do NOT
      go through get_conn(). Only the memory tree/state/knowledge use this.
 
-  3. Long-lived module-global connections (kai/events.py, kai/watchdog_queue.py).
-     The event bus (events.db) and the watchdog queue (watchdog.db) are separate
-     databases with their own process-wide connection (check_same_thread=False).
-     They are independent subsystems, not part of the main schema.
+  3. Long-lived module-global connections (kai/events.py). The event bus
+     (events.db) is a separate database with its own process-wide connection
+     (check_same_thread=False) — an independent subsystem, not part of the
+     main schema.
 
   New code should default to (1). Reach for (2) only for per-user file
   partitioning, and (3) only for a genuinely separate subsystem database.

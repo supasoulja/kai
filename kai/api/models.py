@@ -55,22 +55,6 @@ class RecipeRequest(BaseModel):
 class GreetingRequest(BaseModel):
     fresh: bool = False   # True = new-chat clean-start greeting (no welcome-back note)
 
-class WatchdogRegisterRequest(BaseModel):
-    join_code: str
-    label: str = ""
-
-class WatchdogEventRequest(BaseModel):
-    device_id: str
-    device_key: str
-    script_id: str
-    severity: str
-    message: str
-    suggestion: str = ""
-
-class NodeResultRequest(BaseModel):
-    result: dict
-    error: bool = False
-
 
 # ── Study mode ──────────────────────────────────────────────────────────────
 

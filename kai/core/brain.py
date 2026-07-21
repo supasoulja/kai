@@ -1166,15 +1166,14 @@ class Brain:
             events.emit(events.EVENT_STATUS, self.session_id, label=label)
 
     def _mark_session_notes_delivered(self) -> None:
-        """One-shot session notes (welcome-back, watchdog events, briefing)
-        are consumed on delivery — mark them so the next session starts clean."""
+        """One-shot session notes (welcome-back, briefing) are consumed on
+        delivery — mark them so the next session starts clean."""
         try:
             from kai.memory.context import (
-                mark_welcome_back_delivered, mark_watchdog_events_delivered,
+                mark_welcome_back_delivered,
                 mark_briefing_delivered,
             )
             mark_welcome_back_delivered()
-            mark_watchdog_events_delivered()
             mark_briefing_delivered(user_id=self.user_id)
         except Exception:
             pass

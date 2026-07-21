@@ -10,7 +10,6 @@ tokenizers
 numpy
 huggingface_hub
 httpx>=0.28          # HTTP client for the tool layer (vision / audio / researcher)
-requests>=2.31       # watchdog subsystem (agent.py / join.py / common.py)
 cryptography>=44     # self-signed TLS certs (web.py --https). >=44 avoids the
                      # advisories in the system 41.x that bare imports resolve to.
 

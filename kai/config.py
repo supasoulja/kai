@@ -14,7 +14,6 @@ TLS_DIR         = VAR_DIR / "tls"             # self-signed certs (honors KAI_VA
 APP_SETTINGS_PATH = STATE_DIR / "app_settings.json"  # desktop window state
 AUDIO_MODELS_DIR = ROOT_DIR / "models"
 DB_PATH         = MEMORY_DIR / "kai.db"
-WATCHDOG_DB     = MEMORY_DIR / "watchdog.db"
 PERSONA_PATH    = ROOT_DIR / "kai" / "persona" / "persona.md"
 REFLECTIONS_PATH = MEMORY_DIR / "reflections.md"
 CHANGELOG_PATH  = ROOT_DIR / "kai" / "persona" / "changelog.json"
@@ -239,7 +238,6 @@ CEREBELLUM_WRITE_DRIFT_STOP = 0.65   # tighter stop threshold for write-capable 
 # Scheduled briefings
 BRIEFING_ENABLED    = True
 BRIEFING_TIME       = "09:00"    # HH:MM local time — when the daily briefing generates
-BRIEFING_DEPTH      = "quick"    # "quick" (3-5 bullets) or "full" (detailed per-node)
 
 # Pattern recognition
 PATTERN_ENABLED     = True

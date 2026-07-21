@@ -1303,13 +1303,10 @@
     .dash-section-head { display: flex; align-items: center; gap: 6px; font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
     .dash-refresh-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--muted); padding: 0; display: flex; align-items: center; transition: color .15s; }
     .dash-refresh-btn:hover { color: var(--accent); }
-    .dash-node-list { display: flex; flex-direction: column; gap: 6px; }
-    .dash-node-row { display: flex; align-items: center; gap: 8px; }
     .dash-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .dash-dot.online { background: #4ade80; box-shadow: 0 0 6px #4ade8066; }
     .dash-dot.offline { background: var(--tertiary); }
     .dash-dot.unknown { background: var(--muted); }
-    .dash-node-label { margin-left: auto; font-size: 11px; color: var(--muted); }
     .dash-container-list { display: flex; flex-direction: column; gap: 6px; }
     .dash-ct-row { display: flex; align-items: center; gap: 8px; }
     .dash-ct-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1530,26 +1527,8 @@
           <!-- Left: System + Stats -->
           <div class="dash-col">
 
-            <!-- Node Status -->
-            <div class="dash-section">
-              <div class="dash-section-head">
-                <span class="material-symbols-outlined" style="font-size:15px">hub</span>
-                System
-                <button id="dash-nodes-refresh" class="dash-refresh-btn" title="Refresh node status">
-                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
-                </button>
-              </div>
-              <div id="dash-nodes" class="dash-node-list">
-                <div class="dash-node-row">
-                  <span class="dash-dot online"></span>
-                  <span style="font-size:13px;color:var(--text)">Host</span>
-                  <span class="dash-node-label">online</span>
-                </div>
-              </div>
-            </div>
-
             <!-- Containers / VMs -->
-            <div class="dash-section" style="margin-top:12px">
+            <div class="dash-section">
               <div class="dash-section-head">
                 <span class="material-symbols-outlined" style="font-size:15px">deployed_code</span>
                 Containers
