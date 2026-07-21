@@ -56,9 +56,11 @@ LONG_RUNNING_TOOLS: frozenset[str] = frozenset({
 # dormant until a server is connected (its slice is empty), but its prompt exists.
 SPECIALISTS: tuple[str, ...] = ("Gus", "Dewey", "Scout", "Remy", "Cargo", "Envoy")
 
-# The finalized lean prompts (one file per agent). docs/crew_prompts is canonical —
-# see docs/AGENT_CREW_AND_SETTINGS_PLAN.md Part A.2.
-CREW_PROMPTS_DIR: Path = ROOT_DIR / "docs" / "crew_prompts"
+# The finalized lean prompts (one file per agent). These are runtime assets, not
+# documentation — they live inside the package so a fresh clone has them. (They
+# previously sat in docs/, which .gitignore excludes, so a clean checkout booted
+# with no crew prompts at all.)
+CREW_PROMPTS_DIR: Path = ROOT_DIR / "kai" / "persona" / "crew_prompts"
 
 # needs:<domain> → specialist, the six fixed escalation tokens (plan Part A.2).
 NEEDS_TO_SPECIALIST: dict[str, str] = {
@@ -278,7 +280,7 @@ _FENCE_RE = re.compile(r"```(?:\w+)?\n(.*?)```", re.S)
 
 
 def load_specialist_prompt(name: str, *, prompts_dir: Path | None = None) -> str:
-    """Return a specialist's (or Otto's) system prompt from docs/crew_prompts/<name>.md.
+    """Return a specialist's (or Otto's) system prompt from crew_prompts/<name>.md.
 
     The .md wraps the prompt in a fenced block; this returns the fenced content
     only (no title/notes). Cached after first read. Raises FileNotFoundError /

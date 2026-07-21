@@ -181,7 +181,7 @@ def test_tools_for_specialist_derives_from_categories():
     assert tools_for_specialist("Dewey", cat_tools) == []
 
 
-# ── Specialist prompts (loaded from docs/crew_prompts/) ───────────────────────────
+# ── Specialist prompts (loaded from kai/persona/crew_prompts/) ────────────────────
 
 def test_every_specialist_and_otto_prompt_loads():
     for name in (*SPECIALISTS, "Otto"):
