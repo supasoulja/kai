@@ -55,6 +55,14 @@ class _RecipeStep:
     tool_name: str
     args: dict[str, str]           # inline args; values may hold {{ref}} tokens
     deps: set[str] = _dc_field(default_factory=set)  # step ids this one waits on
+    label: str = ""                # how to name this step in a user-facing error
+
+    def __post_init__(self) -> None:
+        # Unnamed steps get an internal id (_s3) that would be meaningless in a
+        # validation message shown in Settings — describe them by position instead.
+        if not self.label:
+            self.label = (f"'{self.step_id}'" if not self.step_id.startswith("_s")
+                          else f"step {self.idx + 1} ({self.tool_name})")
 
 
 def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
@@ -87,9 +95,10 @@ def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
 
         args = _parse_inline_args(parts[1]) if len(parts) > 1 else {}
         deps = {mm.group(1) for v in args.values() for mm in _REF_RE.finditer(v)}
+        step = _RecipeStep(idx, step_id, tool_name, args, deps)
         if step_id in deps:
-            raise ValueError(f"step {step_id!r} references itself")
-        steps.append(_RecipeStep(idx, step_id, tool_name, args, deps))
+            raise ValueError(f"{step.label} references itself")
+        steps.append(step)
 
     if not steps:
         raise ValueError("recipe has no steps")
@@ -99,7 +108,7 @@ def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
         unknown = s.deps - ids
         if unknown:
             raise ValueError(
-                f"step {s.step_id!r} references unknown step {sorted(unknown)[0]!r}")
+                f"{s.label} references unknown step {sorted(unknown)[0]!r}")
     return steps
 
 
