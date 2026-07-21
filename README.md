@@ -28,11 +28,10 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 - **Cerebellum** — execution validation layer that runs pre/post every tool call. Detects intent drift, scope creep, loop repetition, and output incoherence. Returns CLEAR / FLAG / STOP without touching the main LLM (~5ms, CPU-only).
 - **Intuition flags** — five detectors (contradiction, pattern break, emotional incongruence, accumulation, escalation approach) that override the scoring equation when something feels off. Sit outside the math so edge cases the equation misses still get caught.
 - **Three state stores** — UserState (emotional register, session intent, terseness), KaiState, RelationshipState. Relationship depth scales every memory score — Kai asserts less when you're new, more when she knows you.
-- **Daily briefing** — LLM-free morning summary assembled from watchdog alerts, cluster node status, and stale goals. Generated in <100ms, delivered at the start of the next session.
+- **Daily briefing** — LLM-free morning summary assembled from stale goals. Generated in <100ms, delivered at the start of the next session.
 - **Usage pattern tracking** — async log of every tool call by time of day. After enough samples, proactive one-line suggestions appear in context ("You usually check temps around this time").
 - **Goals system** — persistent multi-session tasks with ordered steps. Active goals are injected into every context block so they're never forgotten across conversations.
 - **Study tools** — open academic search across arXiv, Semantic Scholar, PubMed, CORE, SciELO, Unpaywall, Open Access Button, Open Library, and Project Gutenberg. Local study library with vector search.
-- **Cluster / watchdog system** — register remote PCs with a one-time join code. `cluster.*` tools scan nodes, broadcast diagnostics, and queue commands. `watchdog/agent.py` runs on any machine (stdlib + requests only, no Kai install needed) and sends events back when something's worth a look.
 - **Scheduler** — lightweight background thread for daily jobs at configurable HH:MM times. Powers the morning briefing; extensible for any recurring task.
 
 ---
@@ -40,7 +39,7 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 ## Features
 
 - **Multi-model routing** — fast CPU embedding classifies every user turn and routes to chat, reasoning (thinking mode), tool use, or researcher. Seeds from built-in patterns and grows dynamically from usage.
-- **88 tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, cluster monitoring, self-inspection, and more
+- **80+ tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, container control, self-inspection, and more
 - **Filesystem tree memory** — hierarchical key-value nodes at paths like `user/preferences/gaming/fps`. Version C scoring (recency × confidence × similarity × importance). Hardcoded prefixes always surface first. Three state stores modulate every score.
 - **Cerebellum validation** — pre/post execution checks on every tool call. Intent drift, scope, loop detection, and output coherence. CPU-only ONNX, ~5ms per check.
 - **Intuition flags** — five detectors override scoring when the equation misses something. Surfaced in a `[FLAGS]` block the chat model can reason about.
@@ -54,7 +53,7 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 - **Kaomoji face system** — 640-combination ASCII face with 15 named presets and idle animation
 - **LAN / phone access** — `python web.py --lan` serves over self-signed TLS for same-network phone access. PWA-ready with home screen install support.
 - **Generation presets** — Thinking / Normal / Creative / Crazy modes adjust temperature and chain-of-thought
-- **Daily briefing** — LLM-free morning summary delivered at session start. Covers watchdog alerts, cluster node health, and stale goals.
+- **Daily briefing** — LLM-free morning summary delivered at session start. Covers goals that have stalled.
 - **Usage pattern proactives** — Kai notices when you do the same thing at the same time and offers to do it before you ask.
 
 ---
@@ -82,7 +81,7 @@ cd newB2_kai
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 3. Install dependencies (one command — covers core, voice, browser, and watchdog)
+# 3. Install dependencies (one command — covers core, voice, and browser)
 pip install -r requirements.txt
 
 # 4. Download the Chromium browser binary for the browser-automation tool
@@ -311,38 +310,10 @@ Set `UNPAYWALL_EMAIL` and optionally `CORE_API_KEY` (free at core.ac.uk) in `kai
 
 ---
 
-## Cluster / Watchdog
-
-Monitor multiple PCs from Kai's chat interface.
-
-**How it works:**
-
-1. Kai generates a one-time join code (`cluster.generate_join_code`)
-2. Run `python watchdog/agent.py --server http://kai-host:7860 --join-code <code> --label "my-vm"` on any other machine
-3. The agent is now registered with a unique device ID + secret key (key is hashed in the DB)
-4. `cluster.node_scan` / `cluster.broadcast_scan` queue commands → agent polls every 15s → results come back to Kai
-
-**Cluster tools:**
-
-```
-cluster.node_scan       — run full diagnostics on one node (cpu, ram, disk, temps)
-cluster.broadcast_scan  — scan all registered nodes simultaneously
-cluster.list_nodes      — show registered nodes and last-seen timestamps
-cluster.node_status     — current status of one node
-```
-
-**Watchdog agents** (`watchdog/` folder):
-
-Self-contained — stdlib + `requests` only, no `kai` package, no models. Deploy to any PC. Events (alerts, warnings) are queued in SQLite and surfaced in the next chat session, same delivery channel as welcome-back notes.
-
----
-
 ## Daily Briefing
 
 Runs at `BRIEFING_TIME` (configurable in `kai/config.py`). Assembles:
 
-- Pending watchdog alerts since last delivery
-- Cluster node status (offline nodes, long-since-seen)
 - Active goals with no progress in `GOAL_STALE_DAYS`
 
 LLM-free — structured fact assembly only. Runs in <100ms, zero VRAM. Delivered at the start of the next chat session.
@@ -378,7 +349,6 @@ Kai picks the right tool automatically. 84 tools across 17 namespaces:
 | `notes.*` | `save`, `search`, `list` | Personal note taking |
 | `goals.*` | `create`, `list`, `update`, `complete`, `abandon` | Multi-session goal tracking |
 | `study.*` | `search_papers`, `find_free`, `search_books`, `ask_library` | Open academic search + local library |
-| `cluster.*` | `node_scan`, `broadcast_scan`, `list_nodes`, `node_status` | Remote PC monitoring |
 | `workspace.*` | `git_clone`, `git_pull` | Git operations |
 | `docs.*` | `search`, `list`, `delete` | Document RAG |
 | `memory.*` | `search_history`, `reflect` | Memory inspection |
@@ -506,7 +476,6 @@ newB2_kai/
 ├── kai/
 │   ├── config.py               <- all settings (single source of truth for data paths)
 │   ├── audio.py                <- STT (faster-whisper) + TTS (kokoro-onnx)
-│   ├── watchdog_queue.py       <- device registry, event intake, bidirectional command queue
 │   ├── core/                   <- turn engine + app lifecycle
 │   │   ├── brain.py            <- Ollama client + ReAct loop + handoff routing
 │   │   ├── tool_gate.py        <- per-turn tool/reasoning gating
@@ -550,9 +519,12 @@ newB2_kai/
 │   │   ├── knowledge/          <- rag, study, notes
 │   │   ├── memory/             <- memory_tools
 │   │   ├── media/              <- audio_tools, vision
-│   │   ├── compute/            <- cluster, lxc, sandbox
+│   │   ├── compute/            <- lxc, sandbox
 │   │   └── agent/              <- goals
 │   ├── api/                    <- FastAPI routers (voice, study, models, deps)
+│   ├── persona/
+│   │   ├── persona.md          <- Kai's authoritative self-description
+│   │   └── crew_prompts/       <- specialist system prompts (runtime assets)
 │   ├── skills/                 <- skill definitions
 │   └── static/
 │       ├── app.html            <- main chat UI
@@ -563,11 +535,6 @@ newB2_kai/
 ├── var/                        <- runtime data (gitignored): live DBs, knowledge, state, tree
 ├── models/                     <- Kokoro TTS model files (gitignored, downloaded on first run)
 ├── data/                       <- study library / seed content
-├── watchdog/
-│   ├── agent.py                <- standalone polling agent for remote machines
-│   ├── common.py               <- shared config helpers
-│   ├── join.py                 <- pairing flow (join code → device_id + key)
-│   └── README.md               <- deployment instructions
 └── docs/
     ├── HISTORY_AND_VISION.md   <- 18-month build history
     └── BRAIN_DESIGN.md         <- full memory architecture spec
