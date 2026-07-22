@@ -39,11 +39,16 @@ Storage conventions across the codebase (there are three — know which to use):
 """
 import sqlite3
 import threading
+from pathlib import Path
 
-from kai.config import DB_PATH
+import kai.config as cfg
 
 _local = threading.local()
-_schema_initialized = False
+# Which database files have had their schema created. Keyed by resolved path so
+# a test pointing get_conn() at a fresh temp DB still gets its tables built, even
+# after the production DB was already initialized in the same process. A plain
+# bool here was the cause of the cross-test "no such table: users" failures.
+_schema_initialized: set[Path] = set()
 _schema_lock = threading.Lock()
 
 # sqlite-vec availability (checked once, cached)
@@ -68,9 +73,11 @@ def sqlite_vec_available() -> bool:
 
 
 def _reset_for_tests() -> None:
-    """Reset module state so tests using different temp DBs get fresh schemas."""
-    global _schema_initialized
-    _schema_initialized = False
+    """Drop this thread's cached connection so the next get_conn() reconnects to
+    the current cfg.DB_PATH. Per-path schema tracking means a temp DB that has
+    never been seen still gets its tables built; already-initialized paths are
+    left alone (schema creation is CREATE TABLE IF NOT EXISTS, so re-running is
+    harmless either way)."""
     _local.__dict__.pop("conn", None)
 
 
@@ -85,7 +92,10 @@ def get_conn() -> sqlite3.Connection:
     if conn is not None:
         return conn
 
-    conn = sqlite3.connect(DB_PATH)
+    # Resolve the path at call time (not a frozen import-time value) so tests
+    # that reassign cfg.DB_PATH before connecting actually reach their temp DB.
+    db_path = Path(cfg.DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if DB is locked
 
@@ -96,7 +106,7 @@ def get_conn() -> sqlite3.Connection:
         conn.enable_load_extension(False)
 
     _local.conn = conn
-    _ensure_schema(conn)
+    _ensure_schema(conn, db_path)
     return conn
 
 
@@ -151,19 +161,19 @@ def resort_by_rowid_order(conn: sqlite3.Connection, table: str, entries: list,
     return entries
 
 
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create all tables once. No-op after the first call."""
-    global _schema_initialized
-    if _schema_initialized:
+def _ensure_schema(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Create all tables once per database file. No-op if this path is already
+    initialized in the current process."""
+    if db_path in _schema_initialized:
         return
     with _schema_lock:
-        if _schema_initialized:
+        if db_path in _schema_initialized:
             return
         _maybe_migrate_fresh(conn)
         _maybe_migrate_embed_dim(conn)
         _create_all_tables(conn)
         _maybe_add_latency_column(conn)
-        _schema_initialized = True
+        _schema_initialized.add(db_path)
 
 
 def _maybe_add_latency_column(conn: sqlite3.Connection) -> None:
