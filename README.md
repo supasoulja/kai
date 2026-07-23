@@ -17,7 +17,7 @@ Local AI agent. No cloud. No API keys. Runs entirely on your hardware.
 Kai is an agent, not a chatbot. They observe, plan, act, and remember across sessions.
 They own a domain — your machine — and use tools to diagnose, search, research, and help you.
 
-Edit `kai/persona.md` to change their behavior. No code changes needed.
+Edit `kai/persona/persona.md` to change their behavior. No code changes needed.
 
 ---
 
@@ -501,7 +501,8 @@ newB2_kai/
 │   │   └── upgrade.py          <- version-change awareness
 │   ├── persona/                <- identity + persona assets
 │   │   ├── identity.py         <- system prompt builder
-│   │   ├── persona.md          <- edit this to change behavior
+│   │   ├── persona.md          <- Kai's authoritative self-description; edit to change behavior
+│   │   ├── crew_prompts/       <- specialist system prompts (runtime assets)
 │   │   └── changelog.json      <- version history Kai remembers
 │   ├── util/                   <- text.py, log.py (small shared helpers)
 │   ├── memory/
@@ -522,9 +523,6 @@ newB2_kai/
 │   │   ├── compute/            <- lxc, sandbox
 │   │   └── agent/              <- goals
 │   ├── api/                    <- FastAPI routers (voice, study, models, deps)
-│   ├── persona/
-│   │   ├── persona.md          <- Kai's authoritative self-description
-│   │   └── crew_prompts/       <- specialist system prompts (runtime assets)
 │   ├── skills/                 <- skill definitions
 │   └── static/
 │       ├── app.html            <- main chat UI
