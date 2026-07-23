@@ -5,19 +5,19 @@ Local AI agent. No cloud. No API keys. Runs entirely on your hardware.
 **Stack:** Python + Ollama + SQLite. No LangChain. No frameworks.
 
 > **Warning:** This is a solo developer project. Kai is an AI agent that can run system
-> commands, modify files, and interact with your PC. **Do not blindly follow her advice. Please for the love of God**
-> Always review what she's proposing before approving destructive actions — especially file
-> deletions and system changes. She can be wrong. She can hallucinate. She has safety rails,
+> commands, modify files, and interact with your PC. **Do not blindly follow Kai's advice. Please for the love of God**
+> Always review what they're proposing before approving destructive actions — especially file
+> deletions and system changes. They can be wrong. They can hallucinate. They have safety rails,
 > but they are not bulletproof. Use at your own risk.
 
 ---
 
 ## What Kai Is
 
-Kai is an agent, not a chatbot. She observes, plans, acts, and remembers across sessions.
-She owns a domain — your machine — and uses tools to diagnose, search, research, and help you.
+Kai is an agent, not a chatbot. They observe, plan, act, and remember across sessions.
+They own a domain — your machine — and use tools to diagnose, search, research, and help you.
 
-Edit `kai/persona.md` to change her behavior. No code changes needed.
+Edit `kai/persona.md` to change their behavior. No code changes needed.
 
 ---
 
@@ -27,7 +27,7 @@ Edit `kai/persona.md` to change her behavior. No code changes needed.
 - **Filesystem tree memory** — hierarchical memory store with paths like `user/identity/profession`. Version C probabilistic scoring: recency × confidence × similarity × importance. Hardcoded prefixes (health, hardware, profession) are always surfaced first.
 - **Cerebellum** — execution validation layer that runs pre/post every tool call. Detects intent drift, scope creep, loop repetition, and output incoherence. Returns CLEAR / FLAG / STOP without touching the main LLM (~5ms, CPU-only).
 - **Intuition flags** — five detectors (contradiction, pattern break, emotional incongruence, accumulation, escalation approach) that override the scoring equation when something feels off. Sit outside the math so edge cases the equation misses still get caught.
-- **Three state stores** — UserState (emotional register, session intent, terseness), KaiState, RelationshipState. Relationship depth scales every memory score — Kai asserts less when you're new, more when she knows you.
+- **Three state stores** — UserState (emotional register, session intent, terseness), KaiState, RelationshipState. Relationship depth scales every memory score — Kai asserts less when you're new, more when they know you.
 - **Daily briefing** — LLM-free morning summary assembled from stale goals. Generated in <100ms, delivered at the start of the next session.
 - **Usage pattern tracking** — async log of every tool call by time of day. After enough samples, proactive one-line suggestions appear in context ("You usually check temps around this time").
 - **Goals system** — persistent multi-session tasks with ordered steps. Active goals are injected into every context block so they're never forgotten across conversations.
