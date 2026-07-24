@@ -10,8 +10,10 @@ tokenizers
 numpy
 huggingface_hub
 httpx>=0.28          # HTTP client for the tool layer (vision / audio / researcher)
-cryptography>=44     # self-signed TLS certs (web.py --https). >=44 avoids the
-                     # advisories in the system 41.x that bare imports resolve to.
+cryptography>=46.0.7 # self-signed TLS certs (web.py --https) + Fernet key store.
+                     # >=46.0.7 clears the CVEs the system 41.x resolves to,
+                     # through CVE-2026-39892 (fixed in 46.0.7). Must be installed
+                     # INTO the venv — see the isolation note below.
 
 # ── Voice features (STT + TTS) — lazy-loaded; heavy but pip-installs cleanly ─
 faster-whisper>=1.0  # STT (local Whisper) — pulls av, ctranslate2, tokenizers
