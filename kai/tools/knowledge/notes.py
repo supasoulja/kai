@@ -5,11 +5,11 @@ notes.save / notes.search / notes.list — persistent note storage in SQLite.
 import secrets
 from datetime import datetime
 
-_MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
-
 from kai.core._app_state import get_current_user_id
 from kai.store.db import get_conn, like_escape
 from kai.tools.registry import registry
+
+_MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
 
 
 @registry.tool(

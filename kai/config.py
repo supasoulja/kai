@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from kai.system.platform import IS_WINDOWS
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).parent.parent
 # Runtime data lives OUTSIDE the source package (kai/). Override the whole
@@ -204,15 +206,13 @@ HANDOFF_THRESHOLD = 0.55  # cosine distance cutoff for handoff routing (lower = 
 # Enabled 2026-06-24 (3e): the crew triage relies on the same semantic tool axis
 # (HandoffRouter.axis_match), so the legacy _select_tool_schema path is brought in
 # line. Set KAI_SEMANTIC_GATE=0 to force off for A/B.
-import os as _os
-
-SEMANTIC_TOOL_GATE = _os.environ.get("KAI_SEMANTIC_GATE", "1").lower() not in ("0", "false", "no")
+SEMANTIC_TOOL_GATE = os.environ.get("KAI_SEMANTIC_GATE", "1").lower() not in ("0", "false", "no")
 
 # Crew routing — when True, run_stream routes tool turns through the triage tree
 # (kai/core/crew.py): FAST → one specialist, BOSS → Otto orchestration, instead
 # of the single generalist _run_tool_rounds loop. Off by default so it can be
 # A/B-tested against the current loop; flip to True (or set KAI_CREW=1) to enable.
-CREW_ENABLED = _os.environ.get("KAI_CREW", "").lower() in ("1", "true", "yes")
+CREW_ENABLED = os.environ.get("KAI_CREW", "").lower() in ("1", "true", "yes")
 
 # Turn-flow recorder — logs every step inside a turn (model requests, raw
 # responses, thinking, tool calls with outputs, discarded text, fallbacks)
@@ -223,7 +223,6 @@ FLOW_TRACE = False
 # Cap on flow_log rows — oldest rows are trimmed past this so the debug log can't
 # grow unbounded when FLOW_TRACE is left on.
 FLOW_LOG_MAX = 5000
-from kai.system.platform import IS_WINDOWS
 
 WORKSPACE_DIR = (  # only folder Kai can write files to
     Path("C:/KaiFiles") if IS_WINDOWS else Path.home() / "KaiFiles"

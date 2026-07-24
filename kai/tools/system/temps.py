@@ -312,7 +312,7 @@ def _pyadl() -> str | None:
             core = _safe(device.getCurrentEngineClock)  # MHz
             mem = _safe(device.getCurrentMemoryClock)  # MHz
             # getCurrentFanSpeed requires speedType arg on newer pyadl
-            fan = _safe(lambda: device.getCurrentFanSpeed(1))  # 1 = percentage
+            fan = _safe(lambda d=device: d.getCurrentFanSpeed(1))  # 1 = percentage
             if fan is None:
                 fan = _safe(device.getCurrentFanSpeed)  # try legacy no-arg form
             load = _safe(device.getCurrentUsage)  # %

@@ -2,11 +2,16 @@
 memory_tools.py — tools for Kai to access her own memory and self-reflection.
 """
 
+import re as _re
 from datetime import datetime
+
+import numpy as _np
 
 from kai.config import REFLECTIONS_PATH
 from kai.core._app_state import get_current_session_id, get_current_user_id
+from kai.llm.vecmath import cosine as _cosine
 from kai.memory import episodic
+from kai.memory import tree as _tree
 from kai.store import sessions as _sessions
 from kai.tools.registry import registry
 
@@ -278,13 +283,6 @@ def read_reflections(last_n: int = 10) -> str:
 # Filesystem-style store (kai/memory/tree.py): facts live at paths like
 # user/identity/profession where the path itself carries meaning. These four
 # tools are how Kai files and recalls durable facts about the user.
-
-import re as _re
-
-import numpy as _np
-
-from kai.llm.vecmath import cosine as _cosine
-from kai.memory import tree as _tree
 
 # Per-process guard so the skeleton seed runs at most once per user.
 _TREE_SEEDED: set[str] = set()

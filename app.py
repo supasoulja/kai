@@ -18,15 +18,16 @@ from pathlib import Path
 from urllib import request as urlreq
 from urllib.error import URLError
 
+import kai.config as cfg
+from kai.system.platform import IS_LINUX as _IS_LINUX
+from kai.util import log
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 PORT = 7860
 HOST = "127.0.0.1"
 URL = f"http://{HOST}:{PORT}"
 
 _ROOT = Path(__file__).parent
-import kai.config as cfg
-from kai.system.platform import IS_LINUX as _IS_LINUX
-from kai.util import log
 
 # Use PNG on Linux (no .ico support in GTK), .ico on Windows
 _ICON = _ROOT / "kai" / "static" / ("icon-192.png" if _IS_LINUX else "kai.ico")

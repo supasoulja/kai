@@ -500,7 +500,10 @@ def test_flow_live_tap_fires(monkeypatch):
 
     monkeypatch.setattr(cfg, "FLOW_TRACE", True)
     seen = []
-    tap = lambda tid, kind, data: seen.append((tid, kind, data))
+
+    def tap(tid, kind, data):
+        seen.append((tid, kind, data))
+
     flow_rec.subscribe(tap)
     try:
         flow_rec.record("taptest", "route", input="watch me")

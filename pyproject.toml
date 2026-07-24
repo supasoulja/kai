@@ -34,6 +34,10 @@ ignore = ["E501"]
 "tests/*" = ["F811", "F841", "E402"]
 # Finetune/utility scripts also do setup-before-import.
 "scripts/*" = ["E402"]
+# web.py is the app entrypoint: it guards the uvicorn import and imports the
+# domain routers right where they're mounted (include_router), so its imports
+# are intentionally not all at the top.
+"web.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 # Treat the app package as first-party so its imports group together.

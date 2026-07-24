@@ -98,8 +98,8 @@ def _parse_shm(view: int) -> list[HWiNFOReading]:
     if signature != 0x53695748:  # "HWiS" in little-endian
         return []
 
-    version = struct.unpack_from("<I", hdr, 4)[0]
-    revision = struct.unpack_from("<I", hdr, 8)[0]
+    _version = struct.unpack_from("<I", hdr, 4)[0]
+    _revision = struct.unpack_from("<I", hdr, 8)[0]
     # offset 12: pollTime (8 bytes, __int64)
 
     # Sensor section (offsets shifted by 8-byte pollTime)
@@ -128,7 +128,7 @@ def _parse_shm(view: int) -> list[HWiNFOReading]:
         base = view + reading_offset + (i * reading_elem_size)
 
         # Reading type at offset 0
-        reading_type = struct.unpack("<I", _read_bytes(base, 0, 4))[0]
+        _reading_type = struct.unpack("<I", _read_bytes(base, 0, 4))[0]
         # Sensor index at offset 4 (index into sensor array)
         sensor_idx = struct.unpack("<I", _read_bytes(base, 4, 4))[0]
         # Reading ID at offset 8

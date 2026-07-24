@@ -46,7 +46,6 @@ def startup_report(memory: MemoryManager, model: str) -> str:
 
     facts = memory.list_facts()
     recent = memory.recent_episodes(limit=1)
-    rules = memory.list_rules()
 
     name = next((f.value for f in facts if f.key == "user_name"), None)
     greeting = f"Hey {name}." if name else "Hey."

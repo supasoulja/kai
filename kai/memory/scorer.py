@@ -11,7 +11,6 @@ When a node scores low you know exactly which question failed it.
 
 import math  # for exp() in the decay formula
 import time  # for current timestamp in recency calc
-from typing import Optional  # Optional[X] means "X or None"
 
 import numpy as np  # for cosine similarity math
 
@@ -21,7 +20,7 @@ from . import tree as _tree  # module import lets us call tree.hardcoded_nodes()
 from .tree import Node  # import the Node type we defined in tree.py
 
 # Shorthand for a numpy array that might not exist yet (before embedding runs)
-MaybeArray = Optional[np.ndarray]
+MaybeArray = np.ndarray | None
 
 
 # How quickly different source types age out — in days for a 50% confidence drop.

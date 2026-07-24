@@ -256,7 +256,7 @@ async def add_recipe(req: RecipeRequest, request: Request):
     try:
         recipe = _recipes.create_recipe(req.name, req.description, req.triggers, req.steps)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     reload_skills()
     return {"ok": True, "recipe": recipe}
 
