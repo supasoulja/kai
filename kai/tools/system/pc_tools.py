@@ -6,12 +6,14 @@ All read-only. No system changes made.
 Platform: Windows only (uses PowerShell / WMI).  On Linux these tools return
 a helpful message instead of crashing.
 """
+
 import json
 import subprocess
 import threading
-from kai.tools.registry import registry
-from kai.tools._shell import run_powershell
+
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools._shell import run_powershell
+from kai.tools.registry import registry
 
 
 def _run(cmd: list[str], timeout: int = 10) -> str:
@@ -153,10 +155,10 @@ def get_network_info() -> str:
         lines = []
         for item in data:
             lines.append(
-                f"Adapter: {item.get('Adapter','?')}  ({item.get('Speed','?')})\n"
-                f"  IP:      {item.get('IP','?')}/{item.get('PrefixLength','?')}\n"
-                f"  Gateway: {item.get('Gateway','?')}\n"
-                f"  DNS:     {item.get('DNS','?')}"
+                f"Adapter: {item.get('Adapter', '?')}  ({item.get('Speed', '?')})\n"
+                f"  IP:      {item.get('IP', '?')}/{item.get('PrefixLength', '?')}\n"
+                f"  Gateway: {item.get('Gateway', '?')}\n"
+                f"  DNS:     {item.get('DNS', '?')}"
             )
         return "\n\n".join(lines) if lines else "No active network adapters found."
     except Exception:
@@ -233,9 +235,9 @@ def deep_scan() -> str:
     On Linux, Windows-only sections (crashes, startup, event logs) are skipped.
     """
     # Lazy imports to avoid circular deps at module load time
+    from kai.tools.files.file_tools import get_disk_usage
     from kai.tools.system.system_info import get_system_info
     from kai.tools.system.temps import get_temps
-    from kai.tools.files.file_tools import get_disk_usage
 
     results: dict[str, str] = {}
 
@@ -249,17 +251,20 @@ def deep_scan() -> str:
     disk_root = "C:\\" if _IS_WINDOWS else "/"
     tasks = [
         ("resources", get_system_info, [], {}),
-        ("temps",     get_temps,       [], {}),
-        ("disk",      get_disk_usage,  [], {"path": disk_root, "top_n": 8}),
+        ("temps", get_temps, [], {}),
+        ("disk", get_disk_usage, [], {"path": disk_root, "top_n": 8}),
     ]
 
     # Platform-specific tasks (both Windows and Linux now have real implementations)
     from kai.tools.system.crash_logs import get_crash_logs
-    tasks.extend([
-        ("crashes", get_crash_logs,       [], {}),
-        ("startup", get_startup_programs, [], {}),
-        ("errors",  get_event_logs,       [], {"hours": 48, "level": "Error"}),
-    ])
+
+    tasks.extend(
+        [
+            ("crashes", get_crash_logs, [], {}),
+            ("startup", get_startup_programs, [], {}),
+            ("errors", get_event_logs, [], {"hours": 48, "level": "Error"}),
+        ]
+    )
     if not _IS_WINDOWS:
         tasks.append(("updates", _linux_updates, [], {}))
 
@@ -307,14 +312,30 @@ def deep_scan() -> str:
 
 # ── Linux helpers ──────────────────────────────────────────────────────────────
 
+
 def _linux_event_logs(hours: int = 24, level: str = "Error") -> str:
-    level_map = {"error": "err", "warning": "warning", "warn": "warning", "both": "warning", "all": "info"}
+    level_map = {
+        "error": "err",
+        "warning": "warning",
+        "warn": "warning",
+        "both": "warning",
+        "all": "info",
+    }
     jlevel = level_map.get(level.strip().lower(), "err")
     try:
         r = subprocess.run(
-            ["journalctl", f"-p{jlevel}", f"--since={hours} hours ago",
-             "--no-pager", "-n25", "-o", "short-iso"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "journalctl",
+                f"-p{jlevel}",
+                f"--since={hours} hours ago",
+                "--no-pager",
+                "-n25",
+                "-o",
+                "short-iso",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         out = r.stdout.strip()
         if not out or out == "-- No entries --":
@@ -330,11 +351,20 @@ def _linux_startup_programs() -> str:
     """List systemd services enabled at boot."""
     try:
         # User services
-        user_out = _run(["systemctl", "list-unit-files", "--user",
-                         "--state=enabled", "--no-pager", "--no-legend"])
+        user_out = _run(
+            [
+                "systemctl",
+                "list-unit-files",
+                "--user",
+                "--state=enabled",
+                "--no-pager",
+                "--no-legend",
+            ]
+        )
         # System services
-        sys_out = _run(["systemctl", "list-unit-files",
-                        "--state=enabled", "--no-pager", "--no-legend"])
+        sys_out = _run(
+            ["systemctl", "list-unit-files", "--state=enabled", "--no-pager", "--no-legend"]
+        )
 
         lines = []
         if sys_out:
@@ -352,7 +382,9 @@ def _linux_startup_programs() -> str:
                     lines.append(f"  • {parts[0]}")
 
         # XDG autostart entries
-        import os, glob
+        import glob
+        import os
+
         autostart_dirs = [
             os.path.expanduser("~/.config/autostart"),
             "/etc/xdg/autostart",
@@ -363,7 +395,9 @@ def _linux_startup_programs() -> str:
                 try:
                     with open(f) as fh:
                         content = fh.read()
-                    name_line = next((line for line in content.splitlines() if line.startswith("Name=")), "")
+                    name_line = next(
+                        (line for line in content.splitlines() if line.startswith("Name=")), ""
+                    )
                     name = name_line.split("=", 1)[1] if "=" in name_line else os.path.basename(f)
                     desktop_entries.append(f"  • {name}  ({os.path.basename(f)})")
                 except Exception:
@@ -386,7 +420,9 @@ def _linux_updates() -> str:
             # apt-get -s upgrade simulates an upgrade — counts pending packages
             r = subprocess.run(
                 ["apt-get", "-s", "upgrade"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             lines = r.stdout.splitlines()
             upgraded = next((line for line in lines if "upgraded," in line), "")
@@ -395,12 +431,16 @@ def _linux_updates() -> str:
             # Fallback: apt list --upgradable
             r2 = subprocess.run(
                 ["apt", "list", "--upgradable"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
                 env={**__import__("os").environ, "LANG": "C"},
             )
             pkgs = [line for line in r2.stdout.splitlines() if "/" in line]
             if pkgs:
-                return f"{len(pkgs)} package(s) can be upgraded:\n" + "\n".join(f"  • {p.split('/')[0]}" for p in pkgs[:20])
+                return f"{len(pkgs)} package(s) can be upgraded:\n" + "\n".join(
+                    f"  • {p.split('/')[0]}" for p in pkgs[:20]
+                )
             return "System is up to date (apt)."
         except Exception as exc:
             return f"apt check failed: {exc}"
@@ -413,7 +453,9 @@ def _linux_updates() -> str:
     if shutil.which("pacman"):
         out = _run(["pacman", "-Qu"], timeout=30)
         pkgs = out.splitlines()
-        return f"{len(pkgs)} pacman update(s) available." if pkgs else "System is up to date (pacman)."
+        return (
+            f"{len(pkgs)} pacman update(s) available." if pkgs else "System is up to date (pacman)."
+        )
 
     return "No supported package manager found (apt/dnf/pacman)."
 
@@ -421,6 +463,7 @@ def _linux_updates() -> str:
 def _linux_network_info() -> str:
     """Get network adapter info via `ip` command."""
     import json as _json
+
     try:
         addr_out = _run(["ip", "-j", "addr"])
         route_out = _run(["ip", "-j", "route"])
@@ -433,8 +476,11 @@ def _linux_network_info() -> str:
         gw = next((r.get("gateway", "") for r in routes if r.get("dst") == "default"), "")
 
         # DNS servers from resolv.conf
-        dns = [line.split()[1] for line in dns_out.splitlines()
-               if line.startswith("nameserver") and len(line.split()) >= 2]
+        dns = [
+            line.split()[1]
+            for line in dns_out.splitlines()
+            if line.startswith("nameserver") and len(line.split()) >= 2
+        ]
 
         lines = []
         for iface in addrs:
@@ -445,8 +491,11 @@ def _linux_network_info() -> str:
             if state not in ("UP", "UNKNOWN"):
                 continue
             # IPv4 addresses
-            ipv4 = [f"{a['local']}/{a['prefixlen']}" for a in iface.get("addr_info", [])
-                    if a.get("family") == "inet"]
+            ipv4 = [
+                f"{a['local']}/{a['prefixlen']}"
+                for a in iface.get("addr_info", [])
+                if a.get("family") == "inet"
+            ]
             if not ipv4:
                 continue
             lines.append(

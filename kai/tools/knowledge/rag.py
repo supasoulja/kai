@@ -5,9 +5,11 @@ docs.search  — find relevant chunks inside uploaded files
 docs.list    — show all uploaded documents
 docs.delete  — remove a document by ID
 """
-from kai.tools.registry import registry
+
+from kai.core._app_state import get_current_user_id
+from kai.core._app_state import get_embed_fn as _get_embed_fn
 from kai.memory import documents as _docs
-from kai.core._app_state import get_embed_fn as _get_embed_fn, get_current_user_id
+from kai.tools.registry import registry
 
 
 @registry.tool(

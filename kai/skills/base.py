@@ -5,7 +5,9 @@ A skill is a reusable multi-step workflow that chains tools together.
 Each skill declares its name, description, trigger keywords, and an
 execute() method that orchestrates tool calls via the tool registry.
 """
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -13,10 +15,11 @@ from typing import Any
 @dataclass
 class SkillResult:
     """Outcome of a skill execution."""
+
     success: bool
-    output: str                         # human-readable result
+    output: str  # human-readable result
     tool_calls: list[str] = field(default_factory=list)  # tools that were invoked
-    data: dict[str, Any] = field(default_factory=dict)   # structured payload (optional)
+    data: dict[str, Any] = field(default_factory=dict)  # structured payload (optional)
 
     def __str__(self) -> str:
         return self.output
@@ -44,7 +47,7 @@ class Skill:
 
     name: str = ""
     description: str = ""
-    triggers: list[str] = []           # keywords that hint this skill is relevant
+    triggers: list[str] = []  # keywords that hint this skill is relevant
 
     def __init__(self) -> None:
         self._tool_registry: Any | None = None

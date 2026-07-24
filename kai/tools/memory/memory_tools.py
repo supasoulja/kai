@@ -1,13 +1,14 @@
 """
 memory_tools.py — tools for Kai to access her own memory and self-reflection.
 """
+
 from datetime import datetime
 
-from kai.tools.registry import registry
+from kai.config import REFLECTIONS_PATH
+from kai.core._app_state import get_current_session_id, get_current_user_id
 from kai.memory import episodic
 from kai.store import sessions as _sessions
-from kai.core._app_state import get_current_user_id, get_current_session_id
-from kai.config import REFLECTIONS_PATH
+from kai.tools.registry import registry
 
 
 @registry.tool(
@@ -26,7 +27,7 @@ from kai.config import REFLECTIONS_PATH
             "description": "The episodic entry ID of the archive to retrieve the full transcript for.",
             "required": True,
         }
-    }
+    },
 )
 def get_detail(archive_id: str) -> str:
     try:
@@ -70,6 +71,7 @@ def recent_sessions(limit: int = 3) -> str:
         header: list[str] = []
         try:
             from kai.memory.context import get_session_welcome_back
+
             note = get_session_welcome_back().strip()
             if note:
                 header.append(f'Your note to yourself from last session: "{note}"\n')
@@ -80,7 +82,10 @@ def recent_sessions(limit: int = 3) -> str:
         rows = _sessions.list_sessions(limit=limit + 2, user_id=user_id)
         rows = [s for s in rows if s["id"] != current][:limit]
         if not rows:
-            return "".join(header) + "No earlier sessions found — this looks like our first conversation."
+            return (
+                "".join(header)
+                + "No earlier sessions found — this looks like our first conversation."
+            )
         lines = header + ["Your recent sessions (most recent first):\n"]
         for s in rows:
             when = (s.get("last_active") or s.get("started_at") or "")[:16].replace("T", " ")
@@ -153,7 +158,7 @@ def search_history(query: str, limit: int = 10) -> str:
 
 _CATEGORY_EMOJI = {
     "limitation": "🚧",
-    "idea":       "💡",
+    "idea": "💡",
     "observation": "👁️",
 }
 
@@ -196,8 +201,7 @@ def reflect(thought: str, category: str = "observation") -> str:
         REFLECTIONS_PATH.write_text(
             "# Kai's Reflections\n"
             "Private development journal — limitations, ideas, observations.\n"
-            "Read by the developer to prioritize improvements.\n"
-            + entry,
+            "Read by the developer to prioritize improvements.\n" + entry,
             encoding="utf-8",
         )
     else:
@@ -225,6 +229,7 @@ def reflect(thought: str, category: str = "observation") -> str:
 )
 def sleep_notes(last_n: int = 3) -> str:
     from kai.config import MEMORY_DIR
+
     log_file = MEMORY_DIR / "sleep_log.txt"
     if not log_file.exists():
         return "No sleep notes yet — I haven't gone to sleep since this feature was added."
@@ -279,7 +284,6 @@ import re as _re
 import numpy as _np
 
 from kai.llm.vecmath import cosine as _cosine
-
 from kai.memory import tree as _tree
 
 # Per-process guard so the skeleton seed runs at most once per user.
@@ -341,9 +345,11 @@ def tree_save(path: str = "", fact: str = "") -> str:
     path = _clean_path(path)
     fact = (fact or "").strip()
     if not path or path == "user":
-        return ("tree.save files a NEW fact — it needs a specific path "
-                "(e.g. user/identity/profession) and the fact text. "
-                "To RECALL what's already known, call tree.browse instead.")
+        return (
+            "tree.save files a NEW fact — it needs a specific path "
+            "(e.g. user/identity/profession) and the fact text. "
+            "To RECALL what's already known, call tree.browse instead."
+        )
     if not fact:
         return "Need the fact to file."
     if not _re.fullmatch(r"[a-z0-9_\-/]+", path):
@@ -353,14 +359,22 @@ def tree_save(path: str = "", fact: str = "") -> str:
     emb = None
     try:
         from kai.llm.embed import embed as _fast_embed
+
         emb = _np.asarray(_fast_embed(fact), dtype=_np.float32)
     except Exception:
         pass
-    _tree.write(uid, _tree.Node(
-        path=path, value=fact, confidence=0.9, importance=0.6,
-        source="stated", embedding=emb,
-    ))
-    return f"Saved to {path}: \"{fact}\""
+    _tree.write(
+        uid,
+        _tree.Node(
+            path=path,
+            value=fact,
+            confidence=0.9,
+            importance=0.6,
+            source="stated",
+            embedding=emb,
+        ),
+    )
+    return f'Saved to {path}: "{fact}"'
 
 
 @registry.tool(
@@ -433,7 +447,7 @@ def tree_read(path: str = "") -> str:
         if n.source == "seed":
             lines.append(f"{n.path}: {n.value}")
         else:
-            lines.append(f"{n.path}: \"{n.value}\" [conf:{n.confidence:.1f}, {n.source}]")
+            lines.append(f'{n.path}: "{n.value}" [conf:{n.confidence:.1f}, {n.source}]')
     if len(nodes) > 30:
         lines.append(f"... and {len(nodes) - 30} more.")
     return "\n".join(lines)
@@ -466,22 +480,22 @@ def tree_find(query: str = "") -> str:
         return "The memory tree has no facts filed yet — only the folder skeleton."
     try:
         from kai.llm.embed import embed as _fast_embed
+
         q = _np.asarray(_fast_embed(query), dtype=_np.float32)
     except Exception:
         # Embedding down — fall back to substring match so the tool still works.
-        hits = [n for n in nodes if query.lower() in n.value.lower()
-                or query.lower() in n.path.lower()]
+        hits = [
+            n for n in nodes if query.lower() in n.value.lower() or query.lower() in n.path.lower()
+        ]
         if not hits:
             return f"No tree facts matching '{query}'."
-        return "\n".join(f"{n.path}: \"{n.value}\"" for n in hits[:5])
+        return "\n".join(f'{n.path}: "{n.value}"' for n in hits[:5])
     # Embeddings are L2-normalized, so cosine == dot product here; use the
     # shared vecmath helper for one consistent similarity idiom.
-    scored = sorted(((_cosine(q, n.embedding), n) for n in nodes),
-                    key=lambda t: t[0], reverse=True)
+    scored = sorted(((_cosine(q, n.embedding), n) for n in nodes), key=lambda t: t[0], reverse=True)
     hits = [(s, n) for s, n in scored[:5] if s > 0.35]
     if not hits:
         return f"No tree facts matching '{query}'."
     return "\n".join(
-        f"{n.path}: \"{n.value}\" [conf:{n.confidence:.1f}, {n.source}, sim:{s:.2f}]"
-        for s, n in hits
+        f'{n.path}: "{n.value}" [conf:{n.confidence:.1f}, {n.source}, sim:{s:.2f}]' for s, n in hits
     )

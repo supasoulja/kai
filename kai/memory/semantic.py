@@ -2,21 +2,23 @@
 Semantic memory — key/value facts about the user and world.
 Examples: name=<user's name>, preferred_language=Python, timezone=EST
 """
+
 from datetime import datetime
 
 from kai.store.db import get_conn
 from kai.store.schema import SemanticFact
 
 
-def set_fact(key: str, value: str, source: str = "conversation",
-             confidence: float = 1.0, user_id: int = 0) -> None:
+def set_fact(
+    key: str, value: str, source: str = "conversation", confidence: float = 1.0, user_id: int = 0
+) -> None:
     conn = get_conn()
     conn.execute(
         "INSERT INTO semantic_facts (user_id, key, value, source, confidence, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, source=excluded.source, "
         "confidence=excluded.confidence, updated_at=excluded.updated_at",
-        (user_id, key, value, source, confidence, datetime.now().isoformat())
+        (user_id, key, value, source, confidence, datetime.now().isoformat()),
     )
     conn.commit()
 
@@ -24,18 +26,14 @@ def set_fact(key: str, value: str, source: str = "conversation",
 def get_fact(key: str, user_id: int = 0) -> str | None:
     conn = get_conn()
     row = conn.execute(
-        "SELECT value FROM semantic_facts WHERE user_id = ? AND key = ?",
-        (user_id, key)
+        "SELECT value FROM semantic_facts WHERE user_id = ? AND key = ?", (user_id, key)
     ).fetchone()
     return row[0] if row else None
 
 
 def delete_fact(key: str, user_id: int = 0) -> None:
     conn = get_conn()
-    conn.execute(
-        "DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
-        (user_id, key)
-    )
+    conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?", (user_id, key))
     conn.commit()
 
 
@@ -46,12 +44,10 @@ def migrate(user_id: int = 0) -> None:
     Safe to call on every startup — no-ops if keys don't exist.
     """
     from kai.memory.extractor import VOLATILE_DB_KEYS
+
     conn = get_conn()
     for key in VOLATILE_DB_KEYS:
-        conn.execute(
-            "DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
-            (user_id, key)
-        )
+        conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?", (user_id, key))
     conn.commit()
 
 
@@ -60,12 +56,15 @@ def list_facts(user_id: int = 0) -> list[SemanticFact]:
     rows = conn.execute(
         "SELECT key, value, source, confidence, updated_at "
         "FROM semantic_facts WHERE user_id = ? ORDER BY key",
-        (user_id,)
+        (user_id,),
     ).fetchall()
     return [
         SemanticFact(
-            key=row[0], value=row[1], source=row[2],
-            confidence=row[3], updated_at=datetime.fromisoformat(row[4])
+            key=row[0],
+            value=row[1],
+            source=row[2],
+            confidence=row[3],
+            updated_at=datetime.fromisoformat(row[4]),
         )
         for row in rows
     ]
@@ -82,13 +81,17 @@ def _cap_numbered(conn, user_id: int, base_key: str, cap: int) -> int:
     ).fetchall()
     stale = [r[0] for r in rows[cap:]]
     for key in stale:
-        conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
-                     (user_id, key))
+        conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?", (user_id, key))
     return len(stale)
 
 
-def review_facts(user_id: int = 0, decay: float = 0.1, purge_below: float = 0.3,
-                 pref_cap: int = 20, stale_days: int = 30) -> dict:
+def review_facts(
+    user_id: int = 0,
+    decay: float = 0.1,
+    purge_below: float = 0.3,
+    pref_cap: int = 20,
+    stale_days: int = 30,
+) -> dict:
     """Sleep-time fact maintenance — 'use it or lose it' for low-trust facts.
 
     - Decay: facts below confidence 1.0 (the inferred regex guesses; explicit
@@ -111,12 +114,15 @@ def review_facts(user_id: int = 0, decay: float = 0.1, purge_below: float = 0.3,
             continue  # recently confirmed — leave it
         new_conf = round(f.confidence - decay, 4)
         if new_conf < purge_below:
-            conn.execute("DELETE FROM semantic_facts WHERE user_id = ? AND key = ?",
-                         (user_id, f.key))
+            conn.execute(
+                "DELETE FROM semantic_facts WHERE user_id = ? AND key = ?", (user_id, f.key)
+            )
             purged += 1
         else:
-            conn.execute("UPDATE semantic_facts SET confidence = ? "
-                         "WHERE user_id = ? AND key = ?", (new_conf, user_id, f.key))
+            conn.execute(
+                "UPDATE semantic_facts SET confidence = ? WHERE user_id = ? AND key = ?",
+                (new_conf, user_id, f.key),
+            )
             decayed += 1
     purged += _cap_numbered(conn, user_id, "preference", pref_cap)
     conn.commit()

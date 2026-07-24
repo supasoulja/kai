@@ -37,6 +37,7 @@ Storage conventions across the codebase (there are three — know which to use):
   New code should default to (1). Reach for (2) only for per-user file
   partitioning, and (3) only for a genuinely separate subsystem database.
 """
+
 import sqlite3
 import threading
 from pathlib import Path
@@ -61,6 +62,7 @@ def _check_sqlite_vec() -> bool:
         return _SQLITE_VEC_AVAILABLE
     try:
         import sqlite_vec  # noqa: F401
+
         _SQLITE_VEC_AVAILABLE = True
     except ImportError:
         _SQLITE_VEC_AVAILABLE = False
@@ -101,6 +103,7 @@ def get_conn() -> sqlite3.Connection:
 
     if _check_sqlite_vec():
         import sqlite_vec
+
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
@@ -114,6 +117,7 @@ def get_conn() -> sqlite3.Connection:
 # Shared by every full-text / vector search path so the tricky bits (LIKE-escape
 # correctness, the vec0 two-step KNN dance) live in exactly one tested place.
 
+
 def like_escape(s: str) -> str:
     r"""Escape %, _ and \ so user input is matched literally under a
     ``LIKE ? ESCAPE '\'`` clause. Without this, a user typing ``%`` or ``_``
@@ -121,8 +125,7 @@ def like_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def vec_knn(conn: sqlite3.Connection, vec_table: str, embedding, k: int
-            ) -> list[tuple[int, float]]:
+def vec_knn(conn: sqlite3.Connection, vec_table: str, embedding, k: int) -> list[tuple[int, float]]:
     """Pure sqlite-vec vec0 KNN: return up to ``k`` ``(rowid, distance)`` pairs,
     nearest-first.
 
@@ -132,6 +135,7 @@ def vec_knn(conn: sqlite3.Connection, vec_table: str, embedding, k: int
     always a hard-coded table name, never user input.
     """
     import sqlite_vec
+
     return conn.execute(
         f"SELECT rowid, distance FROM {vec_table} "
         f"WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
@@ -139,8 +143,9 @@ def vec_knn(conn: sqlite3.Connection, vec_table: str, embedding, k: int
     ).fetchall()
 
 
-def resort_by_rowid_order(conn: sqlite3.Connection, table: str, entries: list,
-                          rowids: list[int], id_attr: str = "id") -> list:
+def resort_by_rowid_order(
+    conn: sqlite3.Connection, table: str, entries: list, rowids: list[int], id_attr: str = "id"
+) -> list:
     """Re-sort ``entries`` (fetched via ``rowid IN (...)``, arbitrary order) back
     into the KNN distance order given by ``rowids``. Sorts in place and returns
     the same list. Entries must expose their primary key via ``id_attr``."""
@@ -155,9 +160,7 @@ def resort_by_rowid_order(conn: sqlite3.Connection, table: str, entries: list,
         ).fetchall()
     }
     rank = {rid: i for i, rid in enumerate(rowids)}
-    entries.sort(
-        key=lambda e: rank.get(rowid_by_id.get(getattr(e, id_attr), -1), 999)
-    )
+    entries.sort(key=lambda e: rank.get(rowid_by_id.get(getattr(e, id_attr), -1), 999))
     return entries
 
 
@@ -205,11 +208,18 @@ def _maybe_migrate_fresh(conn: sqlite3.Connection) -> None:
 
     # Old schema detected — drop data tables (preserve users table)
     tables_to_drop = [
-        "semantic_facts", "procedural_rules",
-        "episodic_entries", "episodic_transcripts",
-        "sessions", "session_messages",
-        "notes", "rag_documents", "rag_chunks",
-        "tool_aliases", "trace_log", "relationship_log",
+        "semantic_facts",
+        "procedural_rules",
+        "episodic_entries",
+        "episodic_transcripts",
+        "sessions",
+        "session_messages",
+        "notes",
+        "rag_documents",
+        "rag_chunks",
+        "tool_aliases",
+        "trace_log",
+        "relationship_log",
     ]
     # Drop vector tables first (virtual tables)
     for vt in ["episodic_vec", "rag_chunks_vec"]:
@@ -237,6 +247,7 @@ def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
     # Quick check: if episodic_vec exists and is already the right dimension,
     # skip. We detect old dim by trying to insert a FAST_EMBED_DIM zero vector.
     from kai.config import FAST_EMBED_DIM
+
     try:
         # If the table doesn't exist, nothing to migrate
         conn.execute("SELECT rowid FROM episodic_vec LIMIT 0")
@@ -244,6 +255,7 @@ def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
         return  # table doesn't exist yet — first run
 
     import sqlite_vec
+
     test_vec = [0.0] * FAST_EMBED_DIM
     try:
         # Try inserting a 384-dim vector inside a savepoint so nothing is
@@ -526,6 +538,7 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
     # HQ shadow tables at HQ_EMBED_DIM (2560) are created by shutdown_reembed().
     if _check_sqlite_vec():
         from kai.config import FAST_EMBED_DIM
+
         dim = FAST_EMBED_DIM
         conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS episodic_vec

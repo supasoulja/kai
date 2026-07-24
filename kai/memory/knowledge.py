@@ -11,6 +11,7 @@ Knowledge system — two-layer learned intelligence:
                    gets their own SQLite file; deleting it removes all their
                    learned data with zero cross-user risk.
 """
+
 import sqlite3
 import threading
 import uuid
@@ -24,8 +25,10 @@ EmbedFn = Callable[[str], list[float]]
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
+
 def _user_db_path(user_id: int) -> Path:
     from kai.config import KNOWLEDGE_DIR
+
     user_dir = KNOWLEDGE_DIR / "users"
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir / f"{user_id}.db"
@@ -54,17 +57,27 @@ def delete_user_db(user_id: int) -> None:
 _SEED_PATTERNS: list[tuple[str, str]] = [
     ("debug this code, find the bug, fix this error, something is broken", "tool"),
     ("run this command, execute this, check my system, show me my hardware", "tool"),
-    ("create a goal for me, show my goals, update my goal progress, mark the goal complete", "tool"),
+    (
+        "create a goal for me, show my goals, update my goal progress, mark the goal complete",
+        "tool",
+    ),
     ("write code for, create a function, build a script, implement this feature", "tool"),
     ("search for, look this up, research this topic, find information about", "researcher"),
     ("what is, who is, when did, how does, tell me about, explain this concept", "researcher"),
-    ("think through this carefully, reason step by step, complex analysis, explain why", "reasoning"),
+    (
+        "think through this carefully, reason step by step, complex analysis, explain why",
+        "reasoning",
+    ),
     ("summarize this in depth, analyze this thoroughly, give me a detailed breakdown", "reasoning"),
-    ("what did I tell you, do you remember, recall our conversation, what do you know about me", "chat"),
+    (
+        "what did I tell you, do you remember, recall our conversation, what do you know about me",
+        "chat",
+    ),
 ]
 
 
 # ── HandoffRouter ──────────────────────────────────────────────────────────────
+
 
 class HandoffRouter:
     """
@@ -101,6 +114,7 @@ class HandoffRouter:
         """
         try:
             from kai.store.db import get_conn, sqlite_vec_available
+
             if not sqlite_vec_available():
                 return "chat", 0.0
 
@@ -114,14 +128,17 @@ class HandoffRouter:
             # two-step (db.vec_knn). vec0 MATCH forbids JOINs, but here we need
             # hp.target_mode from the sibling table in one shot — so the inline
             # distance function is the right tool. See db.vec_knn for the other idiom.
-            row = conn.execute("""
+            row = conn.execute(
+                """
                 SELECT hp.rowid, hp.target_mode,
                        vec_distance_cosine(hv.embedding, ?) AS dist
                 FROM handoff_vec hv
                 JOIN handoff_patterns hp ON hp.rowid = hv.rowid
                 ORDER BY dist ASC
                 LIMIT 1
-            """, (query_bytes,)).fetchone()
+            """,
+                (query_bytes,),
+            ).fetchone()
 
             if not row:
                 return "chat", 0.0
@@ -134,8 +151,7 @@ class HandoffRouter:
                 return "chat", similarity
 
             conn.execute(
-                "UPDATE handoff_patterns SET use_count = use_count + 1 WHERE rowid = ?",
-                (rowid,)
+                "UPDATE handoff_patterns SET use_count = use_count + 1 WHERE rowid = ?", (rowid,)
             )
             conn.commit()
             return mode, similarity
@@ -151,7 +167,9 @@ class HandoffRouter:
     _AXIS_MODES = {"tool": ("tool", "researcher"), "think": ("reasoning",)}
 
     def axis_match(
-        self, query_emb: list[float] | None, axis: str,
+        self,
+        query_emb: list[float] | None,
+        axis: str,
         threshold: float = HANDOFF_THRESHOLD,
     ) -> tuple[bool, float]:
         """Binary semantic match for one triage axis. Returns (matched, similarity).
@@ -161,9 +179,11 @@ class HandoffRouter:
             return (False, 0.0)
         try:
             from kai.store.db import get_conn, sqlite_vec_available
+
             if not sqlite_vec_available():
                 return (False, 0.0)
             import sqlite_vec
+
             conn = get_conn()
             placeholders = ",".join("?" * len(modes))
             row = conn.execute(
@@ -192,6 +212,7 @@ class HandoffRouter:
         """
         try:
             from kai.store.db import get_conn, sqlite_vec_available
+
             if not sqlite_vec_available():
                 return
 
@@ -205,7 +226,7 @@ class HandoffRouter:
                 "INSERT INTO handoff_patterns "
                 "(id, pattern, target_mode, confidence, use_count, created_at) "
                 "VALUES (?, ?, ?, 1.0, 0, ?)",
-                (pattern_id, pattern, target_mode, ts)
+                (pattern_id, pattern, target_mode, ts),
             )
             conn.commit()
 
@@ -215,7 +236,7 @@ class HandoffRouter:
 
             conn.execute(
                 "INSERT INTO handoff_vec (rowid, embedding) VALUES (?, ?)",
-                (rowid, sqlite_vec.serialize_float32(embed_fn(pattern)))
+                (rowid, sqlite_vec.serialize_float32(embed_fn(pattern))),
             )
             conn.commit()
 
@@ -226,14 +247,20 @@ class HandoffRouter:
         """Return all patterns sorted by use count — useful for inspection/debugging."""
         try:
             from kai.store.db import get_conn
+
             conn = get_conn()
             rows = conn.execute(
                 "SELECT pattern, target_mode, confidence, use_count, created_at "
                 "FROM handoff_patterns ORDER BY use_count DESC"
             ).fetchall()
             return [
-                {"pattern": r[0], "mode": r[1], "confidence": r[2],
-                 "use_count": r[3], "created_at": r[4]}
+                {
+                    "pattern": r[0],
+                    "mode": r[1],
+                    "confidence": r[2],
+                    "use_count": r[3],
+                    "created_at": r[4],
+                }
                 for r in rows
             ]
         except Exception:
@@ -242,6 +269,7 @@ class HandoffRouter:
     def _seed_if_empty(self, embed_fn: EmbedFn) -> None:
         try:
             from kai.store.db import get_conn, sqlite_vec_available
+
             if not sqlite_vec_available():
                 return
 
@@ -259,7 +287,7 @@ class HandoffRouter:
                     "INSERT INTO handoff_patterns "
                     "(id, pattern, target_mode, confidence, use_count, created_at) "
                     "VALUES (?, ?, ?, 1.0, 0, ?)",
-                    (pid, pattern, mode, ts)
+                    (pid, pattern, mode, ts),
                 )
                 conn.commit()
                 rowid = conn.execute(
@@ -267,7 +295,7 @@ class HandoffRouter:
                 ).fetchone()[0]
                 conn.execute(
                     "INSERT INTO handoff_vec (rowid, embedding) VALUES (?, ?)",
-                    (rowid, sqlite_vec.serialize_float32(embed_fn(pattern)))
+                    (rowid, sqlite_vec.serialize_float32(embed_fn(pattern))),
                 )
                 conn.commit()
 
@@ -276,6 +304,7 @@ class HandoffRouter:
 
 
 # ── KnowledgeStore ─────────────────────────────────────────────────────────────
+
 
 class KnowledgeStore:
     """
@@ -304,6 +333,7 @@ class KnowledgeStore:
 
         try:
             import sqlite_vec
+
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
@@ -349,6 +379,7 @@ class KnowledgeStore:
         """Save a new piece of learned knowledge for this user."""
         try:
             import sqlite_vec
+
             conn = self._conn()
             entry_id = str(uuid.uuid4())
             ts = datetime.now().isoformat()
@@ -356,7 +387,7 @@ class KnowledgeStore:
             conn.execute(
                 "INSERT INTO knowledge (id, content, source, topic, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (entry_id, content, source, topic, ts)
+                (entry_id, content, source, topic, ts),
             )
             conn.commit()
 
@@ -366,7 +397,7 @@ class KnowledgeStore:
 
             conn.execute(
                 "INSERT INTO knowledge_vec (rowid, embedding) VALUES (?, ?)",
-                (rowid, sqlite_vec.serialize_float32(embed_fn(content)))
+                (rowid, sqlite_vec.serialize_float32(embed_fn(content))),
             )
             conn.commit()
         except Exception:
@@ -390,6 +421,7 @@ class KnowledgeStore:
         """
         try:
             import sqlite_vec
+
             conn = self._conn()
             vec = query_embedding if query_embedding is not None else embed_fn(query)
             query_bytes = sqlite_vec.serialize_float32(vec)
@@ -397,14 +429,17 @@ class KnowledgeStore:
             # Idiom note: vec_distance_cosine inline JOIN, *not* db.vec_knn's vec0
             # MATCH two-step — we need k.content/source/topic alongside the score
             # and vec0 MATCH can't JOIN, so distance is computed inline.
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT k.content, k.source, k.topic,
                        1.0 - vec_distance_cosine(kv.embedding, ?) AS similarity
                 FROM knowledge_vec kv
                 JOIN knowledge k ON k.rowid = kv.rowid
                 ORDER BY vec_distance_cosine(kv.embedding, ?) ASC
                 LIMIT ?
-            """, (query_bytes, query_bytes, top_k)).fetchall()
+            """,
+                (query_bytes, query_bytes, top_k),
+            ).fetchall()
 
             return [
                 {
@@ -429,14 +464,17 @@ class KnowledgeStore:
     def recent(self, limit: int = 10) -> list[dict]:
         """Return the most recently added entries — useful for inspection."""
         try:
-            rows = self._conn().execute(
-                "SELECT content, source, topic, created_at FROM knowledge "
-                "ORDER BY created_at DESC LIMIT ?",
-                (limit,)
-            ).fetchall()
+            rows = (
+                self._conn()
+                .execute(
+                    "SELECT content, source, topic, created_at FROM knowledge "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                )
+                .fetchall()
+            )
             return [
-                {"content": r[0], "source": r[1], "topic": r[2], "created_at": r[3]}
-                for r in rows
+                {"content": r[0], "source": r[1], "topic": r[2], "created_at": r[3]} for r in rows
             ]
         except Exception:
             return []

@@ -7,6 +7,7 @@ Works by sending the image as base64 to Ollama's chat endpoint with gemma4:12b
 (always resident, vision-capable). Use after browser.screenshot to analyze pages,
 or pass any local image file or image URL directly.
 """
+
 import base64
 import json
 from pathlib import Path
@@ -17,7 +18,7 @@ from kai.config import OLLAMA_BASE_URL
 from kai.tools.registry import registry
 
 _VISION_MODEL = "gemma4:12b"
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024   # 20 MB hard limit
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB hard limit
 
 
 def _load_image_b64(source: str) -> tuple[str, str]:
@@ -97,6 +98,7 @@ def _call_vision(image_b64: str, prompt: str) -> str:
 
 # ── vision.describe ────────────────────────────────────────────────────────────
 
+
 @registry.tool(
     name="vision.describe",
     description=(
@@ -131,10 +133,14 @@ def describe(source: str, question: str = "") -> str:
     except ValueError as e:
         return str(e)
 
-    prompt = question.strip() if question.strip() else (
-        "Describe this image in detail. "
-        "If there is text, read it. "
-        "If it's a screenshot, describe what the page or application shows."
+    prompt = (
+        question.strip()
+        if question.strip()
+        else (
+            "Describe this image in detail. "
+            "If there is text, read it. "
+            "If it's a screenshot, describe what the page or application shows."
+        )
     )
 
     return _call_vision(image_b64, prompt)

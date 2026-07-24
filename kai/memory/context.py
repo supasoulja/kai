@@ -16,17 +16,21 @@ Memory tiers:
   - Uploaded files: always injected (tiny inventory)
   - RAG chunks: ROUTED — only searched when "documents" domain is active
 """
-import time
+
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+
 from kai.config import (
-    MAX_CONTEXT_CHARS, EPISODIC_TOP_K, RAG_TOP_K, RAG_THRESHOLD, RECALL_CONFIDENCE_MIN,
+    EPISODIC_TOP_K,
+    MAX_CONTEXT_CHARS,
+    RAG_THRESHOLD,
+    RAG_TOP_K,
+    RECALL_CONFIDENCE_MIN,
 )
+from kai.core.sleep import clear_welcome_back, load_welcome_back
+from kai.memory import episodic, procedural, router, semantic
 from kai.persona.identity import build_identity_block
-from kai.memory import semantic, procedural, episodic
-from kai.memory import router
 from kai.store.schema import ContextBlock
-from kai.core.sleep import load_welcome_back, clear_welcome_back
-from typing import Callable
 
 # Shared pool for parallel retrieval — 2 workers covers episodic + RAG.
 _retrieval_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kai-retrieve")
@@ -53,14 +57,15 @@ def build(
     everything (same as pre-router behavior).
     """
     identity_text = build_identity_block(user_id=user_id)
-    proc_rules    = procedural.list_rules(user_id=user_id)
+    proc_rules = procedural.list_rules(user_id=user_id)
     # Confidence gate: keep low-trust regex guesses and decayed facts out of
     # recall. The extractor still sees the full set (it needs them for its
     # overwrite guard) — this filter applies only to what gets injected.
-    all_facts     = [f for f in semantic.list_facts(user_id=user_id)
-                     if f.confidence >= RECALL_CONFIDENCE_MIN]
-    doc_inv       = _fetch_doc_inventory(user_id=user_id)
-    tool_index    = _render_tool_index(user_id=user_id)
+    all_facts = [
+        f for f in semantic.list_facts(user_id=user_id) if f.confidence >= RECALL_CONFIDENCE_MIN
+    ]
+    doc_inv = _fetch_doc_inventory(user_id=user_id)
+    tool_index = _render_tool_index(user_id=user_id)
 
     # ── Route: classify query → active domains ────────────────────────────────
     if query_embedding and domain_index:
@@ -78,11 +83,19 @@ def build(
     futures: dict = {}
     if "history" in active:
         futures["episodic"] = _retrieval_pool.submit(
-            _fetch_episodic, query, embed_fn, query_embedding, user_id,
+            _fetch_episodic,
+            query,
+            embed_fn,
+            query_embedding,
+            user_id,
         )
     if "documents" in active:
         futures["rag"] = _retrieval_pool.submit(
-            _fetch_rag_chunks, query, embed_fn, query_embedding, user_id,
+            _fetch_rag_chunks,
+            query,
+            embed_fn,
+            query_embedding,
+            user_id,
         )
 
     for key, fut in futures.items():
@@ -158,6 +171,7 @@ def build(
 _welcome_back_used = False
 _session_welcome_back = ""  # retained for the whole session (survives past turn 1)
 
+
 def _get_and_clear_welcome_back() -> str:
     """Load welcome-back message on first call, return empty string after.
     Does NOT clear the file — call mark_welcome_back_delivered() after a
@@ -214,13 +228,19 @@ def _fetch_episodic(
     if not query.strip():
         return []
     results = episodic.search_non_turns(
-        query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K,
-        query_embedding=query_embedding, user_id=user_id,
+        query.strip(),
+        embed_fn=embed_fn,
+        top_k=EPISODIC_TOP_K,
+        query_embedding=query_embedding,
+        user_id=user_id,
     )
     if not results:
         results = episodic.search(
-            query.strip(), embed_fn=embed_fn, top_k=EPISODIC_TOP_K,
-            query_embedding=query_embedding, user_id=user_id,
+            query.strip(),
+            embed_fn=embed_fn,
+            top_k=EPISODIC_TOP_K,
+            query_embedding=query_embedding,
+            user_id=user_id,
         )
     return results
 
@@ -240,16 +260,20 @@ def _fetch_rag_chunks(
         return []
     try:
         from kai.memory import documents as _docs
+
         if not _docs.has_documents(user_id=user_id):
             return []
         results = _docs.search(
-            query.strip(), embed_fn=embed_fn, top_k=RAG_TOP_K,
-            query_embedding=query_embedding, user_id=user_id,
+            query.strip(),
+            embed_fn=embed_fn,
+            top_k=RAG_TOP_K,
+            query_embedding=query_embedding,
+            user_id=user_id,
         )
         return [
             {
-                "doc_name":    r["doc_name"],
-                "content":     r["content"],
+                "doc_name": r["doc_name"],
+                "content": r["content"],
                 "chunk_index": r["chunk_index"],
             }
             for r in results
@@ -263,6 +287,7 @@ def _render_tool_index(user_id: int = 0) -> str:
     """[TOOLS] index — one line per documented tool. Empty if sync hasn't run."""
     try:
         from kai.memory.tool_docs import render_tool_index
+
         return render_tool_index(user_id)
     except Exception:
         return ""
@@ -276,6 +301,7 @@ def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
     """
     try:
         from kai.memory import documents as _docs
+
         if not _docs.has_documents(user_id=user_id):
             return []
         return _docs.list_documents(user_id=user_id)
@@ -285,6 +311,7 @@ def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
 
 _briefing_used = False
 
+
 def _get_and_clear_briefing(user_id: int = 0) -> str:
     """Load the pending daily briefing once per session."""
     global _briefing_used
@@ -293,6 +320,7 @@ def _get_and_clear_briefing(user_id: int = 0) -> str:
     _briefing_used = True
     try:
         from kai.memory.briefing import get_pending
+
         return get_pending(user_id=user_id)
     except Exception:
         return ""
@@ -302,6 +330,7 @@ def mark_briefing_delivered(user_id: int = 0) -> None:
     """Mark pending briefings delivered after a successful first response."""
     try:
         from kai.memory.briefing import mark_delivered
+
         mark_delivered(user_id=user_id)
     except Exception:
         pass
@@ -310,8 +339,10 @@ def mark_briefing_delivered(user_id: int = 0) -> None:
 def _get_active_goals(user_id: int = 0) -> str:
     """Return a compact goals block for context injection. Empty if no active goals."""
     try:
-        from kai.store.db import get_conn
         import json as _json
+
+        from kai.store.db import get_conn
+
         conn = get_conn()
         rows = conn.execute(
             "SELECT title, steps_json, current_step FROM goals "
@@ -337,6 +368,7 @@ def _get_pattern_suggestion(user_id: int = 0) -> str:
     """Return a proactive pattern suggestion if one matches the current time."""
     try:
         from kai.memory.patterns import get_proactive_suggestion
+
         return get_proactive_suggestion(user_id=user_id)
     except Exception:
         return ""

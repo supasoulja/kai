@@ -14,6 +14,7 @@ cerebellum_log is its own table. Cheap: crew turns are rare and each writes only
 handful of rows. Recording must never break a turn — every path swallows its own
 errors. Read with recent() / for_turn().
 """
+
 from __future__ import annotations
 
 import json
@@ -80,8 +81,7 @@ def record(trace_id: str, kind: str, *, session_id: str | None = None, **payload
         conn.execute(
             "INSERT INTO crew_log (trace_id, ts, kind, data, user_id, session_id) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (trace_id, time.time(), kind, json.dumps(data),
-             get_current_user_id(), session_id),
+            (trace_id, time.time(), kind, json.dumps(data), get_current_user_id(), session_id),
         )
         conn.commit()
         _maybe_trim(conn)
@@ -128,7 +128,6 @@ def recent(limit: int = 50) -> list[dict]:
             "SELECT ts, trace_id, kind, data FROM crew_log ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [{"ts": r[0], "trace_id": r[1], "kind": r[2], **json.loads(r[3])}
-                for r in rows]
+        return [{"ts": r[0], "trace_id": r[1], "kind": r[2], **json.loads(r[3])} for r in rows]
     except Exception:
         return []

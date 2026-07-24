@@ -19,26 +19,25 @@ no semantic judgment required, just arithmetic over what's already in the tree.
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
-from .tree import Node
-from .scorer import _cosine, _norm_frequency, MaybeArray
+from .scorer import MaybeArray, _cosine, _norm_frequency
 from .state import UserState
-
+from .tree import Node
 
 # ─── Flag structure ───────────────────────────────────────────────────────────
+
 
 @dataclass
 class IntuitionFlag:
     """One flagged moment. Carries enough for the memory model to act on and
     enough for the chat model to understand why retrieval changed shape."""
 
-    level: str                    # "soft" | "hard" | "alert"
-    detector: str                 # which of the five raised it
-    strength: float               # 0.0-1.0 — how confident the detector is
-    nodes: list[str]              # paths of the nodes involved
-    action: str                   # "hold" | "ask" | "soften" | "escalate"
-    reason: str                   # plain-English why — surfaces in [FLAGS] block
+    level: str  # "soft" | "hard" | "alert"
+    detector: str  # which of the five raised it
+    strength: float  # 0.0-1.0 — how confident the detector is
+    nodes: list[str]  # paths of the nodes involved
+    action: str  # "hold" | "ask" | "soften" | "escalate"
+    reason: str  # plain-English why — surfaces in [FLAGS] block
     raised_at: float = field(default_factory=time.time)
 
 
@@ -46,7 +45,7 @@ class IntuitionFlag:
 _SEVERITY_RANK = {"soft": 1, "hard": 2, "alert": 3}
 
 
-def highest_priority(flags: list[IntuitionFlag]) -> Optional[IntuitionFlag]:
+def highest_priority(flags: list[IntuitionFlag]) -> IntuitionFlag | None:
     """
     The equation can only be overridden by one flag at a time.
     Alert beats hard beats soft. Ties broken by raw strength.
@@ -64,7 +63,8 @@ def highest_priority(flags: list[IntuitionFlag]) -> Optional[IntuitionFlag]:
 # A shaky belief getting mildly contradicted is noise. A rock-solid belief
 # getting flatly contradicted is the kind of thing worth pausing for.
 
-def _bucket(raw: float, *, soft_at: float = 0.25, hard_at: float = 0.55) -> Optional[str]:
+
+def _bucket(raw: float, *, soft_at: float = 0.25, hard_at: float = 0.55) -> str | None:
     """Turn a raw 0.0-1.0 disruption score into a level, or None if it's noise."""
     if raw >= hard_at:
         return "hard"
@@ -75,7 +75,8 @@ def _bucket(raw: float, *, soft_at: float = 0.25, hard_at: float = 0.55) -> Opti
 
 # ─── Detector 1: Contradiction ────────────────────────────────────────────────
 
-def detect_contradiction(node: Node, conflict_strength: float) -> Optional[IntuitionFlag]:
+
+def detect_contradiction(node: Node, conflict_strength: float) -> IntuitionFlag | None:
     """
     Current statement conflicts with a high-confidence stored node.
 
@@ -92,14 +93,15 @@ def detect_contradiction(node: Node, conflict_strength: float) -> Optional[Intui
     action = "soften" if level == "soft" else "ask"
     reason = (
         f"new statement may conflict with {node.path} "
-        f"(\"{node.value}\", confidence {node.confidence:.2f})"
+        f'("{node.value}", confidence {node.confidence:.2f})'
     )
     return IntuitionFlag(level, "contradiction", round(raw, 3), [node.path], action, reason)
 
 
 # ─── Detector 2: Pattern break ────────────────────────────────────────────────
 
-def detect_pattern_break(node: Node, deviation_strength: float) -> Optional[IntuitionFlag]:
+
+def detect_pattern_break(node: Node, deviation_strength: float) -> IntuitionFlag | None:
     """
     A user who reliably does X is suddenly doing Y.
 
@@ -117,18 +119,19 @@ def detect_pattern_break(node: Node, deviation_strength: float) -> Optional[Intu
     action = "soften" if level == "soft" else "hold"
     reason = (
         f"behavior diverges from established pattern at {node.path} "
-        f"(\"{node.value}\", seen {node.frequency}x)"
+        f'("{node.value}", seen {node.frequency}x)'
     )
     return IntuitionFlag(level, "pattern_break", round(raw, 3), [node.path], action, reason)
 
 
 # ─── Detector 3: Emotional incongruence ───────────────────────────────────────
 
+
 def detect_emotional_incongruence(
     user_state: UserState,
     expected_register: str,
     magnitude: float,
-) -> Optional[IntuitionFlag]:
+) -> IntuitionFlag | None:
     """
     Session tone doesn't match the stored emotional baseline for this person.
 
@@ -155,10 +158,11 @@ def detect_emotional_incongruence(
 
 # ─── Detector 4: Accumulation ─────────────────────────────────────────────────
 
+
 def detect_accumulation(
     signal_nodes: list[Node],
     threshold: float = 3.0,
-) -> Optional[IntuitionFlag]:
+) -> IntuitionFlag | None:
     """
     Individually weak signals that cross a threshold together.
 
@@ -203,12 +207,13 @@ def detect_accumulation(
 
 # ─── Detector 5: Escalation approach ──────────────────────────────────────────
 
+
 def detect_escalation_approach(
     topic_embedding: MaybeArray,
     sensitive_nodes: list[Node],
     soft_at: float = 0.5,
     hard_at: float = 0.75,
-) -> Optional[IntuitionFlag]:
+) -> IntuitionFlag | None:
     """
     The conversation is heading toward a topic with a sensitive stored node —
     flag it before arrival, not after. Pure cosine similarity between where
@@ -234,20 +239,23 @@ def detect_escalation_approach(
         f"conversation drifting toward sensitive ground at {best_node.path} "
         f"(similarity {best_sim:.2f})"
     )
-    return IntuitionFlag(level, "escalation_approach", round(best_sim, 3), [best_node.path], action, reason)
+    return IntuitionFlag(
+        level, "escalation_approach", round(best_sim, 3), [best_node.path], action, reason
+    )
 
 
 # ─── Orchestration ────────────────────────────────────────────────────────────
 
+
 def run_detectors(
     *,
-    contradiction: Optional[tuple[Node, float]] = None,
-    pattern_break: Optional[tuple[Node, float]] = None,
-    emotional: Optional[tuple[UserState, str, float]] = None,
-    accumulation_nodes: Optional[list[Node]] = None,
+    contradiction: tuple[Node, float] | None = None,
+    pattern_break: tuple[Node, float] | None = None,
+    emotional: tuple[UserState, str, float] | None = None,
+    accumulation_nodes: list[Node] | None = None,
     accumulation_threshold: float = 3.0,
     topic_embedding: MaybeArray = None,
-    sensitive_nodes: Optional[list[Node]] = None,
+    sensitive_nodes: list[Node] | None = None,
 ) -> list[IntuitionFlag]:
     """
     Run every detector the caller has signal for. Semantic detectors
@@ -291,6 +299,7 @@ def run_detectors(
 
 
 # ─── Output formatting ────────────────────────────────────────────────────────
+
 
 def format_flags(flags: list[IntuitionFlag]) -> str:
     """

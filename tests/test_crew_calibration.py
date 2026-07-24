@@ -20,6 +20,7 @@ you to recalibrate CATEGORY_FLOOR rather than shipping silently-broken routing.
 Skipped when the live embedder isn't available (model not downloaded / no
 onnxruntime), so it never fails spuriously in a bare CI.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -77,6 +78,7 @@ def index():
 
 def _rank(index, query: str) -> list[tuple[str, float]]:
     from kai.llm.embed import embed_batch
+
     emb = embed_batch([query])[0]
     reg, idx = index
     return reg.rank_categories(emb, idx, top_k=4)
@@ -87,6 +89,7 @@ def _fmt(scores: list[tuple[str, float]]) -> str:
 
 
 # ── The separation the floor must preserve ───────────────────────────────────
+
 
 @pytest.mark.parametrize("query", SMALL_TALK)
 def test_small_talk_stays_below_floor(index, query):
@@ -142,12 +145,8 @@ def test_floor_brackets_chat_and_tool_turns(index):
     embedding model's distribution shifts under the floor, this bracket collapses
     and routing breaks in one direction or the other — fail here with both bounds
     printed so the fix is 'move the floor into the new gap'."""
-    small_talk_max = max(
-        (_rank(index, q)[0][1] for q in SMALL_TALK), default=0.0
-    )
-    single_domain_min_top = min(
-        _rank(index, q)[0][1] for q, _ in SINGLE_DOMAIN
-    )
+    small_talk_max = max((_rank(index, q)[0][1] for q in SMALL_TALK), default=0.0)
+    single_domain_min_top = min(_rank(index, q)[0][1] for q, _ in SINGLE_DOMAIN)
     assert small_talk_max < crew.CATEGORY_FLOOR <= single_domain_min_top, (
         "CATEGORY_FLOOR no longer separates chat turns from tool turns on the "
         "live embedding model — recalibrate it into the gap.\n"

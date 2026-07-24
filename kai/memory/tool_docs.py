@@ -16,7 +16,9 @@ Nodes are written with source="seed": excluded from count_facts() (tree.py), fro
 [MEMORY CONTEXT] scoring (scorer.select_for_context), and from tree.find (no embedding)
 — reference scaffolding, not facts about the user.
 """
+
 from __future__ import annotations
+
 import inspect
 
 from . import tree as _tree
@@ -44,6 +46,7 @@ _TYPE_PLACEHOLDERS: dict[str, str] = {
 
 
 # ── Node content ──────────────────────────────────────────────────────────────
+
 
 def _placeholder_for(prop: dict) -> str:
     """One example value for a parameter, derived from its JSON type."""
@@ -81,8 +84,9 @@ def _return_type_str(fn) -> str:
     return text.strip("'\"") or "string"
 
 
-def _signature_line(name: str, props: dict, required: list, py_defaults: dict,
-                    return_type: str) -> str:
+def _signature_line(
+    name: str, props: dict, required: list, py_defaults: dict, return_type: str
+) -> str:
     parts = []
     for pname, prop in props.items():
         ptype = prop.get("type", "any")
@@ -147,6 +151,7 @@ def build_node_value(name: str, schema: dict, fn) -> str:
 
 # ── Sync ────────────────────────────────────────────────────────────────────
 
+
 def sync_tool_docs(user_id) -> dict:
     """Upsert a tree node for every registered tool at tools/<namespace>/<tool_name>,
     plus a folder node at tools/<namespace> per namespace in use. Deletes leaf/folder
@@ -171,12 +176,19 @@ def sync_tool_docs(user_id) -> dict:
         live_leaf_paths.add(leaf_path)
 
         existing = _tree.read(uid, leaf_path)
-        _tree.write(uid, Node(
-            path=leaf_path,
-            value=build_node_value(name, entry["schema"], entry["fn"]),
-            confidence=1.0, importance=0.2, specificity=0.5,
-            source="seed", decays=False, domain="tools",
-        ))
+        _tree.write(
+            uid,
+            Node(
+                path=leaf_path,
+                value=build_node_value(name, entry["schema"], entry["fn"]),
+                confidence=1.0,
+                importance=0.2,
+                specificity=0.5,
+                source="seed",
+                decays=False,
+                domain="tools",
+            ),
+        )
         if existing is None:
             created += 1
         else:
@@ -185,11 +197,19 @@ def sync_tool_docs(user_id) -> dict:
     for namespace in live_namespaces:
         folder_path = f"tools/{namespace}"
         if _tree.read(uid, folder_path) is None:
-            _tree.write(uid, Node(
-                path=folder_path, value=f"(folder) {namespace}.* tools",
-                confidence=1.0, importance=0.2, specificity=0.0,
-                source="seed", decays=False, domain="tools",
-            ))
+            _tree.write(
+                uid,
+                Node(
+                    path=folder_path,
+                    value=f"(folder) {namespace}.* tools",
+                    confidence=1.0,
+                    importance=0.2,
+                    specificity=0.0,
+                    source="seed",
+                    decays=False,
+                    domain="tools",
+                ),
+            )
             created += 1
 
     # Stale cleanup — drop docs for tools/namespaces no longer in the registry.
@@ -207,6 +227,7 @@ def sync_tool_docs(user_id) -> dict:
 
 
 # ── Render ──────────────────────────────────────────────────────────────────
+
 
 def render_tool_index(user_id) -> str:
     """Build the [TOOLS] block: one line per documented tool,
@@ -253,6 +274,8 @@ def ensure_tool_docs_synced(user_id) -> None:
         sync_tool_docs(uid)
     except Exception:
         import kai.config as cfg
+
         if getattr(cfg, "DEBUG", False):
             import traceback
+
             traceback.print_exc()

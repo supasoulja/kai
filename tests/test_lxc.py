@@ -11,6 +11,7 @@ These tests assert the fix end to end: a command failure now RAISES, so the
 registry marks the result success=False and the classifier flags a hard error —
 while the "no client installed" pre-condition stays an informational return.
 """
+
 import os
 
 import pytest
@@ -40,19 +41,25 @@ def _fail(*_a, **_k):
 def _ok(out):
     def _inner(*_a, **_k):
         return (True, out)
+
     return _inner
 
 
 # ── A failed command must RAISE (so the registry marks it success=False) ─────
 
-@pytest.mark.parametrize("call", [
-    lambda: lxc.list_instances(),
-    lambda: lxc.instance_info("test1"),
-    lambda: lxc.create_instance("test1"),
-    lambda: lxc.start_instance("test1"),
-    lambda: lxc.stop_instance("test1"),
-    lambda: lxc.delete_instance("test1", force=True),
-], ids=["list", "info", "create", "start", "stop", "delete"])
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: lxc.list_instances(),
+        lambda: lxc.instance_info("test1"),
+        lambda: lxc.create_instance("test1"),
+        lambda: lxc.start_instance("test1"),
+        lambda: lxc.stop_instance("test1"),
+        lambda: lxc.delete_instance("test1", force=True),
+    ],
+    ids=["list", "info", "create", "start", "stop", "delete"],
+)
 def test_command_failure_raises(managers_available, monkeypatch, call):
     monkeypatch.setattr(lxc, "_run", _fail)
     with pytest.raises(RuntimeError) as exc:
@@ -62,6 +69,7 @@ def test_command_failure_raises(managers_available, monkeypatch, call):
 
 
 # ── Success paths return clean, truthful confirmations ───────────────────────
+
 
 def test_create_success_reports_creation(managers_available, monkeypatch):
     monkeypatch.setattr(lxc, "_run", _ok("Instance test1 started"))
@@ -83,6 +91,7 @@ def test_lifecycle_success_confirmations(managers_available, monkeypatch):
 
 # ── "No client installed" stays informational (NOT a raised failure) ─────────
 
+
 def test_no_client_is_informational_not_a_failure(monkeypatch):
     """A missing container manager is a pre-condition, not a command failure:
     the model should relay the install hint, so this must NOT raise."""
@@ -93,6 +102,7 @@ def test_no_client_is_informational_not_a_failure(monkeypatch):
 
 
 # ── End-to-end: failure → registry success=False → classifier hard error ─────
+
 
 def test_registry_and_classifier_flag_the_failure(managers_available, monkeypatch):
     monkeypatch.setattr(lxc, "_run", _fail)
@@ -113,7 +123,5 @@ def test_classifier_cannot_catch_a_laundered_failure():
     output-scanning was deliberately rejected as false-positive-prone). This is
     the exact hole the fabricated-container bug fell through — encoded so nobody
     'fixes' it by re-introducing laundering."""
-    hard, win = TurnEngine._classify_tool_result(
-        {"success": True, "output": _FAIL_MSG}
-    )
+    hard, win = TurnEngine._classify_tool_result({"success": True, "output": _FAIL_MSG})
     assert hard is False  # invisible to the classifier — hence the raise-at-source fix

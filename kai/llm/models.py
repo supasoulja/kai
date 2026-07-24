@@ -4,6 +4,7 @@ User-configurable model registry.
 Stores model definitions in models.json so users can add/remove models
 without touching code. Ships with sensible defaults from config.py.
 """
+
 import json
 
 import kai.config as cfg
@@ -23,10 +24,10 @@ def _default_caps(provider: str) -> dict:
     brain runs on this machine (drives the privacy / 🌐 indicators).
     """
     return {
-        "ollama":    {"tools": True, "vision": True,  "thinking": True,  "local": True},
-        "openai":    {"tools": True, "vision": True,  "thinking": False, "local": False},
-        "anthropic": {"tools": True, "vision": True,  "thinking": True,  "local": False},
-        "gemini":    {"tools": True, "vision": True,  "thinking": False, "local": False},
+        "ollama": {"tools": True, "vision": True, "thinking": True, "local": True},
+        "openai": {"tools": True, "vision": True, "thinking": False, "local": False},
+        "anthropic": {"tools": True, "vision": True, "thinking": True, "local": False},
+        "gemini": {"tools": True, "vision": True, "thinking": False, "local": False},
     }.get(provider, {"tools": False, "vision": False, "thinking": False, "local": False})
 
 
@@ -50,12 +51,14 @@ def _defaults() -> list[dict]:
     add_model().
     """
     return [
-        _normalize({
-            "name": "Kai",
-            "ollama_id": cfg.CHAT_MODEL,
-            "think": False,
-            "builtin": True,
-        }),
+        _normalize(
+            {
+                "name": "Kai",
+                "ollama_id": cfg.CHAT_MODEL,
+                "think": False,
+                "builtin": True,
+            }
+        ),
     ]
 
 
@@ -68,8 +71,7 @@ def _load() -> list[dict]:
         try:
             data = json.loads(_MODELS_PATH.read_text(encoding="utf-8"))
             user_models = [
-                _normalize(m) for m in data.get("models", [])
-                if m.get("name") not in builtin_ids
+                _normalize(m) for m in data.get("models", []) if m.get("name") not in builtin_ids
             ]
         except (json.JSONDecodeError, KeyError):
             user_models = []
@@ -102,9 +104,15 @@ def get_model(name: str) -> dict | None:
     return None
 
 
-def add_model(name: str, ollama_id: str, think: bool = False,
-              provider: str = "ollama", base_url: str = "",
-              capabilities: dict | None = None, conn_id: str = "") -> dict:
+def add_model(
+    name: str,
+    ollama_id: str,
+    think: bool = False,
+    provider: str = "ollama",
+    base_url: str = "",
+    capabilities: dict | None = None,
+    conn_id: str = "",
+) -> dict:
     """Add a user model. Raises ValueError on duplicate name or unknown provider.
 
     For local models, `ollama_id` is the Ollama tag (e.g. "gemma4:26b"). For
@@ -120,16 +128,18 @@ def add_model(name: str, ollama_id: str, think: bool = False,
         if m["name"].lower() == name.lower():
             raise ValueError(f"A model named '{m['name']}' already exists")
 
-    entry = _normalize({
-        "name": name,
-        "ollama_id": ollama_id,
-        "think": think,
-        "builtin": False,
-        "provider": provider,
-        "base_url": base_url,
-        "conn_id": conn_id or (provider if provider != "ollama" else ""),
-        "capabilities": capabilities or _default_caps(provider),
-    })
+    entry = _normalize(
+        {
+            "name": name,
+            "ollama_id": ollama_id,
+            "think": think,
+            "builtin": False,
+            "provider": provider,
+            "base_url": base_url,
+            "conn_id": conn_id or (provider if provider != "ollama" else ""),
+            "capabilities": capabilities or _default_caps(provider),
+        }
+    )
     models.append(entry)
     _save(models)
     return entry

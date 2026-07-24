@@ -2,7 +2,9 @@
 Phase 0/1 tests — memory foundation, no LLM required.
 Run with: python -m pytest tests/test_memory.py -v
 """
+
 import os
+
 import pytest
 
 # Use a temp DB for tests so they don't touch real data
@@ -13,19 +15,21 @@ from pathlib import Path
 
 # Patch DB_PATH before importing anything else
 import kai.config as cfg
+
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 cfg.DB_PATH = Path(_tmp.name)
 
 from kai.store.db import _reset_for_tests
+
 _reset_for_tests()
 
-from kai.memory import semantic, procedural, episodic, extractor
+from kai.memory import episodic, extractor, procedural, semantic
 from kai.memory.manager import MemoryManager
 from kai.persona.identity import build_identity_block
 
-
 # ── Semantic ────────────────────────────────────────────────────────────────────
+
 
 def test_semantic_set_and_get():
     semantic.set_fact("user_name", "Alex")
@@ -53,6 +57,7 @@ def test_semantic_list():
 
 # ── Procedural ──────────────────────────────────────────────────────────────────
 
+
 def test_procedural_set_and_get():
     procedural.set_rule("tone", "direct")
     assert procedural.get_rule("tone") == "direct"
@@ -66,6 +71,7 @@ def test_procedural_list():
 
 
 # ── Episodic ────────────────────────────────────────────────────────────────────
+
 
 def test_episodic_add_and_recent():
     entry_id = episodic.add_entry("Testing episodic memory", entry_type="turn")
@@ -83,6 +89,7 @@ def test_episodic_text_search():
 
 
 # ── Extractor ───────────────────────────────────────────────────────────────────
+
 
 def test_extractor_name():
     saved = extractor.extract_and_save("My name is Alex")
@@ -104,12 +111,10 @@ def test_extractor_no_false_positives():
 
 # ── MemoryManager ───────────────────────────────────────────────────────────────
 
+
 def test_manager_commit_turn():
     mm = MemoryManager()
-    mm.commit_turn(
-        user_text="My name is Alex and I use Python",
-        assistant_text="Got it."
-    )
+    mm.commit_turn(user_text="My name is Alex and I use Python", assistant_text="Got it.")
     assert mm.get_fact("user_name") == "Alex"
     recent = mm.recent_episodes(limit=3)
     assert any("Alex" in e.content for e in recent)
@@ -126,6 +131,7 @@ def test_manager_render_context():
 
 # ── Identity ────────────────────────────────────────────────────────────────────
 
+
 def test_identity_seed_and_load():
     block = build_identity_block()
     assert len(block) > 0
@@ -133,12 +139,13 @@ def test_identity_seed_and_load():
 
 # ── Recent-session recall (the memory-across-resets fix) ──────────────────────────
 
+
 def test_recent_sessions_recalls_previous_and_excludes_current():
     """'What were we doing last?' must recall the PREVIOUS session by recency and
     leave out the live one. Before this, there was no recency-based recall path —
     search_history is keyword-only, so Kai claimed she had no record."""
+    from kai.core._app_state import set_current_session_id, set_current_user_id
     from kai.store import sessions as S
-    from kai.core._app_state import set_current_user_id, set_current_session_id
     from kai.tools.memory.memory_tools import recent_sessions
 
     set_current_user_id(0)
@@ -153,9 +160,9 @@ def test_recent_sessions_recalls_previous_and_excludes_current():
 
     set_current_session_id(cur)
     out = recent_sessions()
-    assert "disk space" in out                      # recalls the previous session
-    assert "audio setup this weekend" in out        # surfaces where it left off
-    assert "what were we doing last" not in out     # excludes the live session
+    assert "disk space" in out  # recalls the previous session
+    assert "audio setup this weekend" in out  # surfaces where it left off
+    assert "what were we doing last" not in out  # excludes the live session
 
     # Excluding a different session surfaces the other one — recency, not a fixed list.
     set_current_session_id(prev)
@@ -180,10 +187,12 @@ def test_append_message_stores_latency():
 
 # ── Per-user DB connection cache (tree.py / state.py) ────────────────────────────
 
+
 def test_tree_connection_is_cached_and_reused(tmp_path, monkeypatch):
     """Repeated tree ops on the same user reuse one connection instead of
     reopening the file every call (the old `with _connect(...)` leak)."""
     from kai.memory import tree as mtree
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
 
     c1 = mtree._conn("77")
@@ -199,6 +208,7 @@ def test_tree_connection_is_cached_and_reused(tmp_path, monkeypatch):
 
 
 # ── Archive atomicity (episodic.archive_and_clear_turns) ─────────────────────────
+
 
 def test_archive_clears_turns_and_keeps_archive_with_transcript():
     """Archiving must, in one transaction, drop the raw turns AND leave exactly one
@@ -227,6 +237,7 @@ def test_archive_rolls_back_if_turn_delete_fails(monkeypatch):
     episodic.add_entry("keep me", entry_type="turn", user_id=uid)
 
     from kai.store.db import get_conn
+
     real_conn = get_conn()
 
     class FailingConn:
@@ -234,8 +245,12 @@ def test_archive_rolls_back_if_turn_delete_fails(monkeypatch):
             if sql.strip().startswith("DELETE FROM episodic_entries"):
                 raise RuntimeError("simulated delete failure")
             return real_conn.execute(sql, *args, **kwargs)
-        def commit(self):  return real_conn.commit()
-        def rollback(self): return real_conn.rollback()
+
+        def commit(self):
+            return real_conn.commit()
+
+        def rollback(self):
+            return real_conn.rollback()
 
     monkeypatch.setattr("kai.memory.episodic.get_conn", lambda: FailingConn())
     with pytest.raises(RuntimeError):
@@ -247,15 +262,19 @@ def test_archive_rolls_back_if_turn_delete_fails(monkeypatch):
 
 # ── State JSON deserialization is corruption-tolerant (state.py) ─────────────────
 
+
 def test_state_load_ignores_unknown_and_corrupt_json(tmp_path, monkeypatch):
     """A state blob written before a field changed (extra key) or an outright
     corrupt blob must fall back to defaults, not crash the read."""
     from kai.memory import state as mstate
+
     monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)
 
     # Stale/extra key alongside a valid one — unknown key is dropped, valid kept.
     conn = mstate._conn("u1")
-    import json as _json, time as _time
+    import json as _json
+    import time as _time
+
     conn.execute(
         "INSERT INTO state VALUES (?, ?, ?)",
         ("user", _json.dumps({"terseness": 0.9, "obsolete_field": "x"}), _time.time()),
@@ -280,11 +299,13 @@ def test_state_load_ignores_unknown_and_corrupt_json(tmp_path, monkeypatch):
 
 def test_state_connection_is_cached(tmp_path, monkeypatch):
     from kai.memory import state as mstate
+
     monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)
     assert mstate._conn("5") is mstate._conn("5")
 
 
 # ── Cleanup ─────────────────────────────────────────────────────────────────────
+
 
 def teardown_module(module):
     try:

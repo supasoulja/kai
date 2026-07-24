@@ -3,12 +3,11 @@ Unit tests for the skill system — no Ollama, no network.
 Tests skill base class, registry discovery, markdown parsing,
 and brain integration.
 """
+
 import os
-import tempfile
 import textwrap
 import threading
 import time
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,8 +17,8 @@ os.environ.setdefault("KAI_TEST_MODE", "1")
 from kai.skills.base import Skill, SkillResult
 from kai.skills.registry import SkillRegistry, _parse_md_skill
 
-
 # ── SkillResult ──────────────────────────────────────────────────────────────
+
 
 def test_skill_result_str():
     r = SkillResult(success=True, output="all good", tool_calls=["a", "b"])
@@ -33,6 +32,7 @@ def test_skill_result_defaults():
 
 
 # ── Skill base class ────────────────────────────────────────────────────────
+
 
 def test_skill_execute_not_implemented():
     s = Skill()
@@ -60,6 +60,7 @@ def test_skill_call_tool_delegates_to_registry():
 
 # ── Concrete skill ──────────────────────────────────────────────────────────
 
+
 class EchoSkill(Skill):
     name = "echo"
     description = "Echo back the input."
@@ -78,6 +79,7 @@ def test_concrete_skill_execute():
 
 
 # ── SkillRegistry ───────────────────────────────────────────────────────────
+
 
 def test_registry_register_and_get():
     reg = SkillRegistry()
@@ -131,6 +133,7 @@ def test_registry_match_by_triggers():
 
 def test_registry_match_most_hits():
     """When multiple triggers match, the skill with more hits wins."""
+
     class MultiTriggerSkill(Skill):
         name = "multi"
         description = "Multi trigger."
@@ -151,6 +154,7 @@ def test_registry_match_most_hits():
 
 # ── Name validation ─────────────────────────────────────────────────────────
 
+
 def test_registry_rejects_unsafe_name():
     reg = SkillRegistry()
 
@@ -158,6 +162,7 @@ def test_registry_rejects_unsafe_name():
         name = "../../etc/passwd"
         description = "path traversal attempt"
         triggers = []
+
         def execute(self, args: dict) -> SkillResult:
             return SkillResult(success=True, output="nope")
 
@@ -172,6 +177,7 @@ def test_registry_rejects_name_with_spaces():
         name = "my skill"
         description = "spaces in name"
         triggers = []
+
         def execute(self, args: dict) -> SkillResult:
             return SkillResult(success=True, output="nope")
 
@@ -186,6 +192,7 @@ def test_registry_accepts_valid_names():
         name = "pc-health.check_v2"
         description = "valid name"
         triggers = []
+
         def execute(self, args: dict) -> SkillResult:
             return SkillResult(success=True, output="ok")
 
@@ -194,6 +201,7 @@ def test_registry_accepts_valid_names():
 
 
 # ── Trigger isolation (mutable default protection) ──────────────────────────
+
 
 def test_skill_triggers_not_shared():
     """Each skill instance should have its own triggers list."""
@@ -205,9 +213,11 @@ def test_skill_triggers_not_shared():
 
 # ── Markdown tool name validation ───────────────────────────────────────────
 
+
 def test_md_skill_rejects_invalid_tool_name(tmp_path):
     md = tmp_path / "evil.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         name: evil
         description: Injection attempt
@@ -215,7 +225,8 @@ def test_md_skill_rejects_invalid_tool_name(tmp_path):
         ---
         ## Steps
         - rm -rf /
-    """))
+    """)
+    )
 
     skill = _parse_md_skill(md)
     assert skill is not None
@@ -232,9 +243,11 @@ def test_md_skill_rejects_invalid_tool_name(tmp_path):
 
 # ── Markdown skill parsing ──────────────────────────────────────────────────
 
+
 def test_parse_md_skill(tmp_path):
     md = tmp_path / "test-skill.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         name: test-skill
         description: A test skill
@@ -243,7 +256,8 @@ def test_parse_md_skill(tmp_path):
         ## Steps
         - tool.one
         - tool.two key=value
-    """))
+    """)
+    )
 
     skill = _parse_md_skill(md)
     assert skill is not None
@@ -260,19 +274,22 @@ def test_parse_md_skill_no_frontmatter(tmp_path):
 
 def test_parse_md_skill_no_name(tmp_path):
     md = tmp_path / "noname.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         description: Missing name field
         ---
         ## Steps
         - tool.one
-    """))
+    """)
+    )
     assert _parse_md_skill(md) is None
 
 
 def test_md_skill_execution(tmp_path):
     md = tmp_path / "chain.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         name: chain
         description: Chain two tools
@@ -281,7 +298,8 @@ def test_md_skill_execution(tmp_path):
         ## Steps
         - tool.first
         - tool.second
-    """))
+    """)
+    )
 
     skill = _parse_md_skill(md)
     assert skill is not None
@@ -303,7 +321,8 @@ def test_md_skill_tool_error_does_not_stop_independent_steps(tmp_path):
     """One failing probe must not sink the whole recipe: independent steps all
     still run, the failure is reported inline, and success flips to False."""
     md = tmp_path / "fail.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         name: fail
         description: A skill where a step fails
@@ -313,7 +332,8 @@ def test_md_skill_tool_error_does_not_stop_independent_steps(tmp_path):
         - tool.ok
         - tool.broken
         - tool.also_ok
-    """))
+    """)
+    )
 
     skill = _parse_md_skill(md)
 
@@ -327,21 +347,21 @@ def test_md_skill_tool_error_does_not_stop_independent_steps(tmp_path):
     skill.bind(mock_reg)
 
     result = skill.execute({})
-    assert not result.success                     # a step errored
+    assert not result.success  # a step errored
     assert "boom" in result.output
-    assert "ran-tool.ok" in result.output         # sibling still ran
-    assert "ran-tool.also_ok" in result.output    # and so did the one after it
+    assert "ran-tool.ok" in result.output  # sibling still ran
+    assert "ran-tool.also_ok" in result.output  # and so did the one after it
     assert result.tool_calls == ["tool.ok", "tool.broken", "tool.also_ok"]
 
 
 # ── Recipe fan-out: parallel independent steps (Phase 1) ────────────────────
 
+
 def _md(tmp_path, name, steps):
     """Write a minimal SKILL.md with the given step lines and parse it."""
     body = "\n".join(f"- {s}" for s in steps)
     path = tmp_path / f"{name}.md"
-    path.write_text(
-        f"---\nname: {name}\ndescription: t\ntriggers: {name}\n---\n## Steps\n{body}\n")
+    path.write_text(f"---\nname: {name}\ndescription: t\ntriggers: {name}\n---\n## Steps\n{body}\n")
     return _parse_md_skill(path)
 
 
@@ -356,7 +376,7 @@ def test_independent_steps_run_concurrently(tmp_path):
     barrier = threading.Barrier(3, timeout=5)
 
     def fake(name, args):
-        barrier.wait()          # only clears when all 3 threads arrive
+        barrier.wait()  # only clears when all 3 threads arrive
         return f"ok-{name}"
 
     mock_reg = MagicMock()
@@ -375,7 +395,7 @@ def test_output_follows_declaration_order_not_completion_order(tmp_path):
 
     def fake(name, args):
         if name == "tool.slow":
-            time.sleep(0.15)    # finishes last, must still print first
+            time.sleep(0.15)  # finishes last, must still print first
         return f"out-{name}"
 
     mock_reg = MagicMock()
@@ -389,10 +409,14 @@ def test_output_follows_declaration_order_not_completion_order(tmp_path):
 
 def test_step_reference_pipes_output_and_forces_order(tmp_path):
     """A step referencing {{id}} waits for that step and receives its output."""
-    skill = _md(tmp_path, "piped", [
-        "first = tool.alpha",
-        "tool.beta value={{first}}",
-    ])
+    skill = _md(
+        tmp_path,
+        "piped",
+        [
+            "first = tool.alpha",
+            "tool.beta value={{first}}",
+        ],
+    )
     seen: dict = {}
 
     def fake(name, args):
@@ -407,17 +431,21 @@ def test_step_reference_pipes_output_and_forces_order(tmp_path):
 
     result = skill.execute({})
     assert result.success
-    assert seen["value"] == "ALPHA_OUT"      # piped, not left as a literal token
+    assert seen["value"] == "ALPHA_OUT"  # piped, not left as a literal token
 
 
 def test_dependent_step_skipped_when_dependency_fails(tmp_path):
     """Downstream work still stops — but only for steps that actually depend
     on the failure, not for unrelated siblings."""
-    skill = _md(tmp_path, "brokenpipe", [
-        "first = tool.alpha",
-        "tool.beta value={{first}}",
-        "tool.unrelated",
-    ])
+    skill = _md(
+        tmp_path,
+        "brokenpipe",
+        [
+            "first = tool.alpha",
+            "tool.beta value={{first}}",
+            "tool.unrelated",
+        ],
+    )
 
     def fake(name, args):
         if name == "tool.alpha":
@@ -431,15 +459,19 @@ def test_dependent_step_skipped_when_dependency_fails(tmp_path):
     result = skill.execute({})
     assert not result.success
     assert "skipped" in result.output and "first" in result.output
-    assert "tool.beta" not in result.tool_calls        # never invoked
-    assert "tool.unrelated" in result.tool_calls       # independent, still ran
+    assert "tool.beta" not in result.tool_calls  # never invoked
+    assert "tool.unrelated" in result.tool_calls  # independent, still ran
 
 
 def test_reference_cycle_runs_nothing(tmp_path):
-    skill = _md(tmp_path, "cyclic", [
-        "a = tool.one x={{b}}",
-        "b = tool.two y={{a}}",
-    ])
+    skill = _md(
+        tmp_path,
+        "cyclic",
+        [
+            "a = tool.one x={{b}}",
+            "b = tool.two y={{a}}",
+        ],
+    )
     mock_reg = MagicMock()
     skill.bind(mock_reg)
 
@@ -471,16 +503,20 @@ def test_parallel_steps_inherit_user_context(tmp_path):
     re-establish them inside each worker or per-user DB scoping silently
     falls back to the default user."""
     from kai.core._app_state import (
-        set_current_user_id, set_current_session_id, get_current_user_id,
         get_current_session_id,
+        get_current_user_id,
+        set_current_session_id,
+        set_current_user_id,
     )
+
     set_current_user_id(42)
     set_current_session_id("sess-abc")
 
     skill = _md(tmp_path, "ctx", ["tool.a", "tool.b"])
     mock_reg = MagicMock()
-    mock_reg.execute.side_effect = (
-        lambda name, args: f"{get_current_user_id()}/{get_current_session_id()}")
+    mock_reg.execute.side_effect = lambda name, args: (
+        f"{get_current_user_id()}/{get_current_session_id()}"
+    )
     skill.bind(mock_reg)
 
     result = skill.execute({})
@@ -496,15 +532,17 @@ def test_caller_args_are_overridden_by_inline_args(tmp_path):
     skill.bind(mock_reg)
 
     skill.execute({"key": "caller", "extra": "kept"})
-    assert seen["key"] == "inline"      # inline wins
-    assert seen["extra"] == "kept"      # caller args still pass through
+    assert seen["key"] == "inline"  # inline wins
+    assert seen["extra"] == "kept"  # caller args still pass through
 
 
 # ── Discovery ───────────────────────────────────────────────────────────────
 
+
 def test_discover_md_skills(tmp_path):
     md = tmp_path / "discover-test.md"
-    md.write_text(textwrap.dedent("""\
+    md.write_text(
+        textwrap.dedent("""\
         ---
         name: discovered
         description: Found via discover()
@@ -512,7 +550,8 @@ def test_discover_md_skills(tmp_path):
         ---
         ## Steps
         - tool.one
-    """))
+    """)
+    )
 
     reg = SkillRegistry()
     count = reg.discover(extra_dirs=[tmp_path])
@@ -528,6 +567,7 @@ def test_discover_builtin_skills():
 
 
 # ── Brain integration ───────────────────────────────────────────────────────
+
 
 def test_brain_run_skill():
     """Brain.run_skill() should delegate to skill_registry.run()."""
@@ -577,8 +617,10 @@ def test_brain_execute_tool_rejects_bad_skill_name():
     memory = MemoryManager(embed_fn=lambda t: [0.0] * 384)
     mock_skill_reg = MagicMock()
     brain = Brain(
-        memory=memory, ollama=mock_ollama,
-        skill_registry=mock_skill_reg, tool_registry=MagicMock(),
+        memory=memory,
+        ollama=mock_ollama,
+        skill_registry=mock_skill_reg,
+        tool_registry=MagicMock(),
     )
 
     # Attempt to invoke a skill with a dangerous name
@@ -608,11 +650,13 @@ def test_brain_skill_schemas():
 
 # ── Recipes (low-code SKILL.md CRUD) ─────────────────────────────────────────
 
+
 def test_recipes_crud(tmp_path, monkeypatch):
     """create/list/delete recipes, with validation that steps reference real
     tools and names are filename-safe — the low-code 'add a tool' backend."""
     import kai.tools  # noqa: F401 — register every tool
     from kai.skills import recipes
+
     monkeypatch.setattr(recipes, "recipes_dir", lambda: tmp_path)
 
     r = recipes.create_recipe("t-clock", "tell time", ["clock"], ["time.now"])
@@ -641,11 +685,14 @@ def test_recipes_accept_named_steps_and_refs(tmp_path, monkeypatch):
     what you can save in the GUI is exactly what the runtime can run."""
     import kai.tools  # noqa: F401 — register every tool
     from kai.skills import recipes
+
     monkeypatch.setattr(recipes, "recipes_dir", lambda: tmp_path)
 
     # A named step, plus a later step consuming its output.
     r = recipes.create_recipe(
-        "t-dag", "named + ref", [],
+        "t-dag",
+        "named + ref",
+        [],
         ["clock = time.now", "files.read path={{clock}}"],
     )
     assert r["steps"] == ["clock = time.now", "files.read path={{clock}}"]

@@ -12,6 +12,7 @@ messages are never trimmed until a summary is ready, so concurrent readers alway
 see a complete history during the slow summarize call. A `_compressing` flag
 prevents overlapping compressions.
 """
+
 from __future__ import annotations
 
 import threading
@@ -21,8 +22,8 @@ class HistoryManager:
     def __init__(self) -> None:
         self._messages: list[dict] = []
         self._lock = threading.Lock()
-        self._turn_order: int = 0      # message ordering for DB persistence
-        self._turn_count: int = 0      # monotonic turn counter (learn-rate gating)
+        self._turn_order: int = 0  # message ordering for DB persistence
+        self._turn_count: int = 0  # monotonic turn counter (learn-rate gating)
         self._compressing: bool = False
         self._compress_split_idx: int = 0
 
@@ -57,9 +58,7 @@ class HistoryManager:
     def replace(self, messages: list[dict]) -> int:
         """Replace history with a saved session's messages. Returns the count."""
         with self._lock:
-            self._messages = [
-                {"role": m["role"], "content": m["content"]} for m in messages
-            ]
+            self._messages = [{"role": m["role"], "content": m["content"]} for m in messages]
         self._turn_order = len(messages)
         return len(messages)
 
@@ -104,8 +103,7 @@ class HistoryManager:
             self._compressing = True
             self._compress_split_idx = hist_len - keep_n
             return [
-                m for m in self._messages[:self._compress_split_idx]
-                if m.get("role") != "system"
+                m for m in self._messages[: self._compress_split_idx] if m.get("role") != "system"
             ]
 
     def commit_compression(self, summary: str) -> None:
@@ -116,11 +114,14 @@ class HistoryManager:
             try:
                 if len(self._messages) < self._compress_split_idx:
                     return  # history cleared during compression — bail
-                self._messages = self._messages[self._compress_split_idx:]
-                self._messages.insert(0, {
-                    "role": "system",
-                    "content": f"[Earlier in this conversation: {summary}]",
-                })
+                self._messages = self._messages[self._compress_split_idx :]
+                self._messages.insert(
+                    0,
+                    {
+                        "role": "system",
+                        "content": f"[Earlier in this conversation: {summary}]",
+                    },
+                )
             finally:
                 self._compressing = False
 

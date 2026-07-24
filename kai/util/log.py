@@ -15,6 +15,7 @@ Convention:
 Plain print() remains correct for the CLI's user-facing chat output — that's an
 interface, not a log.
 """
+
 import logging
 
 import kai.config as cfg

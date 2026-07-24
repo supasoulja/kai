@@ -17,6 +17,7 @@ Auth layers:
 Kai's brain only ever receives the user's name. PINs and machine keys never
 reach the AI layer.
 """
+
 import hashlib
 import hmac
 import os
@@ -85,6 +86,7 @@ def _verify(value: str, stored: str) -> bool:
 
 _table_ensured = False
 
+
 def _ensure_table() -> None:
     """Create users table if needed. Called lazily on first use."""
     global _table_ensured
@@ -110,6 +112,7 @@ def _ensure_table() -> None:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def list_users() -> list[str]:
     _ensure_table()
@@ -175,7 +178,7 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
         return None
     user_id, stored_name, pin_hash, machine_hash = row
     # Both factors must pass — check both before returning to avoid timing leaks
-    pin_ok     = _verify(pin, pin_hash)
+    pin_ok = _verify(pin, pin_hash)
     machine_ok = hmac.compare_digest(machine_hash or "", machine_key_hash or "")
     if not (pin_ok and machine_ok):
         return None
@@ -187,9 +190,7 @@ def authenticate(name: str, pin: str, machine_key_hash: str) -> dict | None:
             (_hash(pin), now, stored_name),
         )
     else:
-        conn.execute(
-            "UPDATE users SET last_seen = ? WHERE name = ?", (now, stored_name)
-        )
+        conn.execute("UPDATE users SET last_seen = ? WHERE name = ?", (now, stored_name))
     conn.commit()
     return {"name": stored_name, "id": user_id, "last_seen": now}
 
@@ -243,7 +244,8 @@ def _delete_user_rows(conn: sqlite3.Connection, user_id: int) -> None:
     # Episodic: delete vectors first (they reference rowids in episodic_entries)
     try:
         entry_rowids = [
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT rowid FROM episodic_entries WHERE user_id = ?", (user_id,)
             ).fetchall()
         ]
@@ -256,10 +258,12 @@ def _delete_user_rows(conn: sqlite3.Connection, user_id: int) -> None:
     # RAG: delete vectors for user's document chunks
     try:
         chunk_rowids = [
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT c.rowid FROM rag_chunks c "
                 "JOIN rag_documents d ON c.doc_id = d.doc_id "
-                "WHERE d.user_id = ?", (user_id,)
+                "WHERE d.user_id = ?",
+                (user_id,),
             ).fetchall()
         ]
         if chunk_rowids:
@@ -289,7 +293,8 @@ def _delete_user_rows(conn: sqlite3.Connection, user_id: int) -> None:
 
     # RAG documents and chunks
     doc_ids = [
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT doc_id FROM rag_documents WHERE user_id = ?", (user_id,)
         ).fetchall()
     ]
@@ -313,7 +318,9 @@ def _delete_user_files(user_id: int) -> None:
     from pathlib import Path
 
     import kai.config as cfg
-    from kai.memory import tree as _tree, state as _state, knowledge as _knowledge
+    from kai.memory import knowledge as _knowledge
+    from kai.memory import state as _state
+    from kai.memory import tree as _tree
 
     for mod in (_tree, _state, _knowledge):
         try:
@@ -330,11 +337,13 @@ def _delete_user_files(user_id: int) -> None:
 
 # ── Data export ─────────────────────────────────────────────────────────────────
 
+
 def _rows_as_dicts(conn, sql: str, params=()) -> list[dict]:
     """Run a SELECT and return rows as JSON-safe dicts (works regardless of the
     connection's row_factory). BLOB columns are base64-encoded so the result
     survives json.dumps."""
     import base64
+
     cur = conn.execute(sql, params)
     cols = [d[0] for d in cur.description]
     out = []

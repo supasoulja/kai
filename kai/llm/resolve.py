@@ -6,10 +6,11 @@ agent/role is assigned: local Ollama, or a cloud provider whose API key lives in
 the per-user keystore. Local needs no key; cloud looks its key up by the entry's
 conn_id and builds the matching adapter via the provider factory.
 """
+
 from __future__ import annotations
 
 from kai.llm import keystore
-from kai.llm.client import get_client, LLMClient
+from kai.llm.client import LLMClient, get_client
 
 
 class LLMKeyMissing(RuntimeError):

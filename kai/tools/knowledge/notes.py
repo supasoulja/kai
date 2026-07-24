@@ -1,13 +1,14 @@
 """
 notes.save / notes.search / notes.list — persistent note storage in SQLite.
 """
+
 import secrets
 from datetime import datetime
 
 _MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
 
-from kai.store.db import get_conn, like_escape
 from kai.core._app_state import get_current_user_id
+from kai.store.db import get_conn, like_escape
 from kai.tools.registry import registry
 
 
@@ -95,7 +96,7 @@ def list_notes() -> str:
         rows = conn.execute(
             "SELECT id, timestamp, title, content FROM notes "
             "WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10",
-            (user_id,)
+            (user_id,),
         ).fetchall()
 
         if not rows:

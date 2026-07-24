@@ -2,23 +2,26 @@
 Wave 5a — the regex fact extractor must not poison singleton facts.
 Run with: python -m pytest tests/test_extractor.py -v
 """
+
 import os
+
 import pytest
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
 import tempfile
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import kai.config as cfg
+
 cfg.DB_PATH = Path(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
 
 from kai.store.db import _reset_for_tests, get_conn
+
 _reset_for_tests()
 
-from kai.memory import semantic, extractor
-from kai.memory import context
+from kai.memory import context, extractor, semantic
 
 
 @pytest.fixture(autouse=True)
@@ -30,9 +33,9 @@ def _clean():
 
 # ── The data-destroying case the backlog called out ──────────────────────────
 
+
 def test_casual_state_does_not_clobber_known_role():
-    semantic.set_fact("user_role", "developer", source="user_message",
-                      confidence=0.5, user_id=7)
+    semantic.set_fact("user_role", "developer", source="user_message", confidence=0.5, user_id=7)
     extractor.extract_and_save("I'm a bit tired today", user_id=7)
     assert semantic.get_fact("user_role", user_id=7) == "developer"
 
@@ -44,13 +47,13 @@ def test_state_phrase_is_not_saved_as_role_when_none_exists():
 
 def test_low_confidence_capture_cannot_overwrite_explicit_setting():
     # An explicit, high-confidence fact (e.g. from a user setting) is protected.
-    semantic.set_fact("user_role", "architect", source="user_setting",
-                      confidence=1.0, user_id=7)
+    semantic.set_fact("user_role", "architect", source="user_setting", confidence=1.0, user_id=7)
     extractor.extract_and_save("I'm a developer", user_id=7)
     assert semantic.get_fact("user_role", user_id=7) == "architect"
 
 
 # ── Still captures legitimately ──────────────────────────────────────────────
+
 
 def test_first_role_capture_sets_it():
     saved = extractor.extract_and_save("I'm a developer", user_id=7)
@@ -78,14 +81,15 @@ def test_preferences_still_accumulate():
 
 
 def test_confidence_is_stored_per_pattern():
-    extractor.extract_and_save("My name is Alice", user_id=7)   # 1.0
-    extractor.extract_and_save("I'm a developer", user_id=7)    # 0.5
+    extractor.extract_and_save("My name is Alice", user_id=7)  # 1.0
+    extractor.extract_and_save("I'm a developer", user_id=7)  # 0.5
     by_key = {f.key: f for f in semantic.list_facts(user_id=7)}
     assert by_key["user_name"].confidence == 1.0
     assert by_key["user_role"].confidence == 0.5
 
 
 # ── 5b: confidence gate on recall ────────────────────────────────────────────
+
 
 def test_recall_gate_excludes_low_confidence_facts():
     semantic.set_fact("preference_1", "coffee", confidence=0.3, user_id=7)
@@ -104,11 +108,14 @@ def test_recall_gate_keeps_boundary_confidence():
 
 # ── 5c: decay / review ───────────────────────────────────────────────────────
 
+
 def _age_fact(key, days, user_id=7):
     conn = get_conn()
     old = (datetime.now() - timedelta(days=days)).isoformat()
-    conn.execute("UPDATE semantic_facts SET updated_at = ? WHERE user_id = ? AND key = ?",
-                 (old, user_id, key))
+    conn.execute(
+        "UPDATE semantic_facts SET updated_at = ? WHERE user_id = ? AND key = ?",
+        (old, user_id, key),
+    )
     conn.commit()
 
 

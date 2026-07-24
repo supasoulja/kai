@@ -4,6 +4,7 @@ Both surfaces are dashboard-facing and require a logged-in user. They return a
 JSONResponse 401 (not a raised HTTPException) to match their callers, which
 check the status code rather than catching an exception.
 """
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -23,6 +24,7 @@ async def list_containers(request: Request):
     if not get_user(request):
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     from kai.tools import lxc
+
     return {
         "available": lxc.client_available(),
         "instances": lxc.list_instances_data(),
@@ -47,6 +49,7 @@ async def container_action(request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="Missing container name")
     from kai.tools import lxc
+
     if action == "start":
         message = lxc.start_instance(name)
     elif action == "stop":

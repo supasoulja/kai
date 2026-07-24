@@ -6,14 +6,15 @@ All read-only. No files are moved, deleted, or modified.
 Platform: Cross-platform.  PowerShell is used on Windows for disk scanning;
 pure Python / shell commands are used on Linux.
 """
+
 import json
 import subprocess
 from pathlib import Path
 
-from kai.tools.registry import registry
-from kai.tools._shell import run_powershell, TIMEOUT_SENTINEL as _TIMEOUT_SENTINEL
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
-
+from kai.tools._shell import TIMEOUT_SENTINEL as _TIMEOUT_SENTINEL
+from kai.tools._shell import run_powershell
+from kai.tools.registry import registry
 
 # Platform-aware path guidance baked into the tool descriptions. On Linux the
 # model must NOT be told to probe 'C:\' — that hardcoded Windows guidance wasted
@@ -21,7 +22,9 @@ from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 # layer already handles each OS; this just keeps the *guidance* honest.
 if _IS_WINDOWS:
     _PATH_EXAMPLES = "'C:\\', 'D:\\', 'E:\\'"
-    _ALL_DRIVES_HINT = "call this tool once per drive — check C:\\ first, then any others (D:\\, E:\\, etc.)"
+    _ALL_DRIVES_HINT = (
+        "call this tool once per drive — check C:\\ first, then any others (D:\\, E:\\, etc.)"
+    )
     _ROOT_PARAM_HINT = "use 'C:\\' for the full drive"
 else:
     _PATH_EXAMPLES = "'/', '/home', '/mnt'"
@@ -59,11 +62,11 @@ def _safe_path(path: str) -> str:
     Backticks are removed (PS escape/expansion character).
     All backslashes normalized to forward slashes (PS handles both, avoids
     trailing backslash escaping the closing quote)."""
-    p = path.strip().strip('"')   # remove surrounding double-quotes only
+    p = path.strip().strip('"')  # remove surrounding double-quotes only
     if _IS_WINDOWS:
-        p = p.replace("`", "")        # remove PS backtick (escape/expansion char)
-        p = p.replace("'", "''")      # PS literal single-quote escape
-        p = p.replace("\\", "/")      # normalize to forward slash
+        p = p.replace("`", "")  # remove PS backtick (escape/expansion char)
+        p = p.replace("'", "''")  # PS literal single-quote escape
+        p = p.replace("\\", "/")  # normalize to forward slash
     return p
 
 
@@ -139,7 +142,7 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
             for item in data:
                 mb = item.get("SizeMB") or 0
                 name = item.get("Path", "?")
-                size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+                size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
                 lines.append(f"  {size_str:>10}  {name}")
             return "\n".join(lines)
         except Exception:
@@ -151,8 +154,16 @@ def get_disk_usage(path: str = "", top_n: int = 12) -> str:
 # ── Linux disk usage helpers ──────────────────────────────────────────
 
 _SKIP_DIRS_LINUX = {
-    "proc", "sys", "dev", "run", "snap", "lost+found", "mnt", "media",
+    "proc",
+    "sys",
+    "dev",
+    "run",
+    "snap",
+    "lost+found",
+    "mnt",
+    "media",
 }
+
 
 def _disk_usage_linux(path: str, top_n: int = 12) -> str:
     """Scan folder sizes using du on Linux."""
@@ -192,7 +203,7 @@ def _disk_usage_linux(path: str, top_n: int = 12) -> str:
 
     lines = [f"Folder sizes in {path}:"]
     for folder, mb in results:
-        size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+        size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
         lines.append(f"  {size_str:>10}  {folder}")
     if skipped:
         lines.append(f"\nSkipped {len(skipped)} system/hidden folder(s)")
@@ -202,8 +213,13 @@ def _disk_usage_linux(path: str, top_n: int = 12) -> str:
 # ── Windows disk usage helpers ────────────────────────────────────────
 
 _SKIP_FOLDERS_WIN = {
-    "windows", "$recycle.bin", "system volume information",
-    "recovery", "$winreagent", "$sysreset", "documents and settings",
+    "windows",
+    "$recycle.bin",
+    "system volume information",
+    "recovery",
+    "$winreagent",
+    "$sysreset",
+    "documents and settings",
 }
 
 
@@ -250,7 +266,7 @@ def _disk_usage_chunked_win(drive: str, top_n: int = 12) -> str:
 
     lines = [f"Folder sizes in {drive}:"]
     for folder, mb in results:
-        size_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+        size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
         lines.append(f"  {size_str:>10}  {folder}")
     if skipped:
         lines.append(f"\nSkipped {len(skipped)} system/slow folder(s)")
@@ -427,9 +443,7 @@ def _format_large_results(out: str, path: str, min_size_mb: int) -> str:
         },
     },
 )
-def find_old_files(
-    path: str = "", days: int = 365, min_size_mb: int = 50, top_n: int = 20
-) -> str:
+def find_old_files(path: str = "", days: int = 365, min_size_mb: int = 50, top_n: int = 20) -> str:
     days = max(1, min(int(days), 3650))
     min_size_mb = max(0, min(int(min_size_mb), 1_000_000))
     top_n = max(1, min(int(top_n), 100))
@@ -537,8 +551,7 @@ def get_recent_files(path: str = "", count: int = 15) -> str:
         except Exception:
             return out[:2000]
     else:
-        find_args = ["find", path, "-maxdepth", "3", "-type", "f",
-                     "-printf", "%T+ %s %p\n"]
+        find_args = ["find", path, "-maxdepth", "3", "-type", "f", "-printf", "%T+ %s %p\n"]
         raw = _run_args(find_args, timeout=60)
         if not raw or raw == _TIMEOUT_SENTINEL:
             return f"No files found in '{path}'."
@@ -560,30 +573,81 @@ def get_recent_files(path: str = "", count: int = 15) -> str:
         return "\n".join(lines)
 
 
-_MAX_LINES  = 400   # max lines returned per read
-_MAX_CHARS  = 8000  # hard cap on total output chars
+_MAX_LINES = 400  # max lines returned per read
+_MAX_CHARS = 8000  # hard cap on total output chars
 
 # Filenames that should never be read — even if they have a text extension.
 # Prevents the model from being tricked into exfiltrating secrets.
 _BLOCKED_FILENAMES = {
-    ".env", ".env.local", ".env.production", ".env.development",
-    "credentials.json", "service_account.json",
-    "id_rsa", "id_ed25519", "id_ecdsa",
-    ".netrc", ".npmrc",
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.development",
+    "credentials.json",
+    "service_account.json",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    ".netrc",
+    ".npmrc",
 }
 
 # Directories that should never be read from (resolved, lowercased on Windows).
 _BLOCKED_DIR_PARTS = {
-    ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".config/gcloud",
 }
 
 _TEXT_EXTENSIONS = {
-    ".py", ".pyw", ".txt", ".md", ".rst", ".json", ".jsonl", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".env", ".log", ".csv", ".tsv",
-    ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss",
-    ".sh", ".bash", ".zsh", ".fish", ".bat", ".ps1", ".cmd",
-    ".c", ".cpp", ".h", ".hpp", ".cs", ".java", ".go", ".rs",
-    ".sql", ".xml", ".svg", ".tf", ".conf", ".config", ".gitignore",
+    ".py",
+    ".pyw",
+    ".txt",
+    ".md",
+    ".rst",
+    ".json",
+    ".jsonl",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".env",
+    ".log",
+    ".csv",
+    ".tsv",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".html",
+    ".htm",
+    ".css",
+    ".scss",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".bat",
+    ".ps1",
+    ".cmd",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".java",
+    ".go",
+    ".rs",
+    ".sql",
+    ".xml",
+    ".svg",
+    ".tf",
+    ".conf",
+    ".config",
+    ".gitignore",
 }
 
 
@@ -627,11 +691,13 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
         return f"Blocked: '{p.name}' may contain secrets and cannot be read."
     # Block sensitive directories
     path_lower = str(p).lower().replace("\\", "/")
-    if any(f"/{part}/" in path_lower or path_lower.endswith(f"/{part}") for part in _BLOCKED_DIR_PARTS):
+    if any(
+        f"/{part}/" in path_lower or path_lower.endswith(f"/{part}") for part in _BLOCKED_DIR_PARTS
+    ):
         return f"Blocked: files inside '{p.parent.name}' cannot be read for security reasons."
 
     start_line = max(1, int(start_line))
-    end_line   = int(end_line)
+    end_line = int(end_line)
     if end_line <= 0:
         end_line = start_line + _MAX_LINES - 1
 
@@ -644,9 +710,7 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
     selected = raw_lines[start_line - 1 : end_line]
 
     header = f"File: {p}\nLines {start_line}–{min(end_line, total)} of {total}\n"
-    body   = "\n".join(
-        f"{start_line + i:>5}  {line}" for i, line in enumerate(selected)
-    )
+    body = "\n".join(f"{start_line + i:>5}  {line}" for i, line in enumerate(selected))
 
     result = header + "─" * 60 + "\n" + body
     if len(result) > _MAX_CHARS:
@@ -676,7 +740,7 @@ def read_file(path: str, start_line: int = 1, end_line: int = 0) -> str:
 )
 def list_directory(path: str = "", show_hidden: bool = False) -> str:
     raw = path.strip().strip("'\"") if path.strip() else "~"
-    p   = Path(raw).expanduser().resolve()
+    p = Path(raw).expanduser().resolve()
 
     if not p.exists():
         return f"Directory not found: {p}"
@@ -698,7 +762,7 @@ def list_directory(path: str = "", show_hidden: bool = False) -> str:
         else:
             try:
                 size = e.stat().st_size
-                sz = f"{size/1_048_576:.1f} MB" if size >= 1_048_576 else f"{size/1024:.1f} KB"
+                sz = f"{size / 1_048_576:.1f} MB" if size >= 1_048_576 else f"{size / 1024:.1f} KB"
             except Exception:
                 sz = "?"
             files.append(f"  📄  {e.name:<40} {sz}")

@@ -13,6 +13,7 @@ sequence number so the dashboard can poll incrementally (fetch only lines newer
 than the last seq it saw). install() is idempotent and safe to call from both
 the web and desktop-app entry points.
 """
+
 from __future__ import annotations
 
 import logging

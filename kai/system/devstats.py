@@ -10,6 +10,7 @@ sensor or unreadable mount yields None / is skipped, never an exception.
 The /api/dev/stats route can expose these for live polling; the collectors
 themselves carry no auth or web concerns.
 """
+
 from __future__ import annotations
 
 import socket
@@ -27,14 +28,16 @@ def collect_disk() -> list[dict]:
             u = psutil.disk_usage(part.mountpoint)
         except (PermissionError, OSError):
             continue  # e.g. an empty optical drive or a permission-locked mount
-        out.append({
-            "mount": part.mountpoint,
-            "fstype": part.fstype,
-            "total_gb": round(u.total / 1e9, 1),
-            "used_gb": round(u.used / 1e9, 1),
-            "free_gb": round(u.free / 1e9, 1),
-            "percent": u.percent,
-        })
+        out.append(
+            {
+                "mount": part.mountpoint,
+                "fstype": part.fstype,
+                "total_gb": round(u.total / 1e9, 1),
+                "used_gb": round(u.used / 1e9, 1),
+                "free_gb": round(u.free / 1e9, 1),
+                "percent": u.percent,
+            }
+        )
     out.sort(key=lambda d: d["total_gb"], reverse=True)
     return out
 
@@ -49,12 +52,14 @@ def collect_network() -> list[dict]:
             continue
         ips = [a.address for a in addr_list if a.family == socket.AF_INET]
         st = stats.get(name)
-        out.append({
-            "name": name,
-            "up": bool(st.isup) if st else False,
-            "speed_mbps": st.speed if st else 0,
-            "addresses": ips,
-        })
+        out.append(
+            {
+                "name": name,
+                "up": bool(st.isup) if st else False,
+                "speed_mbps": st.speed if st else 0,
+                "addresses": ips,
+            }
+        )
     return out
 
 
@@ -84,8 +89,10 @@ def _cpu_temp() -> float | None:
     for name, entries in (temps or {}).items():
         for e in entries:
             label = (e.label or name).lower()
-            if any(k in label for k in ("core", "tctl", "tdie", "package",
-                                        "cpu", "k10temp", "coretemp")):
+            if any(
+                k in label
+                for k in ("core", "tctl", "tdie", "package", "cpu", "k10temp", "coretemp")
+            ):
                 if e.current and e.current > 10:
                     return round(e.current, 1)
     return None
@@ -96,9 +103,10 @@ def _gpu_temp() -> float | None:
     None when nvidia-smi is absent (AMD/Intel/headless) or errors."""
     try:
         r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=temperature.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3,
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if r.returncode == 0 and r.stdout.strip():
             return float(r.stdout.strip().splitlines()[0])

@@ -18,6 +18,7 @@ the default whenever a user hasn't expressed a preference.
 The HTTP routes / Settings UI that flip these are wired in the Settings-reorg
 phase of the Agent-Crew epic; this module is the backend they call.
 """
+
 from __future__ import annotations
 
 import kai.config as cfg
@@ -45,13 +46,13 @@ def patterns_enabled(user_id: int = 0) -> bool:
 
 
 def set_learning_enabled(user_id: int, on: bool) -> None:
-    semantic.set_fact(_LEARN_KEY, "on" if on else "off",
-                      source="privacy_setting", user_id=user_id)
+    semantic.set_fact(_LEARN_KEY, "on" if on else "off", source="privacy_setting", user_id=user_id)
 
 
 def set_patterns_enabled(user_id: int, on: bool) -> None:
-    semantic.set_fact(_PATTERN_KEY, "on" if on else "off",
-                      source="privacy_setting", user_id=user_id)
+    semantic.set_fact(
+        _PATTERN_KEY, "on" if on else "off", source="privacy_setting", user_id=user_id
+    )
 
 
 def forget_usage_patterns(user_id: int = 0) -> int:
@@ -61,6 +62,7 @@ def forget_usage_patterns(user_id: int = 0) -> int:
     rows; this clears the history already gathered.
     """
     from kai.store.db import get_conn
+
     conn = get_conn()
     cur = conn.execute("DELETE FROM usage_patterns WHERE user_id = ?", (user_id,))
     conn.commit()

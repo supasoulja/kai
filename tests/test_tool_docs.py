@@ -4,13 +4,14 @@ Tests for auto-generated tool docs in the memory tree + the [TOOLS] prompt block
 Tree DB is isolated per-test via monkeypatch on mtree._TREE_DIR (same convention as
 tests/test_tools.py) so nothing touches the real kai/memory/tree/{0,2}.db files.
 """
-import kai.tools  # noqa: F401 — triggers every @registry.tool registration
-from kai.tools.registry import registry
-from kai.memory import tree as mtree
-from kai.memory import tool_docs
 
+import kai.tools  # noqa: F401 — triggers every @registry.tool registration
+from kai.memory import tool_docs
+from kai.memory import tree as mtree
+from kai.tools.registry import registry
 
 # ── Sync ──────────────────────────────────────────────────────────────────────
+
 
 def test_sync_creates_node_for_every_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
@@ -56,10 +57,16 @@ def test_stale_tool_node_is_deleted(tmp_path, monkeypatch):
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     tool_docs.sync_tool_docs("1")
     # Simulate a tool that was removed from the registry between syncs.
-    mtree.write("1", mtree.Node(
-        path="tools/ghost/old_tool", value="stale doc",
-        source="seed", decays=False, domain="tools",
-    ))
+    mtree.write(
+        "1",
+        mtree.Node(
+            path="tools/ghost/old_tool",
+            value="stale doc",
+            source="seed",
+            decays=False,
+            domain="tools",
+        ),
+    )
     result = tool_docs.sync_tool_docs("1")
     assert mtree.read("1", "tools/ghost/old_tool") is None
     assert result["deleted"] >= 1
@@ -68,6 +75,7 @@ def test_stale_tool_node_is_deleted(tmp_path, monkeypatch):
 
 
 # ── Render ──────────────────────────────────────────────────────────────────
+
 
 def test_render_tool_index_format(tmp_path, monkeypatch):
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
@@ -87,6 +95,7 @@ def test_render_tool_index_empty_before_sync(tmp_path, monkeypatch):
 
 # ── Tool docs stay invisible to user-fact retrieval ──────────────────────────
 
+
 def test_count_facts_unaffected_by_tool_docs(tmp_path, monkeypatch):
     """[MEMORY CONTEXT] gating in brain.py depends on count_facts() == 0 — tool docs
     must not make an otherwise-empty tree look like it holds real facts."""
@@ -97,6 +106,7 @@ def test_count_facts_unaffected_by_tool_docs(tmp_path, monkeypatch):
 
 def test_tool_docs_excluded_from_memory_context_scoring(tmp_path, monkeypatch):
     from kai.memory import scorer
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     tool_docs.sync_tool_docs("1")
     assert scorer.select_for_context("1", None) == []
@@ -104,9 +114,11 @@ def test_tool_docs_excluded_from_memory_context_scoring(tmp_path, monkeypatch):
 
 # ── tree.* tool integration (landmine fixes) ─────────────────────────────────
 
+
 def test_tree_read_reaches_tool_doc(tmp_path, monkeypatch):
-    from kai.tools import memory_tools as mt
     from kai.core._app_state import set_current_user_id
+    from kai.tools import memory_tools as mt
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     mt._TREE_SEEDED.clear()
     set_current_user_id(1)
@@ -117,21 +129,23 @@ def test_tree_read_reaches_tool_doc(tmp_path, monkeypatch):
 
 
 def test_tree_browse_root_excludes_tools(tmp_path, monkeypatch):
-    from kai.tools import memory_tools as mt
     from kai.core._app_state import set_current_user_id
+    from kai.tools import memory_tools as mt
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     mt._TREE_SEEDED.clear()
     set_current_user_id(1)
     tool_docs.sync_tool_docs("1")
 
-    out = mt.tree_browse("")          # _ensure_tree seeds the user skeleton
+    out = mt.tree_browse("")  # _ensure_tree seeds the user skeleton
     assert "tools/" not in out
-    assert "identity/" in out         # user skeleton still visible
+    assert "identity/" in out  # user skeleton still visible
 
 
 def test_tree_browse_tools_path_shows_index(tmp_path, monkeypatch):
-    from kai.tools import memory_tools as mt
     from kai.core._app_state import set_current_user_id
+    from kai.tools import memory_tools as mt
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     mt._TREE_SEEDED.clear()
     set_current_user_id(1)
@@ -143,8 +157,10 @@ def test_tree_browse_tools_path_shows_index(tmp_path, monkeypatch):
 
 # ── [TOOLS] placement in the rendered context ────────────────────────────────
 
+
 def test_tools_block_after_procedural_in_context(tmp_path, monkeypatch):
     from kai.store.schema import ContextBlock, ProceduralRule
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     tool_docs.sync_tool_docs("1")
     tool_index = tool_docs.render_tool_index("1")
@@ -152,7 +168,8 @@ def test_tools_block_after_procedural_in_context(tmp_path, monkeypatch):
     block = ContextBlock(
         identity="persona text",
         procedural=[ProceduralRule(key="rule1", value="be nice")],
-        semantic=[], episodic=[],
+        semantic=[],
+        episodic=[],
         tool_index=tool_index,
     )
     rendered = block.render()
@@ -163,6 +180,7 @@ def test_tools_block_after_procedural_in_context(tmp_path, monkeypatch):
 
 
 # ── Regression guard ──────────────────────────────────────────────────────────
+
 
 def test_audit_metadata_still_clean():
     audit = registry.audit_metadata()

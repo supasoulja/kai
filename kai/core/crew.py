@@ -20,6 +20,7 @@ The six execution profiles the tree resolves to:
     BOSS        — Otto orchestrates many      (multi-domain / vague / low-confidence)
     BACKGROUND  — one long-running tool        (fire-and-forget)
 """
+
 from __future__ import annotations
 
 import re
@@ -33,24 +34,25 @@ from kai.config import ROOT_DIR
 # Each of the 17 tool categories in kai/tools/registry.py is owned by exactly one
 # specialist. Otto (boss) and Envoy (MCP, none yet) own no categories here.
 CREW_CATEGORIES: dict[str, list[str]] = {
-    "Gus":   ["system_health", "system_control", "startup_and_updates", "network"],
+    "Gus": ["system_health", "system_control", "startup_and_updates", "network"],
     "Dewey": ["file_operations", "disk_analysis", "workspace_and_code"],
     "Scout": ["search_and_info", "web_content", "study_library", "media_understanding"],
-    "Remy":  ["notes_and_memory", "goals_and_tasks", "self_inspection", "docs_rag"],
+    "Remy": ["notes_and_memory", "goals_and_tasks", "self_inspection", "docs_rag"],
     "Cargo": ["containers"],
 }
 
 # Reverse lookup: category → specialist. Built once at import.
 CATEGORY_TO_SPECIALIST: dict[str, str] = {
-    cat: specialist
-    for specialist, cats in CREW_CATEGORIES.items()
-    for cat in cats
+    cat: specialist for specialist, cats in CREW_CATEGORIES.items() for cat in cats
 }
 
 # Tools that take long enough to warrant the BACKGROUND lane (fire-and-forget).
-LONG_RUNNING_TOOLS: frozenset[str] = frozenset({
-    "pc.deep_scan", "network.full_diagnostic",
-})
+LONG_RUNNING_TOOLS: frozenset[str] = frozenset(
+    {
+        "pc.deep_scan",
+        "network.full_diagnostic",
+    }
+)
 
 # All worker specialists (Otto is the boss, not a worker). Envoy is MCP-only and
 # dormant until a server is connected (its slice is empty), but its prompt exists.
@@ -64,8 +66,12 @@ CREW_PROMPTS_DIR: Path = ROOT_DIR / "kai" / "persona" / "crew_prompts"
 
 # needs:<domain> → specialist, the six fixed escalation tokens (plan Part A.2).
 NEEDS_TO_SPECIALIST: dict[str, str] = {
-    "machine": "Gus", "files": "Dewey", "web": "Scout",
-    "memory": "Remy", "infra": "Cargo", "external": "Envoy",
+    "machine": "Gus",
+    "files": "Dewey",
+    "web": "Scout",
+    "memory": "Remy",
+    "infra": "Cargo",
+    "external": "Envoy",
 }
 _NEEDS_RE = re.compile(r"^\s*needs:\s*(machine|files|web|memory|infra|external)\b", re.I)
 _BLOCKED_RE = re.compile(r"^\s*blocked:\s*(.+)", re.I | re.S)
@@ -108,10 +114,11 @@ class Profile(StrEnum):
 @dataclass(frozen=True)
 class TriageResult:
     """The decision for one turn."""
+
     profile: Profile
     specialist: str | None  # the FAST/FAST_THINK/BACKGROUND worker; None for CHAT/REASON/BOSS
-    think: bool             # whether chain-of-thought is on
-    tools: bool             # whether any tools run this turn
+    think: bool  # whether chain-of-thought is on
+    tools: bool  # whether any tools run this turn
     # Distinct specialists whose domains cleared the floor, in score order. For a
     # BOSS turn this is the coverage set: every one of these has real work to do,
     # so run_crew force-dispatches any Otto skips before it's allowed to FINISH.
@@ -204,18 +211,20 @@ def triage(
     if not specialists:
         if keyword_gated or not category_scores:
             return TriageResult(
-                profile=Profile.BOSS, specialist=None,
-                think=not think_capped, tools=True,
+                profile=Profile.BOSS,
+                specialist=None,
+                think=not think_capped,
+                tools=True,
             )
         return TriageResult(
             profile=Profile.REASON if think else Profile.CHAT,
-            specialist=None, think=think, tools=False,
+            specialist=None,
+            think=think,
+            tools=False,
         )
 
     top_score = category_scores[0][1] if category_scores else 0.0
-    single_confident = (
-        len(specialists) == 1 and top_score >= FAST_CONFIDENCE
-    )
+    single_confident = len(specialists) == 1 and top_score >= FAST_CONFIDENCE
 
     if single_confident:
         return TriageResult(
@@ -242,7 +251,11 @@ def triage(
 # Approximate at triage time: the exact tool is the specialist's pick, but these
 # phrasings reliably mean a long job. Refine against real usage later.
 _LONG_RUNNING_HINTS = (
-    "deep scan", "deep-scan", "full diagnostic", "full scan", "scan everything",
+    "deep scan",
+    "deep-scan",
+    "full diagnostic",
+    "full scan",
+    "scan everything",
     "scan all",
 )
 
@@ -306,14 +319,16 @@ def load_specialist_prompt(name: str, *, prompts_dir: Path | None = None) -> str
 
 # ── Result contract (specialist → Otto/Kai) ──────────────────────────────────────
 
+
 @dataclass
 class SpecialistResult:
     """What a specialist hands back. `findings` is the evidence Kai synthesizes;
     `status` is what the orchestrator branches on (plan Part A.2)."""
-    status: str                          # "done" | "needs:<domain>" | "blocked:<reason>"
-    findings: str                        # distilled tool outputs / what was done
+
+    status: str  # "done" | "needs:<domain>" | "blocked:<reason>"
+    findings: str  # distilled tool outputs / what was done
     tools: list[str] = field(default_factory=list)  # tool names actually called
-    for_: str = ""                       # residual subtask for the next worker (optional)
+    for_: str = ""  # residual subtask for the next worker (optional)
 
     @property
     def needs(self) -> str | None:

@@ -9,20 +9,22 @@ Sources (no kernel driver required — WinRing0/hwmon.exe removed):
 Platform: Windows only (uses PowerShell / WMI).  On Linux, use `sensors` or
 `lm-sensors` directly — this module returns a helpful message instead.
 """
+
 import json
 import subprocess
 import threading
 import time
 
 import psutil
-from kai.tools.registry import registry
-from kai.tools._shell import run_powershell
-from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 
-_cache_lock      = threading.Lock()
-_cache_result:   str | None = None
-_cache_time:     float = 0.0
-_cache_ttl       = 60.0   # seconds before refresh
+from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools._shell import run_powershell
+from kai.tools.registry import registry
+
+_cache_lock = threading.Lock()
+_cache_result: str | None = None
+_cache_time: float = 0.0
+_cache_ttl = 60.0  # seconds before refresh
 _refresh_running = False
 
 
@@ -92,7 +94,10 @@ def _gather_temps_linux() -> str:
         for sensor_name, entries in all_temps.items():
             for entry in entries:
                 label = (entry.label or sensor_name).lower()
-                if any(k in label for k in ("core", "tctl", "tdie", "package", "cpu", "k10temp", "coretemp")):
+                if any(
+                    k in label
+                    for k in ("core", "tctl", "tdie", "package", "cpu", "k10temp", "coretemp")
+                ):
                     if entry.current and entry.current > 10:
                         cpu_temps.append(entry.current)
         if cpu_temps:
@@ -104,7 +109,12 @@ def _gather_temps_linux() -> str:
             )
         elif all_temps:
             # sensors found but no CPU-specific label — report max of anything available
-            flat = [e.current for entries in all_temps.values() for e in entries if e.current and e.current > 10]
+            flat = [
+                e.current
+                for entries in all_temps.values()
+                for e in entries
+                if e.current and e.current > 10
+            ]
             if flat:
                 lines.append(f"Temp (highest sensor): {max(flat):.0f}°C")
     except (AttributeError, Exception):
@@ -140,7 +150,14 @@ def _gather_temps() -> str:
     elif vendor == "nvidia":
         gpu = _nvidia_smi() or _hwinfo_gpu() or _gpu_wmi_fallback()
     else:
-        gpu = _nvidia_smi() or _pyadl() or _amd_smi() or _rocm_smi() or _hwinfo_gpu() or _gpu_wmi_fallback()
+        gpu = (
+            _nvidia_smi()
+            or _pyadl()
+            or _amd_smi()
+            or _rocm_smi()
+            or _hwinfo_gpu()
+            or _gpu_wmi_fallback()
+        )
     if gpu:
         lines.append(gpu)
 
@@ -160,6 +177,7 @@ def _gather_temps() -> str:
 
 # ── CPU ────────────────────────────────────────────────────────────────────────
 
+
 def _cpu_info() -> str | None:
     try:
         ps = (
@@ -173,12 +191,12 @@ def _cpu_info() -> str | None:
         d = json.loads(out)
         if isinstance(d, list):
             d = d[0]
-        name    = d.get("Name", "Unknown").strip()
-        load    = d.get("LoadPercentage", "?")
-        clock   = d.get("CurrentClockSpeed", "?")
-        cores   = d.get("NumberOfCores", "?")
+        name = d.get("Name", "Unknown").strip()
+        load = d.get("LoadPercentage", "?")
+        clock = d.get("CurrentClockSpeed", "?")
+        cores = d.get("NumberOfCores", "?")
         threads = d.get("NumberOfLogicalProcessors", "?")
-        temp    = _cpu_temp_wmi()
+        temp = _cpu_temp_wmi()
         return (
             f"CPU: {name}\n"
             f"  Load: {load}%  Clock: {clock} MHz  "
@@ -195,6 +213,7 @@ def _cpu_temp_wmi() -> str:
     # HWiNFO64 — accurate temps from the actual sensor IC
     try:
         from kai.system.hwinfo import get_cpu_temp as _hwinfo_cpu
+
         t = _hwinfo_cpu()
         if t != "n/a":
             return t
@@ -221,7 +240,7 @@ def _cpu_temp_wmi() -> str:
 
 # ── GPU vendor detection ──────────────────────────────────────────────────────
 
-_gpu_vendor_cache: str | None = None   # "amd" | "nvidia" | "intel" | "unknown"
+_gpu_vendor_cache: str | None = None  # "amd" | "nvidia" | "intel" | "unknown"
 
 
 def _gpu_vendor() -> str:
@@ -251,6 +270,7 @@ def _gpu_vendor() -> str:
 
 # ── AMD via pyadl (AMD Display Library — same SDK Adrenalin uses) ─────────────
 
+
 def _pyadl() -> str | None:
     """
     Query AMD GPU via pyadl — a Python wrapper for AMD's Display Library (ADL).
@@ -265,41 +285,48 @@ def _pyadl() -> str | None:
     """
     try:
         from pyadl import ADLManager
+
         devices = ADLManager.getInstance().getDevices()
         if not devices:
             return None
 
         def _safe(fn):
-            try: return fn()
-            except Exception: return None
+            try:
+                return fn()
+            except Exception:
+                return None
 
         lines = []
         any_useful = False  # Track whether we got ANY real sensor data
         for device in devices:
             raw_name = getattr(device, "adapterName", f"AMD GPU {device.adapterIndex}")
             # adapterName can return bytes on some systems — normalise to str
-            name = raw_name.decode("utf-8", errors="replace") if isinstance(raw_name, bytes) else str(raw_name)
+            name = (
+                raw_name.decode("utf-8", errors="replace")
+                if isinstance(raw_name, bytes)
+                else str(raw_name)
+            )
             name = name.strip()
 
             temp = _safe(device.getCurrentTemperature)  # °C
             core = _safe(device.getCurrentEngineClock)  # MHz
-            mem  = _safe(device.getCurrentMemoryClock)  # MHz
+            mem = _safe(device.getCurrentMemoryClock)  # MHz
             # getCurrentFanSpeed requires speedType arg on newer pyadl
-            fan  = _safe(lambda: device.getCurrentFanSpeed(1))  # 1 = percentage
+            fan = _safe(lambda: device.getCurrentFanSpeed(1))  # 1 = percentage
             if fan is None:
                 fan = _safe(device.getCurrentFanSpeed)  # try legacy no-arg form
-            load = _safe(device.getCurrentUsage)        # %
+            load = _safe(device.getCurrentUsage)  # %
 
             # If every sensor returned None, ADL can't talk to this GPU (e.g. RDNA3).
             # Return None so the fallback chain continues to amd-smi / WMI.
             if any(v is not None for v in (temp, core, mem, fan, load)):
                 any_useful = True
 
-            temp_str = f"{temp}°C"    if temp is not None else "n/a"
-            core_str = f"{core}MHz"   if core is not None else "n/a"
-            mem_str  = f"{mem}MHz"    if mem  is not None else "n/a"
-            fan_str  = f"{fan}%"      if fan  is not None else "n/a"
-            load_str = f"{load}%"     if load is not None else "n/a"
+            temp_str = f"{temp}°C" if temp is not None else "n/a"
+            core_str = f"{core}MHz" if core is not None else "n/a"
+            mem_str = f"{mem}MHz" if mem is not None else "n/a"
+            fan_str = f"{fan}%" if fan is not None else "n/a"
+            load_str = f"{load}%" if load is not None else "n/a"
 
             lines.append(
                 f"GPU: {name}\n"
@@ -320,7 +347,7 @@ def _pyadl() -> str | None:
 # ── AMD via amd-smi ───────────────────────────────────────────────────────────
 
 _amd_smi_path_cache: str | None = None
-_amd_smi_searched  = False
+_amd_smi_searched = False
 
 
 def _find_amd_smi() -> str | None:
@@ -334,7 +361,8 @@ def _find_amd_smi() -> str | None:
         return _amd_smi_path_cache
 
     _amd_smi_searched = True
-    import shutil, os
+    import os
+    import shutil
 
     # 1. Check PATH first (fastest)
     for name in ("amd-smi", "amd-smi.exe"):
@@ -369,7 +397,7 @@ def _find_amd_smi() -> str | None:
 
 
 _rocm_smi_path_cache: str | None = None
-_rocm_smi_searched  = False
+_rocm_smi_searched = False
 
 
 def _find_rocm_smi() -> str | None:
@@ -378,7 +406,8 @@ def _find_rocm_smi() -> str | None:
     if _rocm_smi_searched:
         return _rocm_smi_path_cache
     _rocm_smi_searched = True
-    import shutil, os
+    import os
+    import shutil
 
     for name in ("rocm-smi", "rocm-smi.exe"):
         if shutil.which(name):
@@ -405,8 +434,11 @@ def _rocm_smi() -> str | None:
             return None
         r = subprocess.run(
             [exe, "--showtemp", "--showuse", "--showclocks", "--showfan", "--json"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         if r.returncode != 0 or not r.stdout.strip():
             return None
@@ -415,13 +447,14 @@ def _rocm_smi() -> str | None:
         for gpu_id, metrics in data.items():
             if not isinstance(metrics, dict):
                 continue
-            temp  = metrics.get("Temperature (Sensor edge) (C)", metrics.get("Temperature (C)", "n/a"))
-            load  = metrics.get("GPU use (%)", "n/a")
-            clk   = metrics.get("sclk clock speed:", metrics.get("Current GFX Clock (MHz)", "n/a"))
-            fan   = metrics.get("Fan speed (%)", "n/a")
+            temp = metrics.get(
+                "Temperature (Sensor edge) (C)", metrics.get("Temperature (C)", "n/a")
+            )
+            load = metrics.get("GPU use (%)", "n/a")
+            clk = metrics.get("sclk clock speed:", metrics.get("Current GFX Clock (MHz)", "n/a"))
+            fan = metrics.get("Fan speed (%)", "n/a")
             lines.append(
-                f"GPU {gpu_id}:\n"
-                f"  Temp: {temp}°C  Load: {load}%  Clock: {clk}  Fan: {fan}%"
+                f"GPU {gpu_id}:\n  Temp: {temp}°C  Load: {load}%  Clock: {clk}  Fan: {fan}%"
             )
         return "\n".join(lines) if lines else None
     except Exception:
@@ -441,8 +474,11 @@ def _amd_smi() -> str | None:
         # Probe: if this fails, amd-smi isn't available
         r = subprocess.run(
             [exe, "metric", "--json"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         if r.returncode != 0 or not r.stdout.strip():
             return None
@@ -457,8 +493,11 @@ def _amd_smi() -> str | None:
         try:
             rs = subprocess.run(
                 [exe, "static", "--json"],
-                capture_output=True, text=True, timeout=8,
-                encoding="utf-8", errors="replace",
+                capture_output=True,
+                text=True,
+                timeout=8,
+                encoding="utf-8",
+                errors="replace",
             )
             if rs.returncode == 0 and rs.stdout.strip():
                 static = json.loads(rs.stdout)
@@ -466,8 +505,11 @@ def _amd_smi() -> str | None:
                     static = [static]
                 for i, g in enumerate(static):
                     asic = g.get("asic", g.get("gpu", {}))
-                    name = (asic.get("market_name") or asic.get("asic_serial")
-                            or g.get("gpu", {}).get("model", f"AMD GPU {i}"))
+                    name = (
+                        asic.get("market_name")
+                        or asic.get("asic_serial")
+                        or g.get("gpu", {}).get("model", f"AMD GPU {i}")
+                    )
                     names[i] = name
         except Exception:
             pass
@@ -478,34 +520,42 @@ def _amd_smi() -> str | None:
 
             # Temperature — field names vary by amd-smi version
             temp_block = gpu.get("temperature", gpu.get("Temperature", {}))
-            edge   = temp_block.get("edge", temp_block.get("Edge", temp_block.get("hotspot")))
-            junct  = temp_block.get("junction", temp_block.get("Junction", temp_block.get("Junction Temperature (C)")))
-            mem_t  = temp_block.get("memory", temp_block.get("Memory"))
+            edge = temp_block.get("edge", temp_block.get("Edge", temp_block.get("hotspot")))
+            junct = temp_block.get(
+                "junction", temp_block.get("Junction", temp_block.get("Junction Temperature (C)"))
+            )
+            mem_t = temp_block.get("memory", temp_block.get("Memory"))
 
             temp_parts = []
-            if edge   is not None: temp_parts.append(f"Edge {edge}°C")
-            if junct  is not None: temp_parts.append(f"Junction {junct}°C")
-            if mem_t  is not None: temp_parts.append(f"Mem {mem_t}°C")
+            if edge is not None:
+                temp_parts.append(f"Edge {edge}°C")
+            if junct is not None:
+                temp_parts.append(f"Junction {junct}°C")
+            if mem_t is not None:
+                temp_parts.append(f"Mem {mem_t}°C")
 
             # Usage / load
             use_block = gpu.get("usage", gpu.get("Usage", {}))
-            gfx_load  = use_block.get("gfx_activity", use_block.get("GFX Activity",
-                         use_block.get("GFX Usage (%)")))
+            gfx_load = use_block.get(
+                "gfx_activity", use_block.get("GFX Activity", use_block.get("GFX Usage (%)"))
+            )
 
             # Clocks
-            clk_block  = gpu.get("clock", gpu.get("Clock", {}))
-            gfx_clk    = clk_block.get("gfx_0", clk_block.get("GFX Clock",
-                          clk_block.get("gfx")))
+            clk_block = gpu.get("clock", gpu.get("Clock", {}))
+            gfx_clk = clk_block.get("gfx_0", clk_block.get("GFX Clock", clk_block.get("gfx")))
 
             # Fan
             fan_block = gpu.get("fan", gpu.get("Fan", {}))
-            fan_spd   = fan_block.get("speed", fan_block.get("Fan Speed (%)",
-                         fan_block.get("fan_speed_percentage")))
+            fan_spd = fan_block.get(
+                "speed", fan_block.get("Fan Speed (%)", fan_block.get("fan_speed_percentage"))
+            )
 
             # Power
             pwr_block = gpu.get("power", gpu.get("Power", {}))
-            pwr_val   = pwr_block.get("average_socket_power", pwr_block.get(
-                         "Average Socket Power (W)", pwr_block.get("current_socket_power")))
+            pwr_val = pwr_block.get(
+                "average_socket_power",
+                pwr_block.get("Average Socket Power (W)", pwr_block.get("current_socket_power")),
+            )
 
             def fs(v, unit=""):
                 return f"{v}{unit}" if v is not None else "n/a"
@@ -527,7 +577,7 @@ def _amd_smi() -> str | None:
 # ── NVIDIA via nvidia-smi ──────────────────────────────────────────────────────
 
 _nvidia_smi_path_cache: str | None = None
-_nvidia_smi_searched  = False
+_nvidia_smi_searched = False
 
 
 def _find_nvidia_smi() -> str | None:
@@ -540,7 +590,8 @@ def _find_nvidia_smi() -> str | None:
         return _nvidia_smi_path_cache
 
     _nvidia_smi_searched = True
-    import shutil, os
+    import os
+    import shutil
 
     # 1. Check PATH first
     if shutil.which("nvidia-smi"):
@@ -587,8 +638,11 @@ def _nvidia_smi() -> str | None:
         )
         r = subprocess.run(
             [exe, f"--query-gpu={query}", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=8,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=8,
+            encoding="utf-8",
+            errors="replace",
         )
         if r.returncode != 0 or not r.stdout.strip():
             return None
@@ -598,7 +652,9 @@ def _nvidia_smi() -> str | None:
             parts = [p.strip() for p in row.split(",")]
             if len(parts) < 10:
                 continue
-            name, temp, gpu_util, mem_util, core_clk, mem_clk, fan, power, vram_used, vram_total = parts[:10]
+            name, temp, gpu_util, mem_util, core_clk, mem_clk, fan, power, vram_used, vram_total = (
+                parts[:10]
+            )
 
             def fmt(v: str, unit: str = "") -> str:
                 return f"{v}{unit}" if v not in ("", "[N/A]", "N/A") else "n/a"
@@ -620,6 +676,7 @@ def _nvidia_smi() -> str | None:
 
 # ── HWiNFO64 shared memory (works for any GPU — AMD, NVIDIA, Intel) ──────────
 
+
 def _hwinfo_gpu() -> str | None:
     """
     Query GPU via HWiNFO64's shared memory interface.
@@ -628,6 +685,7 @@ def _hwinfo_gpu() -> str | None:
     """
     try:
         from kai.system.hwinfo import get_gpu_summary
+
         result = get_gpu_summary()
         return result  # None if unavailable
     except Exception:
@@ -636,13 +694,16 @@ def _hwinfo_gpu() -> str | None:
 
 # ── AMD GPU via /sys/class/hwmon (Linux kernel amdgpu driver — no ROCm needed) ─
 
+
 def _amd_hwmon_linux() -> str | None:
     """
     Read AMD GPU temps directly from the kernel hwmon interface.
     Works with the stock `amdgpu` driver — no ROCm or amd-smi required.
     Looks for hwmon dirs whose 'name' file contains 'amdgpu'.
     """
-    import os, glob
+    import glob
+    import os
+
     if _IS_WINDOWS:
         return None
     try:
@@ -668,12 +729,14 @@ def _amd_hwmon_linux() -> str | None:
                 label = _read(label_file) or f"temp{idx}"
                 val = _read(f"{hwmon_dir}/temp{idx}_input")
                 if val and val.isdigit():
-                    temp_parts.append(f"{label} {int(val)//1000}°C")
+                    temp_parts.append(f"{label} {int(val) // 1000}°C")
 
             # Load from GPU busy percent (lives in device/ subdir on amdgpu)
-            load = (_read(f"{hwmon_dir}/device/gpu_busy_percent")
-                    or _read(f"{hwmon_dir}/../gpu_busy_percent")
-                    or _read(f"{hwmon_dir}/gpu_busy_percent"))
+            load = (
+                _read(f"{hwmon_dir}/device/gpu_busy_percent")
+                or _read(f"{hwmon_dir}/../gpu_busy_percent")
+                or _read(f"{hwmon_dir}/gpu_busy_percent")
+            )
             load_str = f"{load}%" if load else "n/a"
 
             # Fan
@@ -682,14 +745,17 @@ def _amd_hwmon_linux() -> str | None:
 
             # Power (microwatts → W)
             pwr = _read(f"{hwmon_dir}/power1_average")
-            pwr_str = f"{int(pwr)//1_000_000}W" if pwr and pwr.isdigit() else "n/a"
+            pwr_str = f"{int(pwr) // 1_000_000}W" if pwr and pwr.isdigit() else "n/a"
 
             # GPU name: read PCI slot from uevent then query lspci
             gpu_name = "AMD GPU"
             uevent = _read(f"{hwmon_dir}/device/uevent") or ""
             slot = next(
-                (line.split("=", 1)[1].removeprefix("0000:") for line in uevent.splitlines()
-                 if line.startswith("PCI_SLOT_NAME=")),
+                (
+                    line.split("=", 1)[1].removeprefix("0000:")
+                    for line in uevent.splitlines()
+                    if line.startswith("PCI_SLOT_NAME=")
+                ),
                 None,
             )
             if slot:
@@ -716,6 +782,7 @@ def _amd_hwmon_linux() -> str | None:
 
 # ── GPU WMI fallback (AMD / Intel — no temps without amd-smi/nvidia-smi) ──────
 
+
 def _gpu_wmi_fallback() -> str | None:
     try:
         ps = (
@@ -739,6 +806,7 @@ def _gpu_wmi_fallback() -> str | None:
             # Check if pyadl is installed but ADL failed (RDNA3+ GPUs)
             try:
                 import pyadl as _pyadl_check  # noqa: F401,F811  (availability probe)
+
                 amd_smi_note = "  (ADL does not support this GPU — temp unavailable via WMI)"
             except ImportError:
                 amd_smi_note = "  (temp unavailable — run: pip install pyadl)"
@@ -748,7 +816,7 @@ def _gpu_wmi_fallback() -> str | None:
             amd_smi_note = "  (temp unavailable)"
         lines = []
         for g in d:
-            name    = g.get("Name", "Unknown")
+            name = g.get("Name", "Unknown")
             raw_vram = g.get("AdapterRAM") or 0
             # WMI AdapterRAM is uint32 — maxes out at ~4.29 GB.
             # If the value is exactly 4 GB (or suspiciously close to the uint32 ceiling),
@@ -759,8 +827,7 @@ def _gpu_wmi_fallback() -> str | None:
             else:
                 vram_str = f"{vram_gb} GB"
             lines.append(
-                f"GPU: {name}\n"
-                f"  3D Load: {util_str}  VRAM: {vram_str}  Temp: n/a{amd_smi_note}"
+                f"GPU: {name}\n  3D Load: {util_str}  VRAM: {vram_str}  Temp: n/a{amd_smi_note}"
             )
         return "\n".join(lines) if lines else None
     except Exception:

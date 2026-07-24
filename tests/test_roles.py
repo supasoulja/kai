@@ -1,5 +1,7 @@
 """Tests for the role→model map (kai/llm/roles.py, Part D / 3f)."""
+
 import os
+
 os.environ.setdefault("KAI_ENTRYPOINT", "test")
 
 import kai.config as cfg
@@ -21,11 +23,15 @@ def test_model_for_override(monkeypatch):
 
 
 def test_crew_model_for_precedence(monkeypatch):
-    monkeypatch.setattr(roles, "_load", lambda: {
-        "roles": {"crew": "granite4.1:3b"},
-        "crew": {"Otto": "qwen3.5:9b"},
-    })
-    assert roles.crew_model_for("Otto") == "qwen3.5:9b"   # per-agent override wins
+    monkeypatch.setattr(
+        roles,
+        "_load",
+        lambda: {
+            "roles": {"crew": "granite4.1:3b"},
+            "crew": {"Otto": "qwen3.5:9b"},
+        },
+    )
+    assert roles.crew_model_for("Otto") == "qwen3.5:9b"  # per-agent override wins
     assert roles.crew_model_for("Gus") == "granite4.1:3b"  # crew role default
     monkeypatch.setattr(roles, "_load", lambda: {})
     assert roles.crew_model_for("Gus") == roles.ROLE_MODELS["crew"]  # hard default

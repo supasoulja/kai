@@ -1,4 +1,5 @@
 """Thumbs up/down on a response — persisted and recorded to episodic memory."""
+
 from fastapi import APIRouter, HTTPException, Request
 
 from kai.api.models import FeedbackRequest

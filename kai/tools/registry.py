@@ -11,20 +11,24 @@ Alias learning:
   persists it to SQLite. Future schemas include alias names so the model can
   call either form — both route to the same function.
 """
+
 from __future__ import annotations
+
 import copy
 import difflib
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
+
 import kai.config as cfg
 from kai.llm.vecmath import cosine as _cosine
 
 
 class ToolRegistry:
     def __init__(self):
-        self._tools: dict[str, dict] = {}          # name → {fn, schema}
-        self._aliases: dict[str, str] = {}         # alias → real tool name
-        self._aliases_loaded: bool = False         # lazy-loaded after tools register
+        self._tools: dict[str, dict] = {}  # name → {fn, schema}
+        self._aliases: dict[str, str] = {}  # alias → real tool name
+        self._aliases_loaded: bool = False  # lazy-loaded after tools register
 
     # ── Alias persistence ─────────────────────────────────────────────────────
 
@@ -35,32 +39,42 @@ class ToolRegistry:
         self._aliases_loaded = True
         try:
             from kai.store.db import get_conn
+
             conn = get_conn()
             rows = conn.execute("SELECT alias, target FROM tool_aliases").fetchall()
             for alias, target in rows:
                 self._aliases[alias] = target  # filter stale entries at use-time
         except Exception:
             if cfg.DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+
+                traceback.print_exc()
 
     def _persist_alias(self, alias: str, target: str, similarity: float) -> None:
         try:
             from kai.store.db import get_conn
+
             conn = get_conn()
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO tool_aliases (alias, target, similarity, seen_count, created_at)
                 VALUES (?, ?, ?, 1, ?)
                 ON CONFLICT(alias) DO UPDATE SET seen_count = seen_count + 1
-            """, (alias, target, similarity, datetime.now().isoformat()))
+            """,
+                (alias, target, similarity, datetime.now().isoformat()),
+            )
             conn.commit()
         except Exception:
             if cfg.DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+
+                traceback.print_exc()
 
     # ── Alias learning ────────────────────────────────────────────────────────
 
-    def learn_alias(self, hallucinated_name: str, threshold: float = 0.55,
-                    args: dict | None = None) -> str | None:
+    def learn_alias(
+        self, hallucinated_name: str, threshold: float = 0.55, args: dict | None = None
+    ) -> str | None:
         """
         Find the closest real tool to hallucinated_name by string similarity.
         Prefers tools in the same namespace (same prefix before the dot).
@@ -99,33 +113,41 @@ class ToolRegistry:
         if best_name and best_score >= threshold:
             if not self._args_fit(best_name, args):
                 if cfg.DEBUG:
-                    print(f"[alias] rejected {hallucinated_name!r} → {best_name!r} "
-                          f"(score={best_score:.2f}) — args don't fit the target schema")
+                    print(
+                        f"[alias] rejected {hallucinated_name!r} → {best_name!r} "
+                        f"(score={best_score:.2f}) — args don't fit the target schema"
+                    )
                 return None
             self._aliases[hallucinated_name] = best_name
             self._persist_alias(hallucinated_name, best_name, best_score)
             if cfg.DEBUG:
-                print(f"[alias] learned: {hallucinated_name!r} → {best_name!r} "
-                      f"(score={best_score:.2f})")
+                print(
+                    f"[alias] learned: {hallucinated_name!r} → {best_name!r} "
+                    f"(score={best_score:.2f})"
+                )
             return best_name
 
         if cfg.DEBUG:
-            print(f"[alias] no match for {hallucinated_name!r} "
-                  f"(best={best_name!r}, score={best_score:.2f})")
+            print(
+                f"[alias] no match for {hallucinated_name!r} "
+                f"(best={best_name!r}, score={best_score:.2f})"
+            )
         return None
 
     def _args_fit(self, tool_name: str, args: dict | None) -> bool:
         """True when every provided argument name exists in the tool's schema."""
         if not args:
             return True
-        props = (self._tools[tool_name]["schema"]["function"]
-                 .get("parameters", {}).get("properties", {}))
+        props = (
+            self._tools[tool_name]["schema"]["function"].get("parameters", {}).get("properties", {})
+        )
         return all(k in props for k in args)
 
     # ── Alias schema helpers ──────────────────────────────────────────────────
 
-    def _alias_schemas(self, for_names: set[str] | None = None,
-                       exclude: set[str] | None = None) -> list[dict]:
+    def _alias_schemas(
+        self, for_names: set[str] | None = None, exclude: set[str] | None = None
+    ) -> list[dict]:
         """
         Build schemas for known aliases.
         If for_names is given, only include aliases whose target is in that set.
@@ -145,9 +167,17 @@ class ToolRegistry:
             schemas.append(schema)
         return schemas
 
-    def tool(self, name: str, description: str, parameters: dict | None = None,
-             *, category: str | None = None, label: str | None = None,
-             risk: str | None = None, category_description: str | None = None):
+    def tool(
+        self,
+        name: str,
+        description: str,
+        parameters: dict | None = None,
+        *,
+        category: str | None = None,
+        label: str | None = None,
+        risk: str | None = None,
+        category_description: str | None = None,
+    ):
         """
         Decorator to register a function as a tool.
 
@@ -178,6 +208,7 @@ class ToolRegistry:
         def deploy_check(env: str) -> str:
             ...
         """
+
         def decorator(fn: Callable) -> Callable:
             entry: dict[str, Any] = {
                 "fn": fn,
@@ -193,16 +224,25 @@ class ToolRegistry:
                 entry["risk"] = risk
             self._tools[name] = entry
             self._register_metadata(
-                name, category=category, label=label, risk=risk,
+                name,
+                category=category,
+                label=label,
+                risk=risk,
                 category_description=category_description,
             )
             return fn
+
         return decorator
 
     @staticmethod
-    def _register_metadata(name: str, *, category: str | None = None,
-                           label: str | None = None, risk: str | None = None,
-                           category_description: str | None = None) -> None:
+    def _register_metadata(
+        name: str,
+        *,
+        category: str | None = None,
+        label: str | None = None,
+        risk: str | None = None,
+        category_description: str | None = None,
+    ) -> None:
         """Reflect a tool's inline metadata into the central tables.
 
         This is what lets a tool ship its own category/label/risk instead of
@@ -240,8 +280,7 @@ class ToolRegistry:
         to hide tools a user has turned off in Settings.
         """
         self._ensure_aliases_loaded()
-        tools = [t["schema"] for n, t in self._tools.items()
-                 if not (exclude and n in exclude)]
+        tools = [t["schema"] for n, t in self._tools.items() if not (exclude and n in exclude)]
         return tools + self._alias_schemas(exclude=exclude)
 
     def schema_for(self, names, exclude: set[str] | None = None) -> list[dict]:
@@ -319,14 +358,17 @@ class ToolRegistry:
         for cat, info in _TOOL_CATEGORIES.items():
             tools = [
                 {"name": n, "label": self.label_for(n), "risk": self.risk_for(n)}
-                for n in info.get("tools", []) if n in registered
+                for n in info.get("tools", [])
+                if n in registered
             ]
             if tools:
-                groups.append({
-                    "category": cat,
-                    "description": info.get("description", ""),
-                    "tools": sorted(tools, key=lambda t: t["name"]),
-                })
+                groups.append(
+                    {
+                        "category": cat,
+                        "description": info.get("description", ""),
+                        "tools": sorted(tools, key=lambda t: t["name"]),
+                    }
+                )
         return groups
 
     # ── Tool metadata (labels + categories) ────────────────────────────────────
@@ -403,7 +445,7 @@ class ToolRegistry:
         )
         selected: set[str] = set()
         for cat_name, score in scores[:top_k]:
-            if score < 0.15:   # category doesn't match at all — stop collecting
+            if score < 0.15:  # category doesn't match at all — stop collecting
                 break
             selected.update(_TOOL_CATEGORIES.get(cat_name, {}).get("tools", []))
         if not selected:
@@ -412,7 +454,7 @@ class ToolRegistry:
         # fallback when a system tool returns an error code and the model needs to look it up.
         if "search.web" in self._tools:
             selected.add("search.web")
-        if exclude:                       # a turned-off tool is never offered
+        if exclude:  # a turned-off tool is never offered
             selected -= exclude
         if cfg.DEBUG:
             chosen = [(c, f"{s:.2f}") for c, s in scores[:top_k]]
@@ -436,8 +478,13 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "Is my PC okay? What is running hot? Hardware status and diagnostics."
         ),
         "tools": [
-            "system.info", "system.temps", "system.crashes", "system.gpu_crashes",
-            "system.game_crashes", "pc.event_logs", "pc.deep_scan",
+            "system.info",
+            "system.temps",
+            "system.crashes",
+            "system.gpu_crashes",
+            "system.game_crashes",
+            "pc.event_logs",
+            "pc.deep_scan",
         ],
     },
     "system_control": {
@@ -447,8 +494,11 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "Speed up PC, gaming time, pre-game prep, free up RAM and memory."
         ),
         "tools": [
-            "system.clear_temp_files", "system.run_disk_cleanup", "system.kill_process",
-            "system.create_restore_point", "system.repair_files",
+            "system.clear_temp_files",
+            "system.run_disk_cleanup",
+            "system.kill_process",
+            "system.create_restore_point",
+            "system.repair_files",
         ],
     },
     "startup_and_updates": {
@@ -457,7 +507,9 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "check for Windows updates, install updates, what is slowing my boot time."
         ),
         "tools": [
-            "pc.startup_programs", "system.disable_startup_program", "pc.windows_updates",
+            "pc.startup_programs",
+            "system.disable_startup_program",
+            "pc.windows_updates",
         ],
     },
     "disk_analysis": {
@@ -467,7 +519,10 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "disk usage breakdown by folder."
         ),
         "tools": [
-            "files.disk_usage", "files.find_large", "files.find_old", "files.recent",
+            "files.disk_usage",
+            "files.find_large",
+            "files.find_old",
+            "files.recent",
         ],
     },
     "file_operations": {
@@ -479,9 +534,17 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "then approved before they run), and review what file changes were made."
         ),
         "tools": [
-            "files.read", "files.write", "files.append", "files.edit", "files.list",
-            "sandbox.copy_to_workspace", "sandbox.propose_move", "sandbox.propose_delete",
-            "sandbox.propose_rename", "sandbox.approve", "sandbox.history",
+            "files.read",
+            "files.write",
+            "files.append",
+            "files.edit",
+            "files.list",
+            "sandbox.copy_to_workspace",
+            "sandbox.propose_move",
+            "sandbox.propose_delete",
+            "sandbox.propose_rename",
+            "sandbox.approve",
+            "sandbox.history",
         ],
     },
     "network": {
@@ -491,7 +554,10 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "diagnose high ping, latency, packet loss, full network diagnostic."
         ),
         "tools": [
-            "network.ping", "network.traceroute", "network.full_diagnostic", "pc.network_info",
+            "network.ping",
+            "network.traceroute",
+            "network.full_diagnostic",
+            "pc.network_info",
         ],
     },
     "search_and_info": {
@@ -513,10 +579,19 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "Search past conversation history. Self-reflection journal."
         ),
         "tools": [
-            "tree.save", "tree.browse", "tree.read", "tree.find",
-            "notes.save", "notes.search", "notes.list",
-            "memory.get_detail", "memory.search_history", "memory.recent_sessions",
-            "memory.reflect", "memory.read_reflections", "memory.sleep_notes",
+            "tree.save",
+            "tree.browse",
+            "tree.read",
+            "tree.find",
+            "notes.save",
+            "notes.search",
+            "notes.list",
+            "memory.get_detail",
+            "memory.search_history",
+            "memory.recent_sessions",
+            "memory.reflect",
+            "memory.read_reflections",
+            "memory.sleep_notes",
         ],
     },
     "workspace_and_code": {
@@ -525,7 +600,9 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "list allowed repositories, manage code workspace files."
         ),
         "tools": [
-            "workspace.git_clone", "workspace.git_pull", "workspace.git_list_allowed",
+            "workspace.git_clone",
+            "workspace.git_pull",
+            "workspace.git_list_allowed",
         ],
     },
     "docs_rag": {
@@ -543,7 +620,11 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "What am I working on, remind me of my goals, I finished that."
         ),
         "tools": [
-            "goals.create", "goals.list", "goals.update", "goals.complete", "goals.abandon",
+            "goals.create",
+            "goals.list",
+            "goals.update",
+            "goals.complete",
+            "goals.abandon",
         ],
     },
     "self_inspection": {
@@ -553,8 +634,11 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "and review what changed about me recently. How do you work, update your persona."
         ),
         "tools": [
-            "self.inspect", "self.list_tools", "self.check_persona",
-            "self.propose_persona_update", "self.apply_persona_update",
+            "self.inspect",
+            "self.list_tools",
+            "self.check_persona",
+            "self.propose_persona_update",
+            "self.apply_persona_update",
             "self.recent_changes",
         ],
     },
@@ -565,8 +649,11 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "and ask questions about what's saved in my study library."
         ),
         "tools": [
-            "study.search_papers", "study.search_books", "study.find_free",
-            "study.get_book_url", "study.ask_library",
+            "study.search_papers",
+            "study.search_books",
+            "study.find_free",
+            "study.get_book_url",
+            "study.ask_library",
         ],
     },
     "web_content": {
@@ -576,8 +663,12 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "library to refer back to and search later. "
             "Read this page, what does this URL say, grab that article, save this for me."
         ),
-        "tools": ["browser.read_page", "browser.screenshot",
-                  "research.fetch_url", "research.add_to_library"],
+        "tools": [
+            "browser.read_page",
+            "browser.screenshot",
+            "research.fetch_url",
+            "research.add_to_library",
+        ],
     },
     "containers": {
         "description": (
@@ -586,8 +677,12 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "start, stop, and delete them. Spin up a VM, make a container, tear it down."
         ),
         "tools": [
-            "lxc.list", "lxc.info", "lxc.create",
-            "lxc.start", "lxc.stop", "lxc.delete",
+            "lxc.list",
+            "lxc.info",
+            "lxc.create",
+            "lxc.start",
+            "lxc.stop",
+            "lxc.delete",
         ],
     },
     "media_understanding": {
@@ -606,91 +701,91 @@ _TOOL_CATEGORIES: dict[str, dict] = {
 # in sync with the registered tools — audit_metadata() / the tools test enforce
 # that every tool has both a label and a category.
 TOOL_LABELS: dict[str, str] = {
-    "system.info":          "Checking system stats",
-    "system.temps":         "Checking temperatures",
-    "system.crashes":       "Checking crash logs",
-    "system.gpu_crashes":   "Checking GPU crash history",
-    "system.game_crashes":  "Searching for game crash logs",
-    "pc.startup_programs":  "Checking startup programs",
-    "pc.event_logs":        "Scanning event logs",
-    "pc.network_info":      "Checking network",
-    "pc.windows_updates":   "Checking for updates",
-    "files.disk_usage":     "Analyzing disk usage",
-    "files.find_large":     "Finding large files",
-    "files.find_old":       "Finding old files",
-    "files.recent":         "Finding recent files",
-    "search.web":           "Searching the web",
-    "weather.current":      "Checking weather",
-    "notes.save":           "Saving a note",
-    "notes.search":         "Looking up notes",
-    "notes.list":           "Reading notes",
-    "time.now":             "Checking the time",
-    "network.ping":                  "Pinging host",
-    "network.traceroute":            "Tracing route",
-    "network.full_diagnostic":       "Running network diagnostic",
-    "pc.deep_scan":                  "Running full system scan (~2 min)",
-    "system.create_restore_point":   "Creating restore point",
-    "system.clear_temp_files":       "Clearing temp files",
-    "system.disable_startup_program":"Disabling startup program",
-    "system.run_disk_cleanup":       "Running disk cleanup",
-    "system.repair_files":           "Running system file repair (sfc /scannow)",
-    "system.kill_process":           "Killing process",
-    "files.read":                    "Reading file",
-    "files.list":                    "Listing directory",
-    "files.write":                   "Writing file",
-    "files.append":                  "Appending to file",
-    "files.edit":                    "Editing file",
-    "workspace.git_clone":           "Cloning repository",
-    "workspace.git_pull":            "Updating repository",
-    "workspace.git_list_allowed":    "Listing allowed repos",
-    "memory.get_detail":             "Reading full memory transcript",
-    "memory.search_history":         "Searching past conversations",
-    "memory.recent_sessions":        "Recalling recent sessions",
-    "memory.reflect":                "Writing a reflection",
-    "memory.read_reflections":       "Reading past reflections",
-    "memory.sleep_notes":            "Reading sleep journal",
-    "tree.save":                     "Filing a memory",
-    "tree.browse":                   "Browsing memory tree",
-    "tree.read":                     "Reading memory branch",
-    "tree.find":                     "Searching memory tree",
-    "docs.search":                   "Searching documents",
-    "docs.list":                     "Listing documents",
-    "self.inspect":                  "Reading my own source code",
-    "self.list_tools":               "Listing my tools",
-    "self.check_persona":            "Reviewing my self-knowledge",
-    "self.propose_persona_update":   "Drafting persona update",
-    "self.apply_persona_update":     "Updating persona",
-    "docs.delete":                   "Removing document",
-    "sandbox.copy_to_workspace":     "Copying file to workspace",
-    "sandbox.propose_move":          "Proposing file move",
-    "sandbox.propose_delete":        "Proposing file deletion",
-    "sandbox.propose_rename":        "Proposing file rename",
-    "sandbox.approve":               "Executing approved operation",
-    "sandbox.history":               "Checking sandbox history",
-    "goals.create":                  "Creating goal",
-    "goals.list":                    "Loading active goals",
-    "goals.update":                  "Updating goal progress",
-    "goals.complete":                "Completing goal",
-    "goals.abandon":                 "Abandoning goal",
+    "system.info": "Checking system stats",
+    "system.temps": "Checking temperatures",
+    "system.crashes": "Checking crash logs",
+    "system.gpu_crashes": "Checking GPU crash history",
+    "system.game_crashes": "Searching for game crash logs",
+    "pc.startup_programs": "Checking startup programs",
+    "pc.event_logs": "Scanning event logs",
+    "pc.network_info": "Checking network",
+    "pc.windows_updates": "Checking for updates",
+    "files.disk_usage": "Analyzing disk usage",
+    "files.find_large": "Finding large files",
+    "files.find_old": "Finding old files",
+    "files.recent": "Finding recent files",
+    "search.web": "Searching the web",
+    "weather.current": "Checking weather",
+    "notes.save": "Saving a note",
+    "notes.search": "Looking up notes",
+    "notes.list": "Reading notes",
+    "time.now": "Checking the time",
+    "network.ping": "Pinging host",
+    "network.traceroute": "Tracing route",
+    "network.full_diagnostic": "Running network diagnostic",
+    "pc.deep_scan": "Running full system scan (~2 min)",
+    "system.create_restore_point": "Creating restore point",
+    "system.clear_temp_files": "Clearing temp files",
+    "system.disable_startup_program": "Disabling startup program",
+    "system.run_disk_cleanup": "Running disk cleanup",
+    "system.repair_files": "Running system file repair (sfc /scannow)",
+    "system.kill_process": "Killing process",
+    "files.read": "Reading file",
+    "files.list": "Listing directory",
+    "files.write": "Writing file",
+    "files.append": "Appending to file",
+    "files.edit": "Editing file",
+    "workspace.git_clone": "Cloning repository",
+    "workspace.git_pull": "Updating repository",
+    "workspace.git_list_allowed": "Listing allowed repos",
+    "memory.get_detail": "Reading full memory transcript",
+    "memory.search_history": "Searching past conversations",
+    "memory.recent_sessions": "Recalling recent sessions",
+    "memory.reflect": "Writing a reflection",
+    "memory.read_reflections": "Reading past reflections",
+    "memory.sleep_notes": "Reading sleep journal",
+    "tree.save": "Filing a memory",
+    "tree.browse": "Browsing memory tree",
+    "tree.read": "Reading memory branch",
+    "tree.find": "Searching memory tree",
+    "docs.search": "Searching documents",
+    "docs.list": "Listing documents",
+    "self.inspect": "Reading my own source code",
+    "self.list_tools": "Listing my tools",
+    "self.check_persona": "Reviewing my self-knowledge",
+    "self.propose_persona_update": "Drafting persona update",
+    "self.apply_persona_update": "Updating persona",
+    "docs.delete": "Removing document",
+    "sandbox.copy_to_workspace": "Copying file to workspace",
+    "sandbox.propose_move": "Proposing file move",
+    "sandbox.propose_delete": "Proposing file deletion",
+    "sandbox.propose_rename": "Proposing file rename",
+    "sandbox.approve": "Executing approved operation",
+    "sandbox.history": "Checking sandbox history",
+    "goals.create": "Creating goal",
+    "goals.list": "Loading active goals",
+    "goals.update": "Updating goal progress",
+    "goals.complete": "Completing goal",
+    "goals.abandon": "Abandoning goal",
     # ── Backfilled: newer tools that previously had no UI label ──
-    "audio.transcribe":              "Transcribing audio",
-    "browser.read_page":             "Reading web page",
-    "browser.screenshot":            "Taking screenshot",
-    "research.fetch_url":            "Fetching URL",
-    "research.add_to_library":       "Filing page to library",
-    "self.recent_changes":           "Reviewing recent changes",
-    "study.search_papers":           "Searching papers",
-    "study.search_books":            "Searching books",
-    "study.find_free":               "Finding a free copy",
-    "study.get_book_url":            "Getting book link",
-    "study.ask_library":             "Asking the study library",
-    "vision.describe":               "Looking at the image",
-    "lxc.list":                      "Listing containers",
-    "lxc.info":                      "Checking container status",
-    "lxc.create":                    "Creating container",
-    "lxc.start":                     "Starting container",
-    "lxc.stop":                      "Stopping container",
-    "lxc.delete":                    "Deleting container",
+    "audio.transcribe": "Transcribing audio",
+    "browser.read_page": "Reading web page",
+    "browser.screenshot": "Taking screenshot",
+    "research.fetch_url": "Fetching URL",
+    "research.add_to_library": "Filing page to library",
+    "self.recent_changes": "Reviewing recent changes",
+    "study.search_papers": "Searching papers",
+    "study.search_books": "Searching books",
+    "study.find_free": "Finding a free copy",
+    "study.get_book_url": "Getting book link",
+    "study.ask_library": "Asking the study library",
+    "vision.describe": "Looking at the image",
+    "lxc.list": "Listing containers",
+    "lxc.info": "Checking container status",
+    "lxc.create": "Creating container",
+    "lxc.start": "Starting container",
+    "lxc.stop": "Stopping container",
+    "lxc.delete": "Deleting container",
 }
 
 
@@ -706,28 +801,28 @@ _RISK_DEFAULT = "safe"
 _RISK_TIERS = {"safe", "caution", "destructive"}  # valid inline risk values (see tool())
 _TOOL_RISK: dict[str, str] = {
     # ── destructive: irreversible, or heavy enough the user should opt in ──
-    "pc.deep_scan":                  "destructive",  # ~2 min full scan
-    "system.clear_temp_files":       "destructive",
-    "system.run_disk_cleanup":       "destructive",
-    "system.create_restore_point":   "destructive",
-    "system.repair_files":           "destructive",
-    "system.disable_startup_program":"destructive",
-    "system.kill_process":           "destructive",  # ends a running process
-    "lxc.delete":                    "destructive",  # tears down an instance + storage
-    "docs.delete":                   "destructive",  # removes an indexed document
-    "self.apply_persona_update":     "destructive",  # rewrites Kai's OWN identity —
+    "pc.deep_scan": "destructive",  # ~2 min full scan
+    "system.clear_temp_files": "destructive",
+    "system.run_disk_cleanup": "destructive",
+    "system.create_restore_point": "destructive",
+    "system.repair_files": "destructive",
+    "system.disable_startup_program": "destructive",
+    "system.kill_process": "destructive",  # ends a running process
+    "lxc.delete": "destructive",  # tears down an instance + storage
+    "docs.delete": "destructive",  # removes an indexed document
+    "self.apply_persona_update": "destructive",  # rewrites Kai's OWN identity —
     # self-modification must never apply silently; gate it behind explicit user OK.
     # (Full fix: a diff-preview window — see docs/BACKLOG.md top-priority item.)
     # ── caution: real changes, but reversible ──
-    "files.write":                   "caution",
-    "files.edit":                    "caution",
-    "files.append":                  "caution",
-    "lxc.create":                    "caution",
-    "lxc.start":                     "caution",
-    "lxc.stop":                      "caution",
-    "workspace.git_clone":           "caution",
-    "workspace.git_pull":            "caution",
-    "research.add_to_library":       "caution",  # writes a doc to the RAG library (reversible via docs.delete)
+    "files.write": "caution",
+    "files.edit": "caution",
+    "files.append": "caution",
+    "lxc.create": "caution",
+    "lxc.start": "caution",
+    "lxc.stop": "caution",
+    "workspace.git_clone": "caution",
+    "workspace.git_pull": "caution",
+    "research.add_to_library": "caution",  # writes a doc to the RAG library (reversible via docs.delete)
 }
 
 
@@ -756,8 +851,7 @@ def _build_schema(name: str, description: str, parameters: dict) -> dict:
             "parameters": {
                 "type": "object",
                 "properties": clean_props,
-                "required": [k for k, v in parameters.items()
-                             if v.get("required", False)],
+                "required": [k for k, v in parameters.items() if v.get("required", False)],
             },
         },
     }

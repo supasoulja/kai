@@ -8,13 +8,15 @@ covers either. We detect whichever client is installed at call time.
 Linux only. If no client is found, every tool returns a helpful install hint
 instead of an error — the model should relay that, not claim a failure.
 """
+
 from __future__ import annotations
+
 import json
 import shutil
 import subprocess
 
-from kai.tools.registry import registry
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools.registry import registry
 
 # Default image when the caller doesn't name one. Ubuntu LTS is the safe pick
 # that exists on both the LXD (`ubuntu:`) and Incus (`images:`) remotes.
@@ -56,8 +58,11 @@ def _run(args: list[str], timeout: int = 60) -> tuple[bool, str]:
     try:
         r = subprocess.run(
             [client, *args],
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
         )
         out = (r.stdout or "").strip()
         err = (r.stderr or "").strip()
@@ -95,8 +100,7 @@ def _run_checked(args: list[str], timeout: int = 60) -> str:
 def _guard() -> str | None:
     """Return an error message if containers can't be managed here, else None."""
     if _IS_WINDOWS:
-        return ("Container management is Linux-only (LXD/Incus). "
-                "This machine is running Windows.")
+        return "Container management is Linux-only (LXD/Incus). This machine is running Windows."
     if not _find_client():
         return _no_client_msg()
     return None
@@ -136,16 +140,19 @@ def list_instances_data() -> list[dict]:
                     break
             if ipv4:
                 break
-        instances.append({
-            "name": inst.get("name", "?"),
-            "status": (inst.get("status") or "Unknown"),
-            "type": inst.get("type", "container"),
-            "ipv4": ipv4,
-        })
+        instances.append(
+            {
+                "name": inst.get("name", "?"),
+                "status": (inst.get("status") or "Unknown"),
+                "type": inst.get("type", "container"),
+                "ipv4": ipv4,
+            }
+        )
     return instances
 
 
 # ── List / inspect ──────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="lxc.list",
@@ -180,6 +187,7 @@ def instance_info(name: str) -> str:
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="lxc.create",

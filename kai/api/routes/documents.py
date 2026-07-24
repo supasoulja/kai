@@ -1,4 +1,5 @@
 """Document RAG — upload (extract/chunk/embed), list, and delete documents."""
+
 import asyncio
 import logging
 
@@ -28,7 +29,7 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):  # 
     if content_length and int(content_length) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+            detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
         )
 
     uid = uid_for(request)
@@ -54,7 +55,7 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):  # 
                 tmp_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+                    detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
                 )
             tmp.write(chunk)
         tmp_path = Path(tmp.name)
@@ -64,8 +65,11 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):  # 
         # Text extraction + chunking + embedding is heavy, blocking work — run it
         # off the event loop so it can't freeze in-flight chat streaming.
         meta = await asyncio.to_thread(
-            _docs.ingest, tmp_path, embed_fn=embed_fn,
-            original_name=file.filename, user_id=uid,
+            _docs.ingest,
+            tmp_path,
+            embed_fn=embed_fn,
+            original_name=file.filename,
+            user_id=uid,
         )
 
         # Inject the upload as a message in the conversation history
@@ -84,7 +88,9 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):  # 
     except Exception:
         # Log the real error server-side; never expose library tracebacks to client
         _log.exception("Document ingestion failed")
-        raise HTTPException(status_code=500, detail="Document ingestion failed. Check the server log for details.") from None
+        raise HTTPException(
+            status_code=500, detail="Document ingestion failed. Check the server log for details."
+        ) from None
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -92,6 +98,7 @@ async def upload_doc(file: UploadFile = File(...), request: Request = None):  # 
 @router.get("/docs/list")
 async def list_docs(request: Request):
     from kai.memory import documents as _docs
+
     uid = uid_for(request)
     return _docs.list_documents(user_id=uid)
 
@@ -99,6 +106,7 @@ async def list_docs(request: Request):
 @router.delete("/docs/{doc_id}")
 async def delete_doc(doc_id: str, request: Request):
     from kai.memory import documents as _docs
+
     uid = uid_for(request)
     ok = _docs.delete_document(doc_id, user_id=uid)
     if not ok:

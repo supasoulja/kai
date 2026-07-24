@@ -5,20 +5,21 @@ Usage:
     python cli.py --debug
     python cli.py --mode thinking   (modes: thinking | normal | creative | crazy)
 """
+
 import argparse
 import os
 import sys
 
 import kai.config as cfg
 from kai.core import bootstrap
+from kai.core import trace as trace_log
 from kai.core.brain import Brain
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
 from kai.tools import registry as tool_registry
-from kai.core import trace as trace_log
-
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
+
 
 def check_ollama(ollama: OllamaClient) -> bool:
     if not ollama.is_alive():
@@ -43,16 +44,15 @@ def startup_report(memory: MemoryManager, model: str) -> str:
     """Build the brief status line shown on launch."""
     from kai.core.sleep import load_welcome_back
 
-    facts  = memory.list_facts()
+    facts = memory.list_facts()
     recent = memory.recent_episodes(limit=1)
-    rules  = memory.list_rules()
+    rules = memory.list_rules()
 
     name = next((f.value for f in facts if f.key == "user_name"), None)
     greeting = f"Hey {name}." if name else "Hey."
 
     last_session = (
-        f"Last seen: {recent[0].timestamp.strftime('%b %d')}"
-        if recent else "First session."
+        f"Last seen: {recent[0].timestamp.strftime('%b %d')}" if recent else "First session."
     )
 
     report = (
@@ -137,15 +137,16 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
 
     elif command == ":models":
         from kai.llm import models as _models
+
         all_models = _models.list_models()
         active_id = brain.model
         print("  Configured models:")
         for m in all_models:
             marker = " *" if m["ollama_id"] == active_id else "  "
-            think  = " (think)" if m["think"] else ""
-            tag    = " [built-in]" if m.get("builtin") else ""
+            think = " (think)" if m["think"] else ""
+            tag = " [built-in]" if m.get("builtin") else ""
             print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
-        print(f"\n  Switch with :model <name>")
+        print("\n  Switch with :model <name>")
 
     elif command == ":mode":
         key = arg.strip().lower()
@@ -155,7 +156,9 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
                 memory.set_fact("gen_preset", key, source="user_setting")
             except Exception:
                 pass
-            print(f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})")
+            print(
+                f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})"
+            )
         else:
             print(f"  Usage: :mode <{' | '.join(cfg.GEN_PRESETS)}>")
 
@@ -176,14 +179,17 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
                 pass
             note = ""
             if r["model"] and not r["available"]:
-                note = (f"  (not installed — ollama pull {r['model']}; "
-                        "falling back to main model + thinking)")
+                note = (
+                    f"  (not installed — ollama pull {r['model']}; "
+                    "falling back to main model + thinking)"
+                )
             print(f"  Tool level: {r['label']}{note}")
         else:
             print(f"  Usage: :toollevel <{' | '.join(cfg.TOOL_MODEL_LEVELS)}>")
 
     elif command == ":model":
         from kai.llm import models as _models
+
         entry = _models.get_model(arg.strip())
         if entry:
             brain.model = entry["ollama_id"]
@@ -195,6 +201,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
 
     elif command == ":flow":
         from kai.core import flow as _flow
+
         tid = arg.strip()
         if not tid:
             turns = _flow.recent_turns(limit=5)
@@ -204,6 +211,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
                 tid = turns[0]["trace_id"]
                 print("  Recent turns (showing the newest — :flow <id> for older):")
                 from datetime import datetime as _dt
+
                 for t in turns:
                     when = _dt.fromtimestamp(t["ts"]).strftime("%H:%M:%S")
                     print(f"    {t['trace_id']}  {when}  {t['steps']:3d} steps  {t['input']!r}")
@@ -216,21 +224,22 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
                 kind = s.pop("kind", "?")
                 s.pop("ts", None)
                 detail = "  ".join(
-                    f"{k}={str(v)[:160]!r}" for k, v in s.items()
-                    if v not in (None, "", "none")
+                    f"{k}={str(v)[:160]!r}" for k, v in s.items() if v not in (None, "", "none")
                 )
                 print(f"  [{kind}] {detail}")
 
     elif command == ":flowlive":
         global _flow_live_tap
         from kai.core import flow as _flow
+
         if _flow_live_tap is None:
+
             def _tap(tid, kind, data):
                 detail = "  ".join(
-                    f"{k}={str(v)[:100]!r}" for k, v in data.items()
-                    if v not in (None, "", "none")
+                    f"{k}={str(v)[:100]!r}" for k, v in data.items() if v not in (None, "", "none")
                 )
                 print(f"\n  ⚡[{kind}] {detail}")
+
             _flow_live_tap = _tap
             _flow.subscribe(_tap)
             print("  Live flow ON — every internal step prints as it happens. :flowlive to stop.")
@@ -246,9 +255,11 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         else:
             for e in entries:
                 tools = ", ".join(e.tool_calls) if e.tool_calls else "none"
-                print(f"  [{e.trace_id}] {e.timestamp[:19]}  {e.elapsed_ms}ms  "
-                      f"model={e.model.split(':')[0]}  tools=[{tools}]  "
-                      f"ctx={e.context_len}ch  resp={e.response_len}ch")
+                print(
+                    f"  [{e.trace_id}] {e.timestamp[:19]}  {e.elapsed_ms}ms  "
+                    f"model={e.model.split(':')[0]}  tools=[{tools}]  "
+                    f"ctx={e.context_len}ch  resp={e.response_len}ch"
+                )
                 if cfg.DEBUG:
                     print(f"    q: {e.user_input[:80]}")
 
@@ -265,8 +276,9 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         _show_vector_stats()
 
     elif command == ":sleep":
-        from kai.core.sleep import load_welcome_back
         from kai.config import MEMORY_DIR
+        from kai.core.sleep import load_welcome_back
+
         wb = load_welcome_back()
         if wb:
             print(f"\n  [Pending welcome-back note]\n  {wb}\n")
@@ -296,8 +308,8 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
 
 
 def _show_memory(memory: MemoryManager) -> None:
-    facts  = memory.list_facts()
-    rules  = memory.list_rules()
+    facts = memory.list_facts()
+    rules = memory.list_rules()
     recent = memory.recent_episodes(limit=5)
 
     print("\n── Semantic Facts ──")
@@ -429,12 +441,17 @@ def _show_vector_stats() -> None:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     os.environ.setdefault("KAI_ENTRYPOINT", "cli")
     parser = argparse.ArgumentParser(description="Kai — local AI agent")
-    parser.add_argument("--debug",  action="store_true", help="Enable debug output")
-    parser.add_argument("--mode", choices=list(cfg.GEN_PRESETS), default=cfg.DEFAULT_PRESET,
-                        help="Generation mode: thinking | normal | creative | crazy")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument(
+        "--mode",
+        choices=list(cfg.GEN_PRESETS),
+        default=cfg.DEFAULT_PRESET,
+        help="Generation mode: thinking | normal | creative | crazy",
+    )
     args = parser.parse_args()
 
     if args.debug:
@@ -455,21 +472,31 @@ def main() -> None:
         sys.exit(1)
 
     # ── Fast CPU embedding ────────────────────────────────────────────────────
-    from kai.llm.embed import embed as fast_embed, warm_up as _warm_embed
+    from kai.llm.embed import embed as fast_embed
+    from kai.llm.embed import warm_up as _warm_embed
+
     _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
 
     # ── Initialize memory + identity ───────────────────────────────────────────
-    memory   = MemoryManager(embed_fn=fast_embed)
-    bootstrap.run_migrations_and_seed()   # migrate stale keys + seed procedural rules
+    memory = MemoryManager(embed_fn=fast_embed)
+    bootstrap.run_migrations_and_seed()  # migrate stale keys + seed procedural rules
 
     # ── Initialize brain ───────────────────────────────────────────────────────
     from kai.skills import build_skill_registry
-    brain = Brain(memory=memory, model=active_model, ollama=ollama,
-                  tool_registry=tool_registry,
-                  skill_registry=build_skill_registry(tool_registry))
+
+    brain = Brain(
+        memory=memory,
+        model=active_model,
+        ollama=ollama,
+        tool_registry=tool_registry,
+        skill_registry=build_skill_registry(tool_registry),
+    )
     # Apply generation mode: CLI flag overrides the saved preference.
-    _preset = args.mode if args.mode != cfg.DEFAULT_PRESET else (
-        memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET)
+    _preset = (
+        args.mode
+        if args.mode != cfg.DEFAULT_PRESET
+        else (memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET)
+    )
     if _preset not in cfg.GEN_PRESETS:
         _preset = cfg.DEFAULT_PRESET
     brain.apply_preset(_preset)
@@ -485,12 +512,14 @@ def main() -> None:
 
     # ── Upgrade awareness ──────────────────────────────────────────────────────
     from kai.system.upgrade import check_for_upgrade
+
     upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
         print(f"\n  [upgrade] {upgrade_msg[:100]}")
 
     # Register shutdown hook: sleep cycle + HQ re-embed
     import atexit
+
     atexit.register(lambda: bootstrap.run_shutdown(ollama, [brain]))
 
     # ── Startup report ─────────────────────────────────────────────────────────
@@ -545,6 +574,7 @@ def main() -> None:
             print()  # newline after partial output
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
             print(f"[!] Error: {e}\n")
 

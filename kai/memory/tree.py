@@ -8,70 +8,70 @@ coarse filter, vector search within it is the fine filter.
 Empty folders cost nothing. Missing folders cost judgment.
 """
 
-import sqlite3                           # standard library — Python's built-in database driver
-import threading                         # thread-local connection cache (see _conn)
-import time                              # for unix timestamps on node creation/update
-import numpy as np                       # numerical arrays — used to store and compare embeddings
-from pathlib import Path                 # cleaner file path handling than raw strings
-from dataclasses import dataclass, field # dataclass auto-generates __init__, __repr__, etc.
-from typing import Optional              # type hint for values that might be None
+import sqlite3  # standard library — Python's built-in database driver
+import threading  # thread-local connection cache (see _conn)
+import time  # for unix timestamps on node creation/update
+from dataclasses import dataclass, field  # dataclass auto-generates __init__, __repr__, etc.
+from pathlib import Path  # cleaner file path handling than raw strings
 
+import numpy as np  # numerical arrays — used to store and compare embeddings
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-
 # Runtime data lives outside the package — see kai/config.py (var/tree/{user_id}.db).
 from kai.config import TREE_DIR as _TREE_DIR
 
 # These path prefixes bypass the scoring equation entirely — always surface first.
 # A node is hardcoded if its path starts with any of these strings.
 HARDCODED_PREFIXES = {
-    "user/health",          # medical conditions, allergies — never let recency bury these
+    "user/health",  # medical conditions, allergies — never let recency bury these
     "user/identity/hardware",  # GPU/CPU/RAM — rarely changes, always relevant to system tools
-    "user/identity/profession", # stuntman vs office worker changes how Kai reads everything
-    "user/identity/critical",   # catch-all for anything the user explicitly pins
+    "user/identity/profession",  # stuntman vs office worker changes how Kai reads everything
+    "user/identity/critical",  # catch-all for anything the user explicitly pins
 }
 
 
 # ─── Node dataclass ───────────────────────────────────────────────────────────
 
-@dataclass                               # @dataclass auto-writes __init__ from the fields below
+
+@dataclass  # @dataclass auto-writes __init__ from the fields below
 class Node:
     """One memory node. Conceptually a file in the tree. Stored as a DB row."""
 
-    path: str                            # full address: "user/preferences/gaming/fps"
-    value: str                           # the fact itself: "144hz minimum, competitive"
+    path: str  # full address: "user/preferences/gaming/fps"
+    value: str  # the fact itself: "144hz minimum, competitive"
 
-    confidence: float = 0.5             # 0.0 = pure guess, 1.0 = user stated explicitly
-    importance: float = 0.5             # 0.0 = trivial, 1.0 = critical to judgment
-    specificity: float = 0.5            # 0.0 = broad claim, 1.0 = precise detail
-    source: str = "inferred"            # how we learned it: "stated" | "inferred" | "pattern"
-    frequency: int = 1                  # times this node has been confirmed or queried
-    decays: bool = True                 # False = recency never penalizes (hardware, medical)
-    last_updated: float = field(        # field() lets us set a dynamic default
-        default_factory=time.time       # default_factory is called at creation time, not import time
+    confidence: float = 0.5  # 0.0 = pure guess, 1.0 = user stated explicitly
+    importance: float = 0.5  # 0.0 = trivial, 1.0 = critical to judgment
+    specificity: float = 0.5  # 0.0 = broad claim, 1.0 = precise detail
+    source: str = "inferred"  # how we learned it: "stated" | "inferred" | "pattern"
+    frequency: int = 1  # times this node has been confirmed or queried
+    decays: bool = True  # False = recency never penalizes (hardware, medical)
+    last_updated: float = field(  # field() lets us set a dynamic default
+        default_factory=time.time  # default_factory is called at creation time, not import time
     )
-    domain: str = ""                    # comma-separated tags: "gaming,hardware" or ""
-    hardcoded_type: bool = False        # True = skip scoring, always surface at the top
-    embedding: Optional[np.ndarray] = None  # 384-dim vector; None until embed runs
+    domain: str = ""  # comma-separated tags: "gaming,hardware" or ""
+    hardcoded_type: bool = False  # True = skip scoring, always surface at the top
+    embedding: np.ndarray | None = None  # 384-dim vector; None until embed runs
 
-    @property                           # @property turns a method into a readable attribute
+    @property  # @property turns a method into a readable attribute
     def name(self) -> str:
         """The leaf name — last segment of the path."""
-        return self.path.split("/")[-1] # split on slash, take the last piece
+        return self.path.split("/")[-1]  # split on slash, take the last piece
 
     @property
     def parent_path(self) -> str:
         """The path one level up. Empty string if this is a root-level node."""
-        parts = self.path.split("/")            # ["user", "preferences", "gaming", "fps"]
+        parts = self.path.split("/")  # ["user", "preferences", "gaming", "fps"]
         return "/".join(parts[:-1]) if len(parts) > 1 else ""  # drop the last segment
 
     @property
     def depth(self) -> int:
         """How many levels deep. "user/identity/profession" is depth 3."""
-        return len(self.path.split("/"))        # count the slash-separated segments
+        return len(self.path.split("/"))  # count the slash-separated segments
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
+
 
 def _db_path(user_id: str) -> Path:
     """Return the path to this user's tree database file."""
@@ -85,22 +85,22 @@ def delete_user_db(user_id) -> None:
     Used by store.users.delete_user so account deletion wipes per-user files,
     not just the main DB rows. Best-effort: missing files are ignored.
     """
-    _close(user_id)          # evict the cached connection so the file can be unlinked
+    _close(user_id)  # evict the cached connection so the file can be unlinked
     base = _TREE_DIR / f"{user_id}.db"
     for p in (base, base.with_suffix(".db-wal"), base.with_suffix(".db-shm")):
         try:
             p.unlink(missing_ok=True)
         except Exception:
-            pass             # e.g. kai/memory/tree/1.db
+            pass  # e.g. kai/memory/tree/1.db
 
 
 def _connect(user_id: str) -> sqlite3.Connection:
     """Open (or create) the database for this user and return a connection."""
     conn = sqlite3.connect(_db_path(user_id))  # opens the file; creates it if missing
-    conn.row_factory = sqlite3.Row             # makes rows dict-like: row["path"] instead of row[0]
-    conn.execute("PRAGMA journal_mode=WAL")    # WAL mode: reads don't block writes
-    conn.execute("PRAGMA busy_timeout=5000")   # wait up to 5s if another process holds the lock
-    _init(conn)                                # create the table and index on first run
+    conn.row_factory = sqlite3.Row  # makes rows dict-like: row["path"] instead of row[0]
+    conn.execute("PRAGMA journal_mode=WAL")  # WAL mode: reads don't block writes
+    conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if another process holds the lock
+    _init(conn)  # create the table and index on first run
     return conn
 
 
@@ -163,13 +163,13 @@ def _init(conn: sqlite3.Connection) -> None:
     """)
     # A second index on path lets SQLite do fast prefix scans for subtree queries
     conn.execute("CREATE INDEX IF NOT EXISTS idx_path ON nodes(path)")
-    conn.commit()   # flush the schema changes to disk
+    conn.commit()  # flush the schema changes to disk
 
 
 def _row_to_node(row: sqlite3.Row) -> Node:
     """Convert a raw database row back into a typed Node object."""
     emb = None
-    if row["embedding"]:                                        # embedding column may be NULL
+    if row["embedding"]:  # embedding column may be NULL
         emb = np.frombuffer(row["embedding"], dtype=np.float32)  # raw bytes → 384-dim float array
     return Node(
         path=row["path"],
@@ -179,9 +179,9 @@ def _row_to_node(row: sqlite3.Row) -> Node:
         specificity=row["specificity"],
         source=row["source"],
         frequency=row["frequency"],
-        decays=bool(row["decays"]),               # SQLite INTEGER → Python bool
+        decays=bool(row["decays"]),  # SQLite INTEGER → Python bool
         last_updated=row["last_updated"],
-        domain=row["domain"] or "",               # or "" handles NULL domain
+        domain=row["domain"] or "",  # or "" handles NULL domain
         hardcoded_type=bool(row["hardcoded_type"]),
         embedding=emb,
     )
@@ -195,19 +195,21 @@ def _is_hardcoded(path: str) -> bool:
 
 # ─── Write ────────────────────────────────────────────────────────────────────
 
+
 def write(user_id: str, node: Node) -> None:
     """
     Insert a new node or replace an existing one at the same path.
     Automatically flags hardcoded_type based on path prefix.
     """
     node.hardcoded_type = _is_hardcoded(node.path)  # set flag from path, not caller
-    node.last_updated = time.time()                  # always stamp the write time
+    node.last_updated = time.time()  # always stamp the write time
 
     # Convert numpy array to raw bytes for SQLite BLOB storage
     emb_bytes = node.embedding.tobytes() if node.embedding is not None else None
 
     with _conn(user_id) as conn:  # "with" = context manager; auto-commits on exit
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(path) DO UPDATE SET   -- upsert: update every field if path exists
                 value          = excluded.value,       -- "excluded" = the row we tried to insert
@@ -221,15 +223,22 @@ def write(user_id: str, node: Node) -> None:
                 domain         = excluded.domain,
                 hardcoded_type = excluded.hardcoded_type,
                 embedding      = excluded.embedding
-        """, (
-            node.path, node.value, node.confidence, node.importance,
-            node.specificity, node.source, node.frequency,
-            int(node.decays),           # bool → INTEGER for SQLite
-            node.last_updated,
-            node.domain,
-            int(node.hardcoded_type),   # bool → INTEGER for SQLite
-            emb_bytes,
-        ))
+        """,
+            (
+                node.path,
+                node.value,
+                node.confidence,
+                node.importance,
+                node.specificity,
+                node.source,
+                node.frequency,
+                int(node.decays),  # bool → INTEGER for SQLite
+                node.last_updated,
+                node.domain,
+                int(node.hardcoded_type),  # bool → INTEGER for SQLite
+                emb_bytes,
+            ),
+        )
 
 
 def increment_frequency(user_id: str, path: str) -> None:
@@ -237,7 +246,7 @@ def increment_frequency(user_id: str, path: str) -> None:
     with _conn(user_id) as conn:
         conn.execute(
             "UPDATE nodes SET frequency = frequency + 1 WHERE path = ?", (path,)
-        )   # SQL UPDATE modifies in-place; no need to read-then-write
+        )  # SQL UPDATE modifies in-place; no need to read-then-write
 
 
 def update_embedding(user_id: str, path: str, embedding: np.ndarray) -> None:
@@ -245,19 +254,21 @@ def update_embedding(user_id: str, path: str, embedding: np.ndarray) -> None:
     with _conn(user_id) as conn:
         conn.execute(
             "UPDATE nodes SET embedding = ? WHERE path = ?",
-            (embedding.tobytes(), path)     # tobytes() = numpy array → raw bytes
+            (embedding.tobytes(), path),  # tobytes() = numpy array → raw bytes
         )
 
 
 # ─── Read ─────────────────────────────────────────────────────────────────────
 
-def read(user_id: str, path: str) -> Optional[Node]:
+
+def read(user_id: str, path: str) -> Node | None:
     """Fetch one node by exact path. Returns None if the path doesn't exist."""
     with _conn(user_id) as conn:
         row = conn.execute(
-            "SELECT * FROM nodes WHERE path = ?", (path,)  # the (path,) is a tuple — SQL params
-        ).fetchone()    # fetchone() returns one row or None
-    return _row_to_node(row) if row else None   # row if row: convert it; else return None
+            "SELECT * FROM nodes WHERE path = ?",
+            (path,),  # the (path,) is a tuple — SQL params
+        ).fetchone()  # fetchone() returns one row or None
+    return _row_to_node(row) if row else None  # row if row: convert it; else return None
 
 
 def children(user_id: str, path: str) -> list[Node]:
@@ -266,19 +277,21 @@ def children(user_id: str, path: str) -> list[Node]:
     e.g. children("user/preferences") returns nodes at "user/preferences/gaming",
     "user/preferences/airflow", etc. — not "user/preferences/gaming/fps".
     """
-    prefix = path + "/"      # children start with this prefix
+    prefix = path + "/"  # children start with this prefix
     prefix_len = len(prefix)  # used to check depth after the prefix
 
     with _conn(user_id) as conn:
         rows = conn.execute(
-            "SELECT * FROM nodes WHERE path LIKE ?", (prefix + "%",)
+            "SELECT * FROM nodes WHERE path LIKE ?",
+            (prefix + "%",),
             # LIKE with % wildcard: matches anything starting with prefix
         ).fetchall()
 
     # Filter to direct children only: no additional "/" after the prefix means one level down
     return [
-        _row_to_node(r) for r in rows
-        if "/" not in r["path"][prefix_len:]   # slice off the prefix, check the remainder
+        _row_to_node(r)
+        for r in rows
+        if "/" not in r["path"][prefix_len:]  # slice off the prefix, check the remainder
     ]
 
 
@@ -287,7 +300,7 @@ def subtree(user_id: str, path: str) -> list[Node]:
     with _conn(user_id) as conn:
         rows = conn.execute(
             "SELECT * FROM nodes WHERE path = ? OR path LIKE ?",
-            (path, path + "/%")   # exact match OR any descendant
+            (path, path + "/%"),  # exact match OR any descendant
         ).fetchall()
     return [_row_to_node(r) for r in rows]
 
@@ -306,17 +319,13 @@ def count_facts(user_id: str) -> int:
     [MEMORY CONTEXT] block is worth rendering at all this turn.
     """
     with _conn(user_id) as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM nodes WHERE source != 'seed'"
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM nodes WHERE source != 'seed'").fetchone()[0]
 
 
 def hardcoded_nodes(user_id: str) -> list[Node]:
     """All nodes that bypass scoring. Always surface these before scored nodes."""
     with _conn(user_id) as conn:
-        rows = conn.execute(
-            "SELECT * FROM nodes WHERE hardcoded_type = 1"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM nodes WHERE hardcoded_type = 1").fetchall()
     return [_row_to_node(r) for r in rows]
 
 
@@ -324,13 +333,15 @@ def domain_nodes(user_id: str, domain: str) -> list[Node]:
     """All nodes tagged with a specific domain. Used for domain-scoped searches."""
     with _conn(user_id) as conn:
         rows = conn.execute(
-            "SELECT * FROM nodes WHERE domain LIKE ?", (f"%{domain}%",)
+            "SELECT * FROM nodes WHERE domain LIKE ?",
+            (f"%{domain}%",),
             # LIKE with % on both sides: matches "gaming" inside "gaming,hardware"
         ).fetchall()
     return [_row_to_node(r) for r in rows]
 
 
 # ─── Delete ───────────────────────────────────────────────────────────────────
+
 
 def delete(user_id: str, path: str) -> None:
     """Remove one node. Does not touch its children."""
@@ -343,7 +354,7 @@ def delete_subtree(user_id: str, path: str) -> None:
     with _conn(user_id) as conn:
         conn.execute(
             "DELETE FROM nodes WHERE path = ? OR path LIKE ?",
-            (path, path + "/%")   # same pattern as subtree() query
+            (path, path + "/%"),  # same pattern as subtree() query
         )
 
 
@@ -355,19 +366,19 @@ def delete_subtree(user_id: str, path: str) -> None:
 # at one of these paths simply overwrites the index entry.
 
 SKELETON: list[tuple[str, str]] = [
-    ("user",                     "(folder) everything known about this user"),
-    ("user/identity",            "(folder) who they are — name, age, profession, hardware"),
+    ("user", "(folder) everything known about this user"),
+    ("user/identity", "(folder) who they are — name, age, profession, hardware"),
     ("user/identity/profession", "(folder) what they do for work"),
-    ("user/identity/hardware",   "(folder) their machine — CPU, GPU, RAM, OS, peripherals"),
-    ("user/identity/critical",   "(folder) facts the user explicitly said to never forget"),
-    ("user/health",              "(folder) medical conditions, allergies, accessibility needs"),
-    ("user/preferences",         "(folder) how they like things — defaults, styles, tastes"),
-    ("user/preferences/gaming",  "(folder) games, genres, performance expectations"),
-    ("user/patterns",            "(folder) recurring behaviors, habits, stress signals"),
-    ("user/knowledge",           "(folder) what the user knows well — their expertise"),
-    ("user/history",             "(folder) notable events and decisions worth recalling"),
-    ("user/history/decisions",   "(folder) choices made and why"),
-    ("user/history/events",      "(folder) things that happened — upgrades, incidents, wins"),
+    ("user/identity/hardware", "(folder) their machine — CPU, GPU, RAM, OS, peripherals"),
+    ("user/identity/critical", "(folder) facts the user explicitly said to never forget"),
+    ("user/health", "(folder) medical conditions, allergies, accessibility needs"),
+    ("user/preferences", "(folder) how they like things — defaults, styles, tastes"),
+    ("user/preferences/gaming", "(folder) games, genres, performance expectations"),
+    ("user/patterns", "(folder) recurring behaviors, habits, stress signals"),
+    ("user/knowledge", "(folder) what the user knows well — their expertise"),
+    ("user/history", "(folder) notable events and decisions worth recalling"),
+    ("user/history/decisions", "(folder) choices made and why"),
+    ("user/history/events", "(folder) things that happened — upgrades, incidents, wins"),
 ]
 
 
@@ -381,16 +392,24 @@ def seed_skeleton(user_id: str) -> int:
     created = 0
     for path, label in SKELETON:
         if read(user_id, path) is None:
-            write(user_id, Node(
-                path=path, value=label,
-                confidence=1.0, importance=0.2, specificity=0.0,
-                source="seed", decays=False,
-            ))
+            write(
+                user_id,
+                Node(
+                    path=path,
+                    value=label,
+                    confidence=1.0,
+                    importance=0.2,
+                    specificity=0.0,
+                    source="seed",
+                    decays=False,
+                ),
+            )
             created += 1
     return created
 
 
 # ─── Self-organization ────────────────────────────────────────────────────────
+
 
 def split_node(user_id: str, old_path: str, new_nodes: list[Node]) -> None:
     """
@@ -399,8 +418,8 @@ def split_node(user_id: str, old_path: str, new_nodes: list[Node]) -> None:
     Example: "user/preferences/temperature" → ["user/preferences/temperature/default",
                                                "user/preferences/temperature/sleep"]
     """
-    delete(user_id, old_path)       # remove the coarse parent
-    for node in new_nodes:          # write each fine-grained replacement
+    delete(user_id, old_path)  # remove the coarse parent
+    for node in new_nodes:  # write each fine-grained replacement
         write(user_id, node)
 
 
@@ -410,6 +429,6 @@ def merge_nodes(user_id: str, paths: list[str], into: Node) -> None:
     Called by the memory model's periodic redundancy pass when nodes are
     almost always co-queried and never need to be retrieved independently.
     """
-    for path in paths:              # remove each node being collapsed
+    for path in paths:  # remove each node being collapsed
         delete(user_id, path)
-    write(user_id, into)            # write the single combined node
+    write(user_id, into)  # write the single combined node

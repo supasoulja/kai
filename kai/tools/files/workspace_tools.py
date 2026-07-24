@@ -12,11 +12,12 @@ Edits to Kai's source tree / persona are deliberately NOT possible here — thos
 go only through the confirm-gated self.* tools (self.apply_persona_update), which
 surface a reviewable diff before anything is written. See tests/test_workspace_sandbox.py.
 """
+
 import subprocess
 from pathlib import Path
 
-from kai.tools.registry import registry
 import kai.config as cfg
+from kai.tools.registry import registry
 
 
 def _resolve(filename: str) -> Path | None:
@@ -40,6 +41,7 @@ def _workspace_str() -> str:
 
 
 # ── files.write ────────────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="files.write",
@@ -82,6 +84,7 @@ def workspace_write(filename: str, content: str) -> str:
 
 # ── files.append ───────────────────────────────────────────────────────────────
 
+
 @registry.tool(
     name="files.append",
     description=(
@@ -118,6 +121,7 @@ def workspace_append(filename: str, content: str) -> str:
 
 
 # ── files.edit ─────────────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="files.edit",
@@ -166,9 +170,7 @@ def workspace_edit(filename: str, old_text: str, new_text: str, replace_all: boo
         # Give a helpful snippet of what's actually in the file.
         preview = original[:300].replace("\n", "↵")
         raise ValueError(
-            f"Text not found in '{path}'.\n"
-            f"old_text was: {old_text!r}\n"
-            f"File starts with: {preview}"
+            f"Text not found in '{path}'.\nold_text was: {old_text!r}\nFile starts with: {preview}"
         )
     if replace_all:
         updated = original.replace(old_text, new_text)
@@ -184,6 +186,7 @@ def workspace_edit(filename: str, old_text: str, new_text: str, replace_all: boo
 
 
 # ── workspace.git_clone ────────────────────────────────────────────────────────
+
 
 def _normalize_url(url: str) -> str:
     """Strip trailing slash and .git for comparison."""
@@ -244,8 +247,11 @@ def workspace_git_clone(url: str, folder_name: str = "") -> str:
         cfg.WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["git", "clone", url, str(target)],
-            capture_output=True, text=True, timeout=120,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=120,
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(
@@ -270,6 +276,7 @@ def workspace_git_clone(url: str, folder_name: str = "") -> str:
 
 
 # ── workspace.git_pull ─────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="workspace.git_pull",
@@ -298,8 +305,11 @@ def workspace_git_pull(folder_name: str) -> str:
     try:
         result = subprocess.run(
             ["git", "-C", str(target), "pull"],
-            capture_output=True, text=True, timeout=60,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError("Git pull timed out (60s).") from e
@@ -314,6 +324,7 @@ def workspace_git_pull(folder_name: str) -> str:
 
 
 # ── workspace.git_list_allowed ─────────────────────────────────────────────────
+
 
 @registry.tool(
     name="workspace.git_list_allowed",

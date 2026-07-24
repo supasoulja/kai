@@ -4,8 +4,11 @@ Uses psutil for system stats. GPU via pynvml (NVIDIA) or direct ADL
 query isn't available on Windows AMD without extra drivers, so we
 report what we can and skip what we can't.
 """
+
 import json
+
 import psutil
+
 from kai.tools.registry import registry
 
 
@@ -23,9 +26,9 @@ from kai.tools.registry import registry
     ),
 )
 def get_system_info() -> str:
-    cpu_pct  = psutil.cpu_percent(interval=0.5)
-    ram      = psutil.virtual_memory()
-    disk     = psutil.disk_usage("/")
+    cpu_pct = psutil.cpu_percent(interval=0.5)
+    ram = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
 
     # Top 5 processes by CPU
     procs = []
@@ -37,8 +40,8 @@ def get_system_info() -> str:
         procs.append(f"{p.info['name']} ({p.info['cpu_percent']:.1f}% cpu)")
 
     result = {
-        "cpu":  f"{cpu_pct:.1f}%",
-        "ram":  f"{ram.percent:.1f}% used ({_gb(ram.used)}/{_gb(ram.total)} GB)",
+        "cpu": f"{cpu_pct:.1f}%",
+        "ram": f"{ram.percent:.1f}% used ({_gb(ram.used)}/{_gb(ram.total)} GB)",
         "disk": f"{disk.percent:.1f}% used ({_gb(disk.used)}/{_gb(disk.total)} GB)",
         "top_processes": procs,
         "note": "Ollama (AI inference) runs on the GPU — not visible in CPU process list.",

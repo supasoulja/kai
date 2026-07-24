@@ -3,6 +3,7 @@ Phase 0 foundation tests — provider-agnostic LLM client, encrypted key store,
 and the extended model registry. These cover the additive base only; the Ollama
 turn path is untouched and exercised elsewhere.
 """
+
 import os
 import tempfile
 from pathlib import Path
@@ -18,28 +19,31 @@ _tmp_db.close()
 cfg.DB_PATH = Path(_tmp_db.name)
 
 from kai.store.db import _reset_for_tests
+
 _reset_for_tests()
 
 import pytest
 
-from kai.llm import keystore, models, client
-
+from kai.llm import client, keystore, models
 
 # ── Key store ────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def fixed_device_key(monkeypatch):
     """Pin the machine key so the keystore cipher is deterministic and the real
     device.key file is never touched."""
     from kai.system import device
+
     monkeypatch.setattr(device, "_device_key", b"\x01" * 30)
     monkeypatch.setattr(keystore, "_cipher_cache", None)
     yield
 
 
 def test_keystore_roundtrip(fixed_device_key):
-    keystore.set_key(1, "openrouter", "sk-secret-123",
-                     provider="openai", base_url="https://openrouter.ai/api/v1")
+    keystore.set_key(
+        1, "openrouter", "sk-secret-123", provider="openai", base_url="https://openrouter.ai/api/v1"
+    )
     assert keystore.get_secret(1, "openrouter") == "sk-secret-123"
     assert keystore.has_key(1, "openrouter") is True
 
@@ -68,10 +72,15 @@ def test_keystore_is_user_scoped(fixed_device_key):
 def test_keystore_encrypted_at_rest(fixed_device_key):
     keystore.set_key(2, "openai", "sk-plaintext-should-not-appear", provider="openai")
     from kai.store.db import get_conn
-    row = get_conn().execute(
-        "SELECT secret FROM provider_keys WHERE user_id = ? AND conn_id = ?",
-        (2, "openai"),
-    ).fetchone()
+
+    row = (
+        get_conn()
+        .execute(
+            "SELECT secret FROM provider_keys WHERE user_id = ? AND conn_id = ?",
+            (2, "openai"),
+        )
+        .fetchone()
+    )
     assert row is not None
     assert b"sk-plaintext-should-not-appear" not in row[0]  # ciphertext, not plaintext
 
@@ -80,12 +89,14 @@ def test_keystore_fails_closed_on_wrong_machine_key(fixed_device_key, monkeypatc
     keystore.set_key(3, "gemini", "g-secret", provider="gemini")
     # Simulate the DB moved to a different machine: different device key + fresh cipher.
     from kai.system import device
+
     monkeypatch.setattr(device, "_device_key", b"\x02" * 30)
     monkeypatch.setattr(keystore, "_cipher_cache", None)
     assert keystore.get_secret(3, "gemini") is None  # missing, not a crash
 
 
 # ── Model registry ───────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def tmp_models(monkeypatch, tmp_path):
@@ -113,8 +124,9 @@ def test_registry_backfills_legacy_entries(tmp_models):
 
 
 def test_add_cloud_model(tmp_models):
-    entry = models.add_model("GPT", "gpt-4o-mini", provider="openai",
-                             base_url="https://api.openai.com/v1")
+    entry = models.add_model(
+        "GPT", "gpt-4o-mini", provider="openai", base_url="https://api.openai.com/v1"
+    )
     assert entry["provider"] == "openai"
     assert entry["base_url"] == "https://api.openai.com/v1"
     assert entry["capabilities"]["local"] is False
@@ -136,10 +148,11 @@ def test_add_model_backward_compatible_signature(tmp_models):
 
 # ── Client factory ───────────────────────────────────────────────────────────
 
+
 def test_ollama_is_registered_and_conforms():
     assert "ollama" in client.available_providers()
     c = client.get_client("ollama")
-    assert isinstance(c, client.LLMClient)          # has chat/chat_stream/installed_models/is_alive
+    assert isinstance(c, client.LLMClient)  # has chat/chat_stream/installed_models/is_alive
     for method in ("chat", "chat_stream", "installed_models", "is_alive"):
         assert callable(getattr(c, method))
 

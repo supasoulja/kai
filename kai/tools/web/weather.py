@@ -2,9 +2,10 @@
 weather.current — current conditions + short forecast via wttr.in (no API key).
 Falls back to a web search snippet if the API is unreachable.
 """
+
 import json
-import urllib.request
 import urllib.parse
+import urllib.request
 
 from kai.tools.registry import registry
 
@@ -42,6 +43,7 @@ def get_weather(location: str = "") -> str:
     # Fallback: search DuckDuckGo for "weather"
     try:
         from kai.tools.web.search import _ddg_search
+
         q = f"weather {location}" if location else "current weather conditions"
         results = _ddg_search(q, max_results=1)
         if results:
@@ -53,20 +55,20 @@ def get_weather(location: str = "") -> str:
 
 
 def _format_wttr(data: dict) -> str:
-    cur  = data["current_condition"][0]
+    cur = data["current_condition"][0]
     area = data.get("nearest_area", [{}])[0]
     city = area.get("areaName", [{}])[0].get("value", "Unknown")
     region = area.get("region", [{}])[0].get("value", "")
     location = f"{city}, {region}" if region else city
 
-    desc      = cur["weatherDesc"][0]["value"]
-    temp_f    = cur["temp_F"]
-    temp_c    = cur["temp_C"]
-    feels_f   = cur["FeelsLikeF"]
-    feels_c   = cur["FeelsLikeC"]
-    humidity  = cur["humidity"]
-    wind_mph  = cur["windspeedMiles"]
-    wind_dir  = cur["winddir16Point"]
+    desc = cur["weatherDesc"][0]["value"]
+    temp_f = cur["temp_F"]
+    temp_c = cur["temp_C"]
+    feels_f = cur["FeelsLikeF"]
+    feels_c = cur["FeelsLikeC"]
+    humidity = cur["humidity"]
+    wind_mph = cur["windspeedMiles"]
+    wind_dir = cur["winddir16Point"]
     visibility = cur.get("visibility", "?")
 
     out = (

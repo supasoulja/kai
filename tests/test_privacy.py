@@ -2,7 +2,9 @@
 Wave 3 — per-user privacy controls for silent background learning.
 Run with: python -m pytest tests/test_privacy.py -v
 """
+
 import os
+
 import pytest
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
@@ -12,11 +14,13 @@ from pathlib import Path
 
 # Patch DB_PATH before importing anything that opens a connection.
 import kai.config as cfg
+
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 cfg.DB_PATH = Path(_tmp.name)
 
 from kai.store.db import _reset_for_tests, get_conn
+
 _reset_for_tests()
 
 from kai.memory import privacy

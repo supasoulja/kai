@@ -13,25 +13,25 @@ The Brain never reads events — this is a pure downstream projection.
 """
 
 import json
-import time
 import threading
+import time
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 
 # ── Event types ──────────────────────────────────────────────────────────────
 # Keep in sync with the frontend event handler.
 
-EVENT_TOOL_START    = "tool.start"      # tool call initiated
-EVENT_TOOL_END      = "tool.end"        # tool call completed (success or error)
-EVENT_THINK         = "think"           # reasoning/thinking chunk
-EVENT_STATUS        = "status"          # status label ("Thinking...", "Responding...")
-EVENT_STREAM_TOKEN  = "stream.token"    # response token (batched for efficiency)
-EVENT_STREAM_END    = "stream.end"      # response complete
-EVENT_MEMORY_READ   = "memory.read"     # memory was consulted
-EVENT_MEMORY_WRITE  = "memory.write"    # knowledge extracted / memory updated
-EVENT_MODEL_SWITCH  = "model.switch"    # model changed (thinking on/off)
-EVENT_FACE          = "face"            # face expression change
-EVENT_ERROR         = "error"           # something went wrong
+EVENT_TOOL_START = "tool.start"  # tool call initiated
+EVENT_TOOL_END = "tool.end"  # tool call completed (success or error)
+EVENT_THINK = "think"  # reasoning/thinking chunk
+EVENT_STATUS = "status"  # status label ("Thinking...", "Responding...")
+EVENT_STREAM_TOKEN = "stream.token"  # response token (batched for efficiency)
+EVENT_STREAM_END = "stream.end"  # response complete
+EVENT_MEMORY_READ = "memory.read"  # memory was consulted
+EVENT_MEMORY_WRITE = "memory.write"  # knowledge extracted / memory updated
+EVENT_MODEL_SWITCH = "model.switch"  # model changed (thinking on/off)
+EVENT_FACE = "face"  # face expression change
+EVENT_ERROR = "error"  # something went wrong
 
 
 @dataclass
@@ -90,7 +90,9 @@ def _get_db():
     global _db_conn
     if _db_conn is None:
         import sqlite3
+
         from kai.config import MEMORY_DIR
+
         db_path = MEMORY_DIR / "events.db"
         _db_conn = sqlite3.connect(str(db_path), check_same_thread=False)
         _db_conn.execute("PRAGMA journal_mode=WAL")
@@ -126,6 +128,7 @@ def _store(event: Event) -> int:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+
 def emit(event_type: str, session_id: str, **data) -> Event:
     """
     Create, persist, and broadcast an event.
@@ -153,8 +156,7 @@ def get_events(session_id: str, since_ts: float = 0, limit: int = 500) -> list[d
             (session_id, since_ts, limit),
         ).fetchall()
     return [
-        {"event_id": r[0], "type": r[1], "session_id": r[2], "ts": r[3],
-         "data": json.loads(r[4])}
+        {"event_id": r[0], "type": r[1], "session_id": r[2], "ts": r[3], "data": json.loads(r[4])}
         for r in rows
     ]
 
@@ -163,7 +165,5 @@ def get_session_ids() -> list[str]:
     """Return all session IDs that have events."""
     with _db_lock:
         conn = _get_db()
-        rows = conn.execute(
-            "SELECT DISTINCT session_id FROM events ORDER BY session_id"
-        ).fetchall()
+        rows = conn.execute("SELECT DISTINCT session_id FROM events ORDER BY session_id").fetchall()
     return [r[0] for r in rows]

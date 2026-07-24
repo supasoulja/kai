@@ -9,5 +9,8 @@ providers are available via client.get_client(<provider>).
 Adapters normalize each provider's request/response/streaming into the same
 shape Brain already consumes from OllamaClient, so Brain stays provider-agnostic.
 """
-from kai.llm.providers import openai     # noqa: F401  (registers "openai")
-from kai.llm.providers import anthropic  # noqa: F401  (registers "anthropic")
+
+from kai.llm.providers import (
+    anthropic,  # noqa: F401  (registers "anthropic")
+    openai,  # noqa: F401  (registers "openai")
+)

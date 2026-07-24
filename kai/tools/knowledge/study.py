@@ -16,21 +16,23 @@ Keys:
   UNPAYWALL_EMAIL  — just an email for rate-limiting, no account needed
   CORE_API_KEY     — free at core.ac.uk/services/api, raises rate limits significantly
 """
+
 import json
-import zipfile
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 
-from kai.config import UNPAYWALL_EMAIL, CORE_API_KEY
+from kai.config import CORE_API_KEY, UNPAYWALL_EMAIL
 from kai.tools.registry import registry
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 }
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
 
 def _get(url: str, timeout: int = 12) -> bytes:
     req = urllib.request.Request(url, headers=_HEADERS)
@@ -44,6 +46,7 @@ def _get_json(url: str, timeout: int = 12) -> dict | list:
 
 
 # ── study.search_papers ────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="study.search_papers",
@@ -81,24 +84,23 @@ def search_papers(query: str, max_results: int = 5) -> str:
         root = ET.fromstring(xml_bytes)
         for entry in root.findall("a:entry", ns):
             title = (entry.findtext("a:title", "", ns) or "").strip().replace("\n", " ")
-            authors = [
-                a.findtext("a:name", "", ns)
-                for a in entry.findall("a:author", ns)
-            ]
+            authors = [a.findtext("a:name", "", ns) for a in entry.findall("a:author", ns)]
             abstract = (entry.findtext("a:summary", "", ns) or "").strip()[:300]
             published = (entry.findtext("a:published", "", ns) or "")[:4]
             arxiv_id = (entry.findtext("a:id", "", ns) or "").strip()
             pdf_url = arxiv_id.replace("/abs/", "/pdf/") if "/abs/" in arxiv_id else ""
             if title:
-                results.append({
-                    "source": "arXiv",
-                    "title": title,
-                    "authors": authors[:3],
-                    "year": published,
-                    "abstract": abstract,
-                    "pdf_url": pdf_url,
-                    "page_url": arxiv_id,
-                })
+                results.append(
+                    {
+                        "source": "arXiv",
+                        "title": title,
+                        "authors": authors[:3],
+                        "year": published,
+                        "abstract": abstract,
+                        "pdf_url": pdf_url,
+                        "page_url": arxiv_id,
+                    }
+                )
     except Exception as e:
         results.append({"source": "arXiv", "error": str(e)})
 
@@ -116,15 +118,17 @@ def search_papers(query: str, max_results: int = 5) -> str:
             pdf_url = oa.get("url", "")
             authors = [a.get("name", "") for a in paper.get("authors", [])[:3]]
             abstract = (paper.get("abstract") or "")[:300]
-            results.append({
-                "source": "Semantic Scholar",
-                "title": paper.get("title", ""),
-                "authors": authors,
-                "year": str(paper.get("year") or ""),
-                "abstract": abstract,
-                "pdf_url": pdf_url,
-                "page_url": f"https://www.semanticscholar.org/paper/{paper.get('paperId', '')}",
-            })
+            results.append(
+                {
+                    "source": "Semantic Scholar",
+                    "title": paper.get("title", ""),
+                    "authors": authors,
+                    "year": str(paper.get("year") or ""),
+                    "abstract": abstract,
+                    "pdf_url": pdf_url,
+                    "page_url": f"https://www.semanticscholar.org/paper/{paper.get('paperId', '')}",
+                }
+            )
     except Exception as e:
         results.append({"source": "Semantic Scholar", "error": str(e)})
 
@@ -155,15 +159,17 @@ def search_papers(query: str, max_results: int = 5) -> str:
                 authors = [a.get("name", "") for a in authors_raw[:3]]
                 year = (item.get("pubdate") or "")[:4]
                 pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{uid}/pdf/"
-                results.append({
-                    "source": "PubMed Central",
-                    "title": title,
-                    "authors": authors,
-                    "year": year,
-                    "abstract": "",
-                    "pdf_url": pdf_url,
-                    "page_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{uid}/",
-                })
+                results.append(
+                    {
+                        "source": "PubMed Central",
+                        "title": title,
+                        "authors": authors,
+                        "year": year,
+                        "abstract": "",
+                        "pdf_url": pdf_url,
+                        "page_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{uid}/",
+                    }
+                )
     except Exception as e:
         results.append({"source": "PubMed Central", "error": str(e)})
 
@@ -173,8 +179,7 @@ def search_papers(query: str, max_results: int = 5) -> str:
     try:
         q = urllib.parse.quote(query)
         core_url = (
-            f"https://api.core.ac.uk/v3/search/works"
-            f"?q={q}&limit={max_results}&fulltext=false"
+            f"https://api.core.ac.uk/v3/search/works?q={q}&limit={max_results}&fulltext=false"
         )
         headers = dict(_HEADERS)
         if CORE_API_KEY:
@@ -191,15 +196,17 @@ def search_papers(query: str, max_results: int = 5) -> str:
             abstract = (work.get("abstract") or "")[:300]
             dl_url = work.get("downloadUrl") or ""
             page_url = work.get("sourceFulltextUrls", [None])[0] or ""
-            results.append({
-                "source": "CORE",
-                "title": title,
-                "authors": authors,
-                "year": year,
-                "abstract": abstract,
-                "pdf_url": dl_url,
-                "page_url": page_url or f"https://core.ac.uk/works/{work.get('id', '')}",
-            })
+            results.append(
+                {
+                    "source": "CORE",
+                    "title": title,
+                    "authors": authors,
+                    "year": year,
+                    "abstract": abstract,
+                    "pdf_url": dl_url,
+                    "page_url": page_url or f"https://core.ac.uk/works/{work.get('id', '')}",
+                }
+            )
     except Exception as e:
         results.append({"source": "CORE", "error": str(e)})
 
@@ -212,33 +219,48 @@ def search_papers(query: str, max_results: int = 5) -> str:
             f"&from=0&output=json&sort=&format=summary&fb=&page=1"
         )
         scielo_data = _get_json(scielo_url)
-        for hit in (scielo_data.get("hits", {}).get("hits", []) or []):
+        for hit in scielo_data.get("hits", {}).get("hits", []) or []:
             src = hit.get("_source", {})
             title_raw = src.get("ti", {})
-            title = title_raw if isinstance(title_raw, str) else (
-                title_raw.get("pt") or title_raw.get("en") or
-                next(iter(title_raw.values()), "") if isinstance(title_raw, dict) else ""
+            title = (
+                title_raw
+                if isinstance(title_raw, str)
+                else (
+                    title_raw.get("pt") or title_raw.get("en") or next(iter(title_raw.values()), "")
+                    if isinstance(title_raw, dict)
+                    else ""
+                )
             )
             if not title:
                 continue
             authors = src.get("au", [])[:3] if isinstance(src.get("au"), list) else []
             year = str(src.get("dp") or "")[:4]
             ab_raw = src.get("ab", {})
-            abstract = (ab_raw if isinstance(ab_raw, str) else
-                        next(iter(ab_raw.values()), "") if isinstance(ab_raw, dict) else "")[:300]
+            abstract = (
+                ab_raw
+                if isinstance(ab_raw, str)
+                else next(iter(ab_raw.values()), "")
+                if isinstance(ab_raw, dict)
+                else ""
+            )[:300]
             pid = src.get("id", "")
             pdf_url = f"https://www.scielo.br/pdf/{pid}" if pid else ""
-            page_url = f"https://doi.org/{src['doi']}" if src.get("doi") else (
-                f"https://search.scielo.org/?q={q}&lang=en" if pid else "")
-            results.append({
-                "source": "SciELO",
-                "title": title,
-                "authors": authors,
-                "year": year,
-                "abstract": abstract,
-                "pdf_url": pdf_url,
-                "page_url": page_url,
-            })
+            page_url = (
+                f"https://doi.org/{src['doi']}"
+                if src.get("doi")
+                else (f"https://search.scielo.org/?q={q}&lang=en" if pid else "")
+            )
+            results.append(
+                {
+                    "source": "SciELO",
+                    "title": title,
+                    "authors": authors,
+                    "year": year,
+                    "abstract": abstract,
+                    "pdf_url": pdf_url,
+                    "page_url": page_url,
+                }
+            )
     except Exception as e:
         results.append({"source": "SciELO", "error": str(e)})
 
@@ -263,6 +285,7 @@ def search_papers(query: str, max_results: int = 5) -> str:
 
 # ── study.find_free ────────────────────────────────────────────────────────────
 
+
 @registry.tool(
     name="study.find_free",
     description=(
@@ -277,7 +300,7 @@ def search_papers(query: str, max_results: int = 5) -> str:
         "doi": {
             "type": "string",
             "description": "DOI of the paper, e.g. '10.1038/s41586-021-03819-2'. "
-                           "Leave blank if you only have the title.",
+            "Leave blank if you only have the title.",
         },
         "title": {
             "type": "string",
@@ -396,6 +419,7 @@ def _oab_lookup(doi: str = "", title: str = "") -> str:
 
 # ── study.search_books ─────────────────────────────────────────────────────────
 
+
 @registry.tool(
     name="study.search_books",
     description=(
@@ -438,16 +462,18 @@ def search_books(query: str, max_results: int = 8) -> str:
                 borrow_url = f"https://archive.org/details/{ia_id}"
                 if status in ("open", "public domain"):
                     download_url = f"https://archive.org/download/{ia_id}/{ia_id}.epub"
-            results.append({
-                "source": "Open Library",
-                "title": doc.get("title", ""),
-                "authors": doc.get("author_name", [])[:2],
-                "year": str(doc.get("first_publish_year") or ""),
-                "status": status or ("available" if ia_id else "catalog only"),
-                "borrow_url": borrow_url,
-                "download_url": download_url,
-                "ol_key": doc.get("key", ""),
-            })
+            results.append(
+                {
+                    "source": "Open Library",
+                    "title": doc.get("title", ""),
+                    "authors": doc.get("author_name", [])[:2],
+                    "year": str(doc.get("first_publish_year") or ""),
+                    "status": status or ("available" if ia_id else "catalog only"),
+                    "borrow_url": borrow_url,
+                    "download_url": download_url,
+                    "ol_key": doc.get("key", ""),
+                }
+            )
     except Exception as e:
         results.append({"source": "Open Library", "error": str(e)})
 
@@ -462,16 +488,18 @@ def search_books(query: str, max_results: int = 8) -> str:
             epub_url = formats.get("application/epub+zip", "")
             pdf_url = formats.get("application/pdf", "")
             txt_url = formats.get("text/plain; charset=utf-8", "") or formats.get("text/plain", "")
-            results.append({
-                "source": "Project Gutenberg",
-                "title": book.get("title", ""),
-                "authors": authors,
-                "year": "",
-                "status": "public domain",
-                "borrow_url": f"https://www.gutenberg.org/ebooks/{book.get('id', '')}",
-                "download_url": epub_url or pdf_url or txt_url,
-                "epub_url": epub_url,
-            })
+            results.append(
+                {
+                    "source": "Project Gutenberg",
+                    "title": book.get("title", ""),
+                    "authors": authors,
+                    "year": "",
+                    "status": "public domain",
+                    "borrow_url": f"https://www.gutenberg.org/ebooks/{book.get('id', '')}",
+                    "download_url": epub_url or pdf_url or txt_url,
+                    "epub_url": epub_url,
+                }
+            )
     except Exception as e:
         results.append({"source": "Project Gutenberg", "error": str(e)})
 
@@ -496,6 +524,7 @@ def search_books(query: str, max_results: int = 8) -> str:
 
 
 # ── study.get_book_url ─────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="study.get_book_url",
@@ -559,6 +588,7 @@ def get_book_url(gutenberg_id: int = 0, archive_id: str = "") -> str:
 
 # ── Library RAG helpers ────────────────────────────────────────────────────────
 
+
 def _extract_epub_text(path: str) -> str:
     """Extract plain text from an epub file using only stdlib (zipfile + html.parser)."""
     import html.parser
@@ -568,14 +598,17 @@ def _extract_epub_text(path: str) -> str:
             super().__init__()
             self.parts: list[str] = []
             self._skip = False
+
         def handle_starttag(self, tag, attrs):
             if tag in ("script", "style"):
                 self._skip = True
             if tag in ("p", "div", "h1", "h2", "h3", "h4", "li", "tr", "br"):
                 self.parts.append("\n")
+
         def handle_endtag(self, tag):
             if tag in ("script", "style"):
                 self._skip = False
+
         def handle_data(self, data):
             if not self._skip:
                 self.parts.append(data)
@@ -605,6 +638,7 @@ def _extract_text_from_file(path: str, fmt: str) -> str:
     # PDF: extract with pypdf if available, else return empty.
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(path)
         return "\n\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception:
@@ -628,7 +662,7 @@ def index_study_item(item_id: int, user_id: int, path: str, fmt: str) -> int:
     chunks: list[str] = []
     i = 0
     while i < len(words):
-        chunk = " ".join(words[i: i + chunk_size])
+        chunk = " ".join(words[i : i + chunk_size])
         if chunk:
             chunks.append(chunk)
         i += chunk_size - overlap
@@ -646,6 +680,7 @@ def index_study_item(item_id: int, user_id: int, path: str, fmt: str) -> int:
 
 
 # ── study.ask_library ──────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="study.ask_library",
@@ -678,7 +713,7 @@ def ask_library(question: str, user_id: int = 0) -> str:
         return "Please provide a longer question to search the library."
 
     # Build a query with AND conditions across words
-    conditions = " AND ".join([f"LOWER(sc.content) LIKE ?" for _ in words])
+    conditions = " AND ".join(["LOWER(sc.content) LIKE ?" for _ in words])
     params = [f"%{w}%" for w in words] + [user_id]
 
     rows = conn.execute(
@@ -695,7 +730,7 @@ def ask_library(question: str, user_id: int = 0) -> str:
 
     if not rows:
         # Fallback: OR search (any word matches)
-        or_conditions = " OR ".join([f"LOWER(sc.content) LIKE ?" for _ in words])
+        or_conditions = " OR ".join(["LOWER(sc.content) LIKE ?" for _ in words])
         or_params = [f"%{w}%" for w in words] + [user_id]
         rows = conn.execute(
             f"""

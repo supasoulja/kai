@@ -6,8 +6,9 @@ Thread-local user_id:
   web.py sets the current user_id before every tool dispatch so tools can
   scope DB queries per-user without changing their function signatures.
 """
+
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 _embed_fn: Callable[[str], list[float]] | None = None
 _local = threading.local()

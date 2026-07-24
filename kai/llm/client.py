@@ -12,6 +12,7 @@ directly; nothing here changes existing behavior until Brain is rewired to
 resolve clients through the registry. OllamaClient already satisfies LLMClient,
 so it is registered as the built-in "ollama" provider.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
@@ -23,11 +24,12 @@ from typing import Protocol, runtime_checkable
 class Capabilities:
     """What a brain can do — drives the per-agent assignment guardrails
     (e.g. a tool-only agent can't be pointed at a no-tools model)."""
-    tools: bool = False       # supports function / tool calling
-    vision: bool = False      # accepts images
-    streaming: bool = True    # supports token streaming
-    thinking: bool = False    # native chain-of-thought
-    local: bool = True        # runs on this machine — no data leaves the box
+
+    tools: bool = False  # supports function / tool calling
+    vision: bool = False  # accepts images
+    streaming: bool = True  # supports token streaming
+    thinking: bool = False  # native chain-of-thought
+    local: bool = True  # runs on this machine — no data leaves the box
 
 
 @runtime_checkable
@@ -36,12 +38,23 @@ class LLMClient(Protocol):
     cloud adapters implement the same surface. runtime_checkable means
     isinstance() verifies the methods exist (handy in tests)."""
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = ...,
-             model: str = ..., think: bool = ..., temperature: float = ...) -> dict: ...
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = ...,
+        model: str = ...,
+        think: bool = ...,
+        temperature: float = ...,
+    ) -> dict: ...
 
-    def chat_stream(self, messages: list[dict], tools: list[dict] | None = ...,
-                    model: str = ..., think: bool = ..., temperature: float = ...
-                    ) -> Generator[tuple[str, bool, dict], None, None]: ...
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = ...,
+        model: str = ...,
+        think: bool = ...,
+        temperature: float = ...,
+    ) -> Generator[tuple[str, bool, dict], None, None]: ...
 
     def installed_models(self) -> list[str]: ...
 
@@ -69,9 +82,7 @@ def get_client(provider: str = "ollama", **opts) -> LLMClient:
     straight to the adapter's builder."""
     builder = _BUILDERS.get(provider)
     if builder is None:
-        raise ValueError(
-            f"Unknown LLM provider: {provider!r}. Known: {available_providers()}"
-        )
+        raise ValueError(f"Unknown LLM provider: {provider!r}. Known: {available_providers()}")
     return builder(**opts)
 
 
@@ -79,6 +90,7 @@ def get_client(provider: str = "ollama", **opts) -> LLMClient:
 def _ollama_builder(base_url: str | None = None, **_ignored) -> LLMClient:
     # Imported lazily so this module stays import-cheap and cycle-free.
     from kai.llm.ollama import OllamaClient
+
     return OllamaClient(base_url) if base_url else OllamaClient()
 
 

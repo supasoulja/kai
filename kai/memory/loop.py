@@ -13,21 +13,18 @@ update hooks at the bottom of this file after a turn completes: the cheap,
 unambiguous signals that don't need semantic judgment to record.
 """
 
-from typing import Optional
-
-from . import tree as _tree
+from . import intuition, scorer
 from . import state as _state
-from . import scorer
-from . import intuition
-from .tree import Node
-from .scorer import MaybeArray
+from . import tree as _tree
 from .intuition import IntuitionFlag
-
+from .scorer import MaybeArray
+from .tree import Node
 
 # ─── Plain-language renderings ────────────────────────────────────────────────
 # The block speaks in words ("trust: stable", "depth: high"), not raw floats —
 # the chat model reasons better from language it already understands than from
 # a number it has to interpret mid-conversation.
+
 
 def _depth_word(depth: float) -> str:
     if depth >= 0.7:
@@ -45,7 +42,7 @@ def _confidence_word(confidence: float) -> str:
     return "low"
 
 
-def _node_line(index: int, node: Node, score: Optional[float]) -> str:
+def _node_line(index: int, node: Node, score: float | None) -> str:
     """
     One [NODES] line. Permanent nodes carry no score — they bypassed the
     equation entirely, and showing a number would imply they didn't.
@@ -53,16 +50,17 @@ def _node_line(index: int, node: Node, score: Optional[float]) -> str:
     to pick its phrasing ("you mentioned" vs "I think" vs flat assertion).
     """
     tag = "[permanent]" if score is None else f"[conf:{node.confidence:.1f}, {node.source}]"
-    return f"{index}. {node.path}: \"{node.value}\" {tag}"
+    return f'{index}. {node.path}: "{node.value}" {tag}'
 
 
 # ─── Render ───────────────────────────────────────────────────────────────────
+
 
 def render_memory_block(
     relationship: _state.RelationshipState,
     user_state: _state.UserState,
     kai_state: _state.KaiState,
-    ranked: list[tuple[Node, Optional[float]]],
+    ranked: list[tuple[Node, float | None]],
     flags: list[IntuitionFlag],
 ) -> str:
     """
@@ -92,12 +90,13 @@ def render_memory_block(
 
 # ─── Gather — the loop's entry point ──────────────────────────────────────────
 
+
 def gather_context(
     user_id: str,
     query_embedding: MaybeArray,
-    active_domains: Optional[set[str]] = None,
+    active_domains: set[str] | None = None,
     total_limit: int = 12,
-    detector_signals: Optional[dict] = None,
+    detector_signals: dict | None = None,
 ) -> tuple[str, list[IntuitionFlag]]:
     """
     One full pass of the memory model loop:
@@ -123,12 +122,11 @@ def gather_context(
 
     # Reuse the states just loaded — compute_context_modifier would otherwise
     # re-read relationship + kai from disk a second time this turn.
-    context_modifier = _state.compute_context_modifier(
-        user_id, rel=relationship, kai=kai_state
-    )
+    context_modifier = _state.compute_context_modifier(user_id, rel=relationship, kai=kai_state)
 
     ranked = scorer.select_for_context(
-        user_id, query_embedding,
+        user_id,
+        query_embedding,
         active_domains=active_domains,
         context_modifier=context_modifier,
         total_limit=total_limit,
@@ -154,7 +152,8 @@ def _run_detectors_for_turn(
     accumulation_nodes = None
     if "accumulation_domain" in signals:
         accumulation_nodes = [
-            n for n in _tree.domain_nodes(user_id, signals["accumulation_domain"])
+            n
+            for n in _tree.domain_nodes(user_id, signals["accumulation_domain"])
             if n.source == "pattern"
         ]
 
@@ -180,6 +179,7 @@ def _run_detectors_for_turn(
 # questions. These hooks record the cheap, unambiguous signals that don't
 # need semantic judgment at all: a node got used, the user confirmed a read,
 # the user corrected one. Real learning starts here even before that model exists.
+
 
 def record_node_used(user_id: str, path: str) -> None:
     """A surfaced node held up — the user engaged with it, didn't correct it."""

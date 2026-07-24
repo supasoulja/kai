@@ -9,7 +9,9 @@ already registered. That keeps recipes safe to create and share without the
 sandbox that untrusted third-party *packs* will require. This module is the
 create / list / delete backend; kai.api.routes.settings drives it over HTTP.
 """
+
 from __future__ import annotations
+
 import re
 from pathlib import Path
 
@@ -35,6 +37,7 @@ def _path_for(name: str) -> Path:
 def _parse(path: Path) -> dict | None:
     """Parse one SKILL.md into a recipe dict (name/description/triggers/steps)."""
     from kai.skills.registry import _parse_md_skill
+
     skill = _parse_md_skill(path)
     if not skill:
         return None
@@ -69,15 +72,14 @@ def _validate_steps(steps: list[str]) -> None:
     from kai.skills.registry import _parse_steps
     from kai.tools.registry import registry
 
-    parsed = _parse_steps(steps)          # structural problems raise ValueError
+    parsed = _parse_steps(steps)  # structural problems raise ValueError
     known = set(registry.list_tools())
     for p in parsed:
         if p.tool_name not in known:
             raise ValueError(f"Step “{p.tool_name}” is not a known tool (e.g. system.info).")
 
 
-def create_recipe(name: str, description: str, triggers: list[str],
-                  steps: list[str]) -> dict:
+def create_recipe(name: str, description: str, triggers: list[str], steps: list[str]) -> dict:
     """Create (or replace) a recipe. Validates the name and every step's tool.
 
     Raises ValueError with a user-facing message on bad input. Returns the
@@ -92,8 +94,13 @@ def create_recipe(name: str, description: str, triggers: list[str],
     _validate_steps(steps)
     triggers = [t.strip() for t in (triggers or []) if t and t.strip()]
     _path_for(name).write_text(_render(name, description or "", triggers, steps), encoding="utf-8")
-    return {"name": name, "description": description or "", "triggers": triggers,
-            "steps": steps, "filename": f"{name}.md"}
+    return {
+        "name": name,
+        "description": description or "",
+        "triggers": triggers,
+        "steps": steps,
+        "filename": f"{name}.md",
+    }
 
 
 def delete_recipe(name: str) -> bool:
@@ -112,7 +119,13 @@ def delete_recipe(name: str) -> bool:
 
 
 def _render(name: str, description: str, triggers: list[str], steps: list[str]) -> str:
-    lines = ["---", f"name: {name}", f"description: {description}",
-             f"triggers: {', '.join(triggers)}", "---", "## Steps"]
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: {description}",
+        f"triggers: {', '.join(triggers)}",
+        "---",
+        "## Steps",
+    ]
     lines += [f"- {s}" for s in steps]
     return "\n".join(lines) + "\n"

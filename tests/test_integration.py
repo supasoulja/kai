@@ -7,10 +7,12 @@ Run with:
 
 Auto-skipped if Ollama is not running or models aren't pulled.
 """
+
 import os
 import tempfile
-import pytest
 from pathlib import Path
+
+import pytest
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
@@ -22,13 +24,14 @@ _tmp.close()
 cfg.DB_PATH = Path(_tmp.name)
 
 from kai.store.db import _reset_for_tests
+
 _reset_for_tests()
 
 from kai.core.brain import Brain, OllamaClient
 from kai.memory.manager import MemoryManager
 
-
 # ── Skip if Ollama isn't available ──────────────────────────────────────────────
+
 
 @pytest.fixture(scope="module")
 def ollama():
@@ -50,6 +53,7 @@ def brain(ollama):
 
 # ── Tests ────────────────────────────────────────────────────────────────────────
 
+
 def test_real_response_is_not_empty(brain):
     b, _ = brain
     result = b.run("Say exactly: hello")
@@ -69,6 +73,7 @@ def test_real_response_has_no_think_tags(brain):
 def test_real_memory_saves_name(brain):
     """Model processes 'my name is X' and memory should store it."""
     import time
+
     b, memory = brain
     b.run("My name is Alex, remember that.")
     # Fact extraction runs in the background pool after the turn
@@ -111,6 +116,7 @@ def test_real_streaming_yields_tokens(ollama):
 
 
 # ── Cleanup ─────────────────────────────────────────────────────────────────────
+
 
 def teardown_module(module):
     try:

@@ -8,6 +8,7 @@ neutral fallback for un-embedded nodes) wrap these.
 
 Inputs may be Python lists or numpy arrays — numpy handles both.
 """
+
 from __future__ import annotations
 
 import numpy as np

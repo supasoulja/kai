@@ -8,6 +8,7 @@ coverage force-dispatches both) with mocked models — no Ollama — then reads 
 turn back out of the DB and asserts the coverage accounting is recorded, with
 FLOW_TRACE explicitly OFF.
 """
+
 import os
 import tempfile
 from pathlib import Path
@@ -43,6 +44,7 @@ def _specialist_brain(chat_responses):
     from kai.llm.ollama import OllamaClient
     from kai.memory.manager import MemoryManager
     from kai.tools import registry
+
     mock = MagicMock(spec=OllamaClient)
     mock.embed.return_value = [0.0] * 2560
     mock.installed_models.return_value = [cfg.CHAT_MODEL, "granite4.1:8b"]
@@ -55,18 +57,23 @@ def test_coverage_dispatch_is_recorded_to_the_db(monkeypatch):
     # The whole point: telemetry lands even with the verbose flow trace OFF.
     monkeypatch.setattr(cfg, "FLOW_TRACE", False)
 
-    brain = _specialist_brain([
-        {"message": {"content": "FINISH: nothing to do"}},   # Otto — premature
-        {"message": {"content": "disk is 82% full"}},        # Dewey (forced by coverage)
-        {"message": {"content": "FINISH: got disk"}},        # Otto — still premature
-        {"message": {"content": "no containers running"}},   # Cargo (forced by coverage)
-        {"message": {"content": "FINISH: done"}},            # Otto — all covered → stop
-    ])
+    brain = _specialist_brain(
+        [
+            {"message": {"content": "FINISH: nothing to do"}},  # Otto — premature
+            {"message": {"content": "disk is 82% full"}},  # Dewey (forced by coverage)
+            {"message": {"content": "FINISH: got disk"}},  # Otto — still premature
+            {"message": {"content": "no containers running"}},  # Cargo (forced by coverage)
+            {"message": {"content": "FINISH: done"}},  # Otto — all covered → stop
+        ]
+    )
     trace_id = "test-cov-" + os.urandom(4).hex()
-    _drain(brain._crew.run_crew(
-        "check my disk space and what containers are running",
-        expected=("Dewey", "Cargo"), trace_id=trace_id,
-    ))
+    _drain(
+        brain._crew.run_crew(
+            "check my disk space and what containers are running",
+            expected=("Dewey", "Cargo"),
+            trace_id=trace_id,
+        )
+    )
 
     steps = crew_trace.for_turn(trace_id)
     kinds = [s["kind"] for s in steps]
@@ -87,8 +94,8 @@ def test_coverage_dispatch_is_recorded_to_the_db(monkeypatch):
     assert len(finish) == 1
     f = finish[0]
     assert f["expected"] == ["Dewey", "Cargo"]
-    assert f["dispatched"] == ["Cargo", "Dewey"]   # sorted
-    assert f["uncovered"] == []                     # nothing left uncovered
+    assert f["dispatched"] == ["Cargo", "Dewey"]  # sorted
+    assert f["uncovered"] == []  # nothing left uncovered
     assert f["coverage_dispatches"] == 2
 
 
@@ -97,7 +104,11 @@ def test_record_and_read_roundtrip():
     # payloads and the score table.
     tid = "test-tri-" + os.urandom(4).hex()
     crew_trace.record(
-        tid, "triage", session_id="s1", profile="Profile.BOSS", lane="boss",
+        tid,
+        "triage",
+        session_id="s1",
+        profile="Profile.BOSS",
+        lane="boss",
         expected=["Dewey", "Cargo"],
         scores=[["disk_analysis", 0.714], ["system_health", 0.638]],
     )

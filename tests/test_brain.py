@@ -3,34 +3,38 @@ Phase 2 tests — Brain logic with mocked Ollama.
 No real Ollama connection needed.
 Run with: python -m pytest tests/test_brain.py -v
 """
-import os
+
 import json
+import os
 import tempfile
-import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
 import kai.config as cfg
+
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 cfg.DB_PATH = Path(_tmp.name)
 
 from kai.store.db import _reset_for_tests
+
 _reset_for_tests()
 
 from kai.core.brain import Brain, OllamaClient, _strip_thinking
 from kai.memory.manager import MemoryManager
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────────────
+
 
 def make_mock_stream(response_text: str):
     """Return a side_effect callable that yields streaming tokens like chat_stream."""
+
     def _stream(*args, **kwargs):
         yield response_text, False, {}
         yield "", True, {}
+
     return _stream
 
 
@@ -58,6 +62,7 @@ def make_brain(response_text: str = "Hello.", tool_calls=None):
 
 
 # ── Public surface (no private poking) ───────────────────────────────────────
+
 
 def test_final_temperature_property_reflects_internal():
     brain, _ = make_brain()
@@ -89,6 +94,7 @@ def test_append_external_turn_adds_to_history():
 
 # ── _strip_thinking ──────────────────────────────────────────────────────────────
 
+
 def test_strip_thinking_extracts_think_tags():
     thinking, clean = _strip_thinking("<think>internal reasoning</think>The answer is 42.")
     assert thinking == "internal reasoning"
@@ -109,6 +115,7 @@ def test_strip_thinking_multiline():
 
 
 # ── Basic conversation ──────────────────────────────────────────────────────────
+
 
 def test_brain_returns_response():
     brain, _ = make_brain("Hey, what's up?")
@@ -148,14 +155,13 @@ def test_brain_context_injected_into_system_prompt():
 
 # ── Tool call flow ──────────────────────────────────────────────────────────────
 
+
 def test_brain_executes_tool_and_finalizes():
     """Round 1: chat() returns tool_calls → tool executed. Round 2: chat() returns final answer."""
     tool_call_response = {
         "message": {
             "content": "",
-            "tool_calls": [{
-                "function": {"name": "time.now", "arguments": {}}
-            }]
+            "tool_calls": [{"function": {"name": "time.now", "arguments": {}}}],
         }
     }
     # Round 2: no tool_calls → early-exit with this content
@@ -201,10 +207,14 @@ def test_brain_thinking_stripped_from_response():
 
 # ── Tool-model levels ───────────────────────────────────────────────────────────
 
+
 def _tool_call_response(name="time.now", args=None):
-    return {"message": {"content": "",
-                        "tool_calls": [{"function": {"name": name,
-                                                     "arguments": args or {}}}]}}
+    return {
+        "message": {
+            "content": "",
+            "tool_calls": [{"function": {"name": name, "arguments": args or {}}}],
+        }
+    }
 
 
 def test_tool_rounds_use_selected_granite_model():
@@ -268,6 +278,7 @@ def test_fast_path_matches_exact_commands_only():
     command (so a passing mention or a compound request never short-circuits
     the model)."""
     from kai.core.brain import _match_fast_path
+
     # Exact commands → (tool, args). No-arg tools carry {}.
     assert _match_fast_path("what time is it?") == ("time.now", {})
     assert _match_fast_path("what's the date") == ("time.now", {})
@@ -277,9 +288,18 @@ def test_fast_path_matches_exact_commands_only():
     assert _match_fast_path("what's my disk usage") == ("files.disk_usage", {})
     # Weather carries the extracted location so the fast-path can't drop the city
     # (the Boise→Denver bug: a no-arg weather call returns the IP-geo city).
-    assert _match_fast_path("what's the weather in boise") == ("weather.current", {"location": "boise"})
-    assert _match_fast_path("check the weather in London") == ("weather.current", {"location": "London"})
-    assert _match_fast_path("what's the weather in Austin, TX") == ("weather.current", {"location": "Austin, TX"})
+    assert _match_fast_path("what's the weather in boise") == (
+        "weather.current",
+        {"location": "boise"},
+    )
+    assert _match_fast_path("check the weather in London") == (
+        "weather.current",
+        {"location": "London"},
+    )
+    assert _match_fast_path("what's the weather in Austin, TX") == (
+        "weather.current",
+        {"location": "Austin, TX"},
+    )
     # A time phrase is NOT a place → local weather ({}), not a bogus location
     assert _match_fast_path("what's the weather for tomorrow") == ("weather.current", {})
     # A real joiner still falls through, even for weather
@@ -301,7 +321,7 @@ def test_fast_path_runs_tool_without_a_tool_round_model_call():
     mock_ollama.chat_stream.side_effect = make_mock_stream("It's 9 in the morning.")
 
     mock_registry = MagicMock()
-    mock_registry.list_tools.return_value = ["time.now"]   # real list → fast-path fires
+    mock_registry.list_tools.return_value = ["time.now"]  # real list → fast-path fires
     mock_registry.get_schema.return_value = [{"type": "function", "function": {"name": "time.now"}}]
     mock_registry.execute.return_value = "2026-06-26 09:00"
     mock_registry.risk_for.return_value = "safe"
@@ -310,8 +330,8 @@ def test_fast_path_runs_tool_without_a_tool_round_model_call():
     brain = Brain(memory=memory, tool_registry=mock_registry, ollama=mock_ollama)
 
     result = brain.run("what time is it?")
-    mock_ollama.chat.assert_not_called()           # NO tool-round model call
-    mock_registry.execute.assert_called_once()     # the tool ran deterministically
+    mock_ollama.chat.assert_not_called()  # NO tool-round model call
+    mock_registry.execute.assert_called_once()  # the tool ran deterministically
     assert mock_registry.execute.call_args[0][0] == "time.now"
     assert result == "It's 9 in the morning."
 
@@ -324,7 +344,9 @@ def test_duplicate_tool_calls_not_reexecuted():
     mock_ollama.embed.return_value = [0.0] * 2560
     mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL, "granite4.1:3b"]
     mock_ollama.chat.side_effect = [
-        _tool_call_response(), _tool_call_response(), _tool_call_response(),
+        _tool_call_response(),
+        _tool_call_response(),
+        _tool_call_response(),
     ]
     mock_ollama.chat_stream.side_effect = make_mock_stream("CPU is at 47C.")
 
@@ -337,22 +359,25 @@ def test_duplicate_tool_calls_not_reexecuted():
     brain.apply_tool_level("light")
 
     result = brain.run("What time is it?")
-    mock_registry.execute.assert_called_once()      # ran once, not three times
-    assert mock_ollama.chat.call_count == 3         # two repeats, then rounds ended
+    mock_registry.execute.assert_called_once()  # ran once, not three times
+    assert mock_ollama.chat.call_count == 3  # two repeats, then rounds ended
     assert result == "CPU is at 47C."
 
 
 # ── Cerebellum integration ───────────────────────────────────────────────────────
+
 
 def test_cerebellum_stop_ends_rounds_without_escalation(monkeypatch):
     """A Cerebellum STOP must end the tool rounds — not re-arm the full
     schema with 'Do not give up' (the bug this guards against)."""
     import kai.llm.embed as ke
     from kai.memory import cerebellum as cb
+
     monkeypatch.setattr(ke, "embed", lambda t: [0.1] * 384)
     monkeypatch.setattr(cfg, "CEREBELLUM_ENABLED", True)
     monkeypatch.setattr(
-        cb, "pre_check",
+        cb,
+        "pre_check",
         lambda *a, **k: cb.CerebellarResult(cb.Verdict.STOP, "test stop", 0.9),
     )
 
@@ -370,8 +395,8 @@ def test_cerebellum_stop_ends_rounds_without_escalation(monkeypatch):
 
     result = brain.run("What time is it?")
     assert result == "The chain was stopped."
-    assert mock_ollama.chat.call_count == 1        # no second round fired
-    mock_registry.execute.assert_not_called()      # the stopped tool never ran
+    assert mock_ollama.chat.call_count == 1  # no second round fired
+    mock_registry.execute.assert_not_called()  # the stopped tool never ran
     final_messages = json.dumps(mock_ollama.chat_stream.call_args[0][0])
     assert "safety check stopped" in final_messages
     assert "Do not give up" not in final_messages
@@ -381,6 +406,7 @@ def test_cerebellum_loop_counts_identical_calls_only(monkeypatch):
     """Only literally-identical (tool + args) repeats are a loop — reading
     several different files is progress."""
     from kai.memory import cerebellum as cb
+
     monkeypatch.setattr(cb, "_embed_action", lambda *a: None)  # isolate the loop check
     intent = [0.1] * 384
     same = cb.call_signature("files.read", {"path": "a.txt"})
@@ -393,8 +419,10 @@ def test_cerebellum_loop_counts_identical_calls_only(monkeypatch):
 
 # ── Narrated tool-call recovery ──────────────────────────────────────────────────
 
+
 def test_narrated_recovery_guards():
     from kai.core.engine import _try_recover_tool_call
+
     known = {"files.read", "pc.deep_scan"}
     # Intent markers ("let me", "I'll use") fire recovery
     assert _try_recover_tool_call("Let me files.read that for you.", known) is not None
@@ -410,24 +438,28 @@ def test_narrated_intent_extracts_container_name():
     """Natural-language container creation fires lxc.create WITH the name — the
     session bug where 'creating a container named Kytest3 now' promised an action
     that never ran (recovery alone fires empty args; name is required)."""
-    from kai.core.engine import _try_recover_tool_call, _match_narrated_intent
+    from kai.core.engine import _match_narrated_intent, _try_recover_tool_call
+
     known = {"lxc.create", "files.read"}
     rec = _try_recover_tool_call("I'm creating an LXC container named Kytest3 now.", known)
     assert rec == {"function": {"name": "lxc.create", "arguments": {"name": "Kytest3"}}}
     # "called" phrasing + VM wording, with trailing punctuation trimmed
-    assert _match_narrated_intent("Spinning up a VM called web1.", known) \
-        == {"function": {"name": "lxc.create", "arguments": {"name": "web1"}}}
+    assert _match_narrated_intent("Spinning up a VM called web1.", known) == {
+        "function": {"name": "lxc.create", "arguments": {"name": "web1"}}
+    }
     # Intent is skipped when its target tool isn't registered (can't route it)
     assert _match_narrated_intent("Creating a container named foo", {"files.read"}) is None
 
 
 # ── Follow-up tool selection ─────────────────────────────────────────────────────
 
+
 def test_follow_up_selection_uses_intent_message_embedding(monkeypatch):
     """'yes please' must select tool categories with the embedding of the
     message that carried the intent — not the bare confirmation (which once
     produced a hallucinated shell tool)."""
     import kai.llm.embed as ke
+
     monkeypatch.setattr(ke, "embed", lambda t: [float(len(t))] * 8)
     brain, _ = make_brain()
     reg = MagicMock()
@@ -436,8 +468,10 @@ def test_follow_up_selection_uses_intent_message_embedding(monkeypatch):
     intent_msg = "check my cpu temps please"
     # The assistant reply also contains tool keywords (CPU/GPU) — the user
     # message must still win the selection scan.
-    history = [{"role": "user", "content": intent_msg},
-               {"role": "assistant", "content": "CPU is at 46C, GPU load is 1%"}]
+    history = [
+        {"role": "user", "content": intent_msg},
+        {"role": "assistant", "content": "CPU is at 46C, GPU load is 1%"},
+    ]
     brain._select_tool_schema("yes please", history, [1.0] * 8, "chat")
     sel_emb = reg.select_tools_by_category.call_args[0][0]
     assert sel_emb == [float(len(intent_msg))] * 8
@@ -445,8 +479,10 @@ def test_follow_up_selection_uses_intent_message_embedding(monkeypatch):
 
 # ── Flow recorder ────────────────────────────────────────────────────────────────
 
+
 def test_flow_recorder_roundtrip(monkeypatch):
     from kai.core import flow as flow_rec
+
     monkeypatch.setattr(cfg, "FLOW_TRACE", True)
     flow_rec.record("flowtest1", "route", input="hi there", think=False)
     flow_rec.record("flowtest1", "final_answer", text="yo")
@@ -461,6 +497,7 @@ def test_flow_recorder_roundtrip(monkeypatch):
 def test_flow_live_tap_fires(monkeypatch):
     """Live viewers (:flowlive, /flow page) hear every step as it's recorded."""
     from kai.core import flow as flow_rec
+
     monkeypatch.setattr(cfg, "FLOW_TRACE", True)
     seen = []
     tap = lambda tid, kind, data: seen.append((tid, kind, data))
@@ -476,6 +513,7 @@ def test_flow_reads_are_user_scoped(monkeypatch):
     """A user must only see their own turns: recent_turns/get_flow filter by
     user_id so /debug/flow can't leak another user's recorded steps."""
     from kai.core import flow as flow_rec
+
     monkeypatch.setattr(cfg, "FLOW_TRACE", True)
 
     monkeypatch.setattr(flow_rec, "get_current_user_id", lambda: 101)
@@ -498,6 +536,7 @@ def test_flow_retention_trims_oldest(monkeypatch):
     are trimmed on the next amortized check."""
     from kai.core import flow as flow_rec
     from kai.store.db import get_conn
+
     monkeypatch.setattr(cfg, "FLOW_TRACE", True)
     monkeypatch.setattr(cfg, "FLOW_LOG_MAX", 20)
     monkeypatch.setattr(flow_rec, "_TRIM_EVERY", 10)
@@ -517,6 +556,7 @@ def test_flow_retention_trims_oldest(monkeypatch):
 
 # ── No-reply fallback ────────────────────────────────────────────────────────────
 
+
 def test_empty_model_output_still_streams_fallback():
     """When the model produces zero visible tokens, the fallback text must be
     YIELDED to the consumer — not just persisted — or the UI shows an empty
@@ -534,12 +574,15 @@ def test_empty_model_output_still_streams_fallback():
 
 # ── Memory tree context (gather_context + Version C) ─────────────────────────────
 
+
 def test_tree_facts_injected_into_context(tmp_path, monkeypatch):
     """With real facts in the tree, the [MEMORY CONTEXT] block appears in the
     turn context; with an empty (seed-only) tree it stays out entirely."""
     import numpy as np
-    from kai.memory import tree as mtree
+
     from kai.memory import state as mstate
+    from kai.memory import tree as mtree
+
     monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
     monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)
     brain, _ = make_brain("Sure.")
@@ -548,11 +591,17 @@ def test_tree_facts_injected_into_context(tmp_path, monkeypatch):
     ctx = brain._build_turn_context("what do I do for work?", [1.0] * 384)
     assert "[MEMORY CONTEXT]" not in ctx  # seed-only tree → no block
 
-    mtree.write("0", mtree.Node(
-        path="user/identity/profession", value="stuntman", source="stated",
-        importance=0.7, specificity=0.7,
-        embedding=np.ones(384, dtype=np.float32),
-    ))
+    mtree.write(
+        "0",
+        mtree.Node(
+            path="user/identity/profession",
+            value="stuntman",
+            source="stated",
+            importance=0.7,
+            specificity=0.7,
+            embedding=np.ones(384, dtype=np.float32),
+        ),
+    )
     ctx = brain._build_turn_context("what do I do for work?", [1.0] * 384)
     assert "[MEMORY CONTEXT]" in ctx
     assert "stuntman" in ctx
@@ -560,12 +609,14 @@ def test_tree_facts_injected_into_context(tmp_path, monkeypatch):
 
 # ── OllamaClient ───────────────────────────────────────────────────────────────
 
+
 def test_ollama_client_is_alive_false_when_down():
     client = OllamaClient(base_url="http://localhost:9999")  # nothing here
     assert client.is_alive() is False
 
 
 # ── Cleanup ─────────────────────────────────────────────────────────────────────
+
 
 def teardown_module(module):
     try:

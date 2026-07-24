@@ -17,6 +17,7 @@ Progress is exposed via get_progress() so the dashboard can show a
 "saving session — finishing embeddings" overlay and the user won't force-kill
 mid re-embed.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,16 +28,16 @@ from kai.util import log
 
 # ── State ─────────────────────────────────────────────────────────────────────
 _lock = threading.Lock()
-_shutdown_started = threading.Event()   # terminal shutdown — set once, never cleared
-_soft_restarting = threading.Event()    # soft restart in progress — set then cleared
+_shutdown_started = threading.Event()  # terminal shutdown — set once, never cleared
+_soft_restarting = threading.Event()  # soft restart in progress — set then cleared
 
 _progress: dict = {
-    "phase": "idle",   # idle | starting | draining | sleep-cycle | hq-reembed | closing | done
+    "phase": "idle",  # idle | starting | draining | sleep-cycle | hq-reembed | closing | done
     "detail": "",
     "pct": 0,
-    "active": False,   # True while a shutdown/restart is running
-    "done": False,     # True once the ritual has fully completed
-    "mode": "",        # "" | shutdown | soft-restart | hard-restart
+    "active": False,  # True while a shutdown/restart is running
+    "done": False,  # True once the ritual has fully completed
+    "mode": "",  # "" | shutdown | soft-restart | hard-restart
 }
 
 
@@ -67,10 +68,12 @@ def _report(phase: str, detail: str = "", pct: int | None = None) -> None:
 
 # ── Resolution helpers ────────────────────────────────────────────────────────
 
+
 def _resolve_ollama(ollama):
     if ollama is not None:
         return ollama
     from kai.api import state
+
     return state.ollama
 
 
@@ -78,6 +81,7 @@ def _collect_brains(brains):
     if brains is not None:
         return list(brains)
     from kai.api import state
+
     with state.user_brains_lock:
         return list(state.user_brains.values())
 
@@ -85,6 +89,7 @@ def _collect_brains(brains):
 def _close_module_pools() -> None:
     """Drain the module-global thread pools that otherwise leak at exit."""
     import importlib
+
     for mod_name, attr in (
         ("kai.memory.context", "_retrieval_pool"),
         ("kai.memory.patterns", "_bg"),
@@ -99,6 +104,7 @@ def _close_module_pools() -> None:
 
 
 # ── The canonical graceful shutdown ───────────────────────────────────────────
+
 
 def graceful_shutdown(ollama=None, brains=None, *, reason: str = "") -> None:
     """Run the full end-of-session ritual exactly once.
@@ -124,6 +130,7 @@ def graceful_shutdown(ollama=None, brains=None, *, reason: str = "") -> None:
     # 1. Stop the daily-job scheduler so it can't fire mid-shutdown.
     try:
         from kai.memory.scheduler import get_scheduler
+
         get_scheduler().stop()
     except Exception as exc:
         log.warn(f"Scheduler stop failed: {exc}")
@@ -142,6 +149,7 @@ def graceful_shutdown(ollama=None, brains=None, *, reason: str = "") -> None:
     for brain in brains:
         try:
             from kai.core.sleep import run_sleep_cycle
+
             run_sleep_cycle(ollama, brain)
         except Exception as exc:
             log.warn(f"Sleep cycle failed: {exc}")
@@ -150,6 +158,7 @@ def graceful_shutdown(ollama=None, brains=None, *, reason: str = "") -> None:
     _report("hq-reembed", "embedding new memories")
     try:
         from kai.llm.embed import shutdown_reembed
+
         shutdown_reembed(progress_cb=_report)
     except Exception as exc:
         log.warn(f"HQ re-embed failed: {exc}")
@@ -167,6 +176,7 @@ def graceful_shutdown(ollama=None, brains=None, *, reason: str = "") -> None:
 
 
 # ── Public triggers (return immediately; work runs on a worker thread) ─────────
+
 
 def request_shutdown(exit_code: int = 0) -> None:
     """Run the graceful shutdown, then terminate the process."""
@@ -195,6 +205,7 @@ def request_restart(mode: str = "hard") -> None:
 
 
 # ── Termination / relaunch ────────────────────────────────────────────────────
+
 
 def _flush() -> None:
     try:
@@ -225,7 +236,9 @@ def _relaunch() -> None:
         # detached fresh instance, then exit this one. The single-instance lock
         # in app.py makes the new process wait/bind cleanly once we're gone.
         import subprocess
+
         import kai.config as cfg
+
         app_py = str(cfg.ROOT_DIR / "app.py")
         try:
             subprocess.Popen(
@@ -253,6 +266,7 @@ def _soft_restart() -> None:
     _soft_restarting.set()
     try:
         from kai.api import state
+
         _report("draining", "finishing in-flight memory work")
         with state.user_brains_lock:
             brains = list(state.user_brains.values())
@@ -266,6 +280,7 @@ def _soft_restart() -> None:
         for brain in brains:
             try:
                 from kai.core.sleep import run_sleep_cycle
+
                 run_sleep_cycle(state.ollama, brain)
             except Exception as exc:
                 log.warn(f"Sleep cycle failed: {exc}")
@@ -276,15 +291,22 @@ def _soft_restart() -> None:
         _rebuild_shared_indexes()
         try:
             from kai.core import bootstrap
+
             bootstrap.run_migrations_and_seed()
         except Exception as exc:
             log.warn(f"Migrate/seed on soft restart failed: {exc}")
 
         with _lock:
-            _progress.update({
-                "phase": "done", "detail": "restarted", "pct": 100,
-                "done": True, "active": False, "mode": "soft-restart",
-            })
+            _progress.update(
+                {
+                    "phase": "done",
+                    "detail": "restarted",
+                    "pct": 100,
+                    "done": True,
+                    "active": False,
+                    "mode": "soft-restart",
+                }
+            )
         log.ok("[lifecycle] soft restart complete")
     finally:
         _soft_restarting.clear()
@@ -296,6 +318,7 @@ def _rebuild_shared_indexes() -> None:
     from kai.llm.embed import embed_batch as fast_embed_batch
     from kai.memory import router as _router
     from kai.tools import registry as tool_registry
+
     try:
         state.shared_domain_index = _router.build_domain_index(fast_embed_batch)
     except Exception:

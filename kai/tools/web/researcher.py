@@ -8,6 +8,7 @@ Two reading modes share one fetcher (_extract_url_text). Search mode returns a
 tight excerpt so the orchestrator model isn't fed a whole page; library mode reads
 everything on the way into the searchable document store.
 """
+
 import html
 import io
 import re
@@ -22,8 +23,19 @@ from kai.tools.registry import registry
 # Tags whose entire content we skip (scripts, styles, nav boilerplate).
 # Only include paired tags (open + close) — void elements like <meta> and <link>
 # have no closing tag, so they'd permanently increment the skip depth counter.
-_SKIP_TAGS = {"script", "style", "noscript", "head", "nav", "footer",
-              "aside", "form", "button", "svg", "iframe"}
+_SKIP_TAGS = {
+    "script",
+    "style",
+    "noscript",
+    "head",
+    "nav",
+    "footer",
+    "aside",
+    "form",
+    "button",
+    "svg",
+    "iframe",
+}
 
 _USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -32,6 +44,7 @@ _USER_AGENT = (
 
 
 # ── HTML → plain text ──────────────────────────────────────────────────────────
+
 
 class _Stripper(HTMLParser):
     def __init__(self):
@@ -43,8 +56,20 @@ class _Stripper(HTMLParser):
         if tag.lower() in _SKIP_TAGS:
             self._skip_depth += 1
         # Block elements — add a newline so text doesn't run together
-        if tag.lower() in {"p", "div", "br", "h1", "h2", "h3",
-                            "h4", "h5", "h6", "li", "tr", "blockquote"}:
+        if tag.lower() in {
+            "p",
+            "div",
+            "br",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "li",
+            "tr",
+            "blockquote",
+        }:
             self._parts.append("\n")
 
     def handle_endtag(self, tag):
@@ -61,7 +86,7 @@ class _Stripper(HTMLParser):
         # Collapse horizontal whitespace, strip blank lines, collapse gaps
         raw = re.sub(r"[ \t]+", " ", raw)
         lines = [ln.strip() for ln in raw.splitlines()]
-        lines = [ln for ln in lines if ln]   # drop blank lines
+        lines = [ln for ln in lines if ln]  # drop blank lines
         return "\n".join(lines)
 
 
@@ -79,11 +104,13 @@ def _pdf_to_text(pdf_bytes: bytes) -> str:
     """Extract text from PDF bytes. Same pypdf idiom as kai/memory/documents.py
     and kai/tools/knowledge/study.py. Raises if pypdf isn't installed."""
     from pypdf import PdfReader
+
     reader = PdfReader(io.BytesIO(pdf_bytes))
     return "\n\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 # ── Shared fetcher ───────────────────────────────────────────────────────────────
+
 
 def _extract_url_text(url: str) -> tuple[int | None, str, str | None]:
     """Fetch a URL and return (status_code, full_text, error).
@@ -109,7 +136,11 @@ def _extract_url_text(url: str) -> tuple[int | None, str, str | None]:
         ) as client:
             resp = client.get(url)
     except httpx.TimeoutException:
-        return None, "", f"Timeout fetching {url} (15s limit). The server may be slow or unreachable."
+        return (
+            None,
+            "",
+            f"Timeout fetching {url} (15s limit). The server may be slow or unreachable.",
+        )
     except httpx.ConnectError as e:
         return None, "", f"Could not connect to {url}: {e}"
     except Exception as e:
@@ -121,9 +152,13 @@ def _extract_url_text(url: str) -> tuple[int | None, str, str | None]:
         try:
             return resp.status_code, _pdf_to_text(resp.content), None
         except ImportError:
-            return resp.status_code, "", (
-                "This URL is a PDF and PDF support isn't installed. "
-                "Run: pip install -r requirements-documents.txt"
+            return (
+                resp.status_code,
+                "",
+                (
+                    "This URL is a PDF and PDF support isn't installed. "
+                    "Run: pip install -r requirements-documents.txt"
+                ),
             )
         except Exception as e:
             return resp.status_code, "", f"Could not read PDF at {url}: {e}"
@@ -135,6 +170,7 @@ def _extract_url_text(url: str) -> tuple[int | None, str, str | None]:
 
 
 # ── research.fetch_url (search mode — excerpt) ────────────────────────────────────
+
 
 @registry.tool(
     name="research.fetch_url",
@@ -171,6 +207,7 @@ def fetch_url(url: str) -> str:
 
 # ── research.add_to_library (deep mode — full read + index) ───────────────────────
 
+
 @registry.tool(
     name="research.add_to_library",
     description=(
@@ -188,14 +225,17 @@ def fetch_url(url: str) -> str:
     },
 )
 def add_to_library(url: str) -> str:
+    from kai.core._app_state import get_current_user_id
+    from kai.core._app_state import get_embed_fn as _get_embed_fn
     from kai.memory import documents as _docs
-    from kai.core._app_state import get_embed_fn as _get_embed_fn, get_current_user_id
 
     status, text, error = _extract_url_text(url)
     if error:
         return error
     if not text.strip():
-        return f"[{status}] {url.strip()}\n\nNothing readable to save — page had no extractable text."
+        return (
+            f"[{status}] {url.strip()}\n\nNothing readable to save — page had no extractable text."
+        )
 
     try:
         meta = _docs.ingest_text(
