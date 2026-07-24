@@ -1,4 +1,10 @@
 # ── Developer / test dependencies ─────────────────────────────────────
-# Not needed to run Kai — only to run the test suite. Install with:
+# Not needed to run Kai — only to run the test suite and the
+# formatter/linter. Install with:
 #   pip install -r requirements-dev.txt
 pytest
+
+# Formatting + linting, enforced automatically via pre-commit.
+# Keep the ruff pin in lockstep with the `rev` in .pre-commit-config.yaml.
+ruff==0.15.17
+pre-commit
