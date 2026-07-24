@@ -92,7 +92,7 @@ def build_domain_index(
     names = list(_MEMORY_DOMAINS.keys())
     descs = [_MEMORY_DOMAINS[n]["description"] for n in names]
     vecs = embed_batch_fn(descs)
-    return dict(zip(names, vecs))
+    return dict(zip(names, vecs, strict=True))
 
 
 # ── Per-turn: classify query ─────────────────────────────────────────────────

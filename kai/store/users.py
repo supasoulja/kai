@@ -340,7 +340,7 @@ def _rows_as_dicts(conn, sql: str, params=()) -> list[dict]:
     out = []
     for row in cur.fetchall():
         rec = {}
-        for col, val in zip(cols, row):
+        for col, val in zip(cols, row, strict=True):
             if isinstance(val, (bytes, bytearray, memoryview)):
                 val = {"__b64__": base64.b64encode(bytes(val)).decode("ascii")}
             rec[col] = val

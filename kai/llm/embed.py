@@ -248,7 +248,7 @@ def shutdown_reembed(progress_cb=None) -> None:
             texts = [content for _, content in to_embed]
             try:
                 embeddings = ollama.embed_batch(texts, model=cfg.HQ_EMBED_MODEL)
-                for (rid, _), emb in zip(to_embed, embeddings):
+                for (rid, _), emb in zip(to_embed, embeddings, strict=True):
                     conn.execute(
                         "INSERT OR REPLACE INTO episodic_vec_hq (rowid, embedding) VALUES (?, ?)",
                         (rid, sqlite_vec.serialize_float32(emb)),
@@ -284,7 +284,7 @@ def shutdown_reembed(progress_cb=None) -> None:
                     batch_texts = texts[i : i + batch_size]
                     batch_items = to_embed_rag[i : i + batch_size]
                     embeddings = ollama.embed_batch(batch_texts, model=cfg.HQ_EMBED_MODEL)
-                    for (rid, _), emb in zip(batch_items, embeddings):
+                    for (rid, _), emb in zip(batch_items, embeddings, strict=True):
                         conn.execute(
                             "INSERT OR REPLACE INTO rag_chunks_vec_hq (rowid, embedding) VALUES (?, ?)",
                             (rid, sqlite_vec.serialize_float32(emb)),

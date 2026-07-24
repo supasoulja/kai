@@ -688,7 +688,7 @@ def _amd_hwmon_linux() -> str | None:
             gpu_name = "AMD GPU"
             uevent = _read(f"{hwmon_dir}/device/uevent") or ""
             slot = next(
-                (line.split("=", 1)[1].lstrip("0000:") for line in uevent.splitlines()
+                (line.split("=", 1)[1].removeprefix("0000:") for line in uevent.splitlines()
                  if line.startswith("PCI_SLOT_NAME=")),
                 None,
             )

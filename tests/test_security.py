@@ -640,6 +640,5 @@ def _name_of(uid: int) -> str:
 def teardown_module(module):
     try:
         os.unlink(_tmp_main.name)
-        os.unlink(_tmp_wd.name)
     except Exception:
         pass

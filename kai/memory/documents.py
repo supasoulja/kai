@@ -167,7 +167,7 @@ def ingest_text(
             from kai.llm.embed import embed_batch as _fast_embed_batch
             embeddings = _fast_embed_batch(texts)
 
-            for (rowid, _chunk_id), emb in zip(rows, embeddings):
+            for (rowid, _chunk_id), emb in zip(rows, embeddings, strict=True):
                 conn.execute(
                     "INSERT INTO rag_chunks_vec (rowid, embedding) VALUES (?, ?)",
                     (rowid, sqlite_vec.serialize_float32(emb)),

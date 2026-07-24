@@ -378,7 +378,7 @@ class ToolRegistry:
         names = list(_TOOL_CATEGORIES.keys())
         descs = [_TOOL_CATEGORIES[n]["description"] for n in names]
         vecs = embed_batch_fn(descs)
-        return dict(zip(names, vecs))
+        return dict(zip(names, vecs, strict=True))
 
     def select_tools_by_category(
         self,
