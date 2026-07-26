@@ -2,7 +2,9 @@
 Wave 5d/5e — welcome-back note persistence (past turn 1, and across crashes).
 Run with: python -m pytest tests/test_welcome_back.py -v
 """
+
 import os
+
 import pytest
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
@@ -11,12 +13,14 @@ import tempfile
 from pathlib import Path
 
 import kai.config as cfg
+
 cfg.DB_PATH = Path(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
 # Isolate the welcome-back / checkpoint files to a temp dir.
 _TMP_MEM = Path(tempfile.mkdtemp())
 cfg.MEMORY_DIR = _TMP_MEM
 
 from kai.store.db import _reset_for_tests
+
 _reset_for_tests()
 
 from kai.core import sleep
@@ -40,6 +44,7 @@ def _clean():
 
 # ── 5d: survives past turn 1 ─────────────────────────────────────────────────
 
+
 def test_welcome_back_retrievable_after_file_cleared():
     sleep.save_welcome_back("pick up the X migration next time")
     # Turn 1 consumes it…
@@ -54,8 +59,8 @@ def test_welcome_back_retrievable_after_file_cleared():
 
 def test_second_turn_greeting_is_empty_but_note_still_available():
     sleep.save_welcome_back("remember the Y refactor")
-    context._get_and_clear_welcome_back()          # turn 1
-    assert context._get_and_clear_welcome_back() == ""   # not re-greeted
+    context._get_and_clear_welcome_back()  # turn 1
+    assert context._get_and_clear_welcome_back() == ""  # not re-greeted
     assert "Y refactor" in context.get_session_welcome_back()
 
 
@@ -66,6 +71,7 @@ def test_get_session_welcome_back_falls_back_to_disk_before_consumed():
 
 
 # ── 5e: survives hard kills / crashes ────────────────────────────────────────
+
 
 def test_checkpoint_promoted_when_no_clean_welcome_back():
     history = [

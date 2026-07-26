@@ -4,6 +4,7 @@ Built-in skill: PC Health Check
 Runs system info + temps + crash logs in sequence and returns
 a combined health summary. Demonstrates the Skill pattern.
 """
+
 from kai.skills.base import Skill, SkillResult
 
 

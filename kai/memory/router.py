@@ -15,13 +15,12 @@ The Memory Directory is a tiny always-injected block (~200 chars) that tells
 Kai what data exists in each store — the "sign at the entrance" — so she
 knows what's available even when the actual data isn't loaded.
 """
-from typing import Callable
 
+from collections.abc import Callable
+
+from kai.config import MEMORY_ROUTER_THRESHOLD, MEMORY_ROUTER_TOP_K
 from kai.llm.vecmath import cosine as _cosine
-
-from kai.config import MEMORY_ROUTER_TOP_K, MEMORY_ROUTER_THRESHOLD
 from kai.store.schema import SemanticFact
-
 
 # ── Domain definitions ────────────────────────────────────────────────────────
 # Descriptions written in USER-QUERY language (how people ask about these
@@ -69,8 +68,7 @@ _MEMORY_DOMAINS: dict[str, dict] = {
     },
     "notes": {
         "description": (
-            "things to remember, saved notes, reminders, things I told you "
-            "to keep track of"
+            "things to remember, saved notes, reminders, things I told you to keep track of"
         ),
         "fact_prefixes": ["note"],
         "stores": ["semantic"],
@@ -80,6 +78,7 @@ _MEMORY_DOMAINS: dict[str, dict] = {
 
 # ── Cosine similarity ─────────────────────────────────────────────────────────
 # ── Startup: build domain index ──────────────────────────────────────────────
+
 
 def build_domain_index(
     embed_batch_fn: Callable[[list[str]], list[list[float]]],
@@ -92,10 +91,11 @@ def build_domain_index(
     names = list(_MEMORY_DOMAINS.keys())
     descs = [_MEMORY_DOMAINS[n]["description"] for n in names]
     vecs = embed_batch_fn(descs)
-    return dict(zip(names, vecs))
+    return dict(zip(names, vecs, strict=True))
 
 
 # ── Per-turn: classify query ─────────────────────────────────────────────────
+
 
 def classify(
     query_embedding: list[float],
@@ -143,6 +143,7 @@ def classify(
 
 # ── Semantic fact filtering ──────────────────────────────────────────────────
 
+
 def filter_facts(
     facts: list[SemanticFact],
     active_domains: set[str],
@@ -169,19 +170,18 @@ def filter_facts(
     for fact in facts:
         key = fact.key
         # Check if this fact belongs to an active domain
-        if any(key == prefix or key.startswith(prefix + "_")
-               for prefix in active_prefixes):
+        if any(key == prefix or key.startswith(prefix + "_") for prefix in active_prefixes):
             result.append(fact)
         # Also include facts that don't belong to ANY known domain
         # (orphan facts — unknown keys shouldn't be silently dropped)
-        elif not any(key == prefix or key.startswith(prefix + "_")
-                     for prefix in all_prefixes):
+        elif not any(key == prefix or key.startswith(prefix + "_") for prefix in all_prefixes):
             result.append(fact)
 
     return result
 
 
 # ── Memory directory builder ─────────────────────────────────────────────────
+
 
 def build_directory(
     semantic_facts: list[SemanticFact],
@@ -206,9 +206,9 @@ def build_directory(
         if not prefixes:
             continue
         matching = [
-            f.key for f in semantic_facts
-            if any(f.key == p or f.key.startswith(p + "_")
-                   for p in prefixes)
+            f.key
+            for f in semantic_facts
+            if any(f.key == p or f.key.startswith(p + "_") for p in prefixes)
         ]
         if matching:
             domain_facts[name] = matching
@@ -216,7 +216,9 @@ def build_directory(
     # Identity
     if "identity" in domain_facts:
         keys = domain_facts["identity"]
-        lines.append(f"- Identity: {', '.join(keys)} ({len(keys)} fact{'s' if len(keys) != 1 else ''})")
+        lines.append(
+            f"- Identity: {', '.join(keys)} ({len(keys)} fact{'s' if len(keys) != 1 else ''})"
+        )
 
     # Preferences
     if "preferences" in domain_facts:
@@ -226,7 +228,9 @@ def build_directory(
     # Hardware
     if "hardware" in domain_facts:
         keys = domain_facts["hardware"]
-        lines.append(f"- Hardware: {', '.join(keys)} ({len(keys)} fact{'s' if len(keys) != 1 else ''})")
+        lines.append(
+            f"- Hardware: {', '.join(keys)} ({len(keys)} fact{'s' if len(keys) != 1 else ''})"
+        )
 
     # Notes
     if "notes" in domain_facts:
@@ -236,15 +240,21 @@ def build_directory(
     # Documents — note count only; don't list filenames unprompted
     if doc_inventory:
         n = len(doc_inventory)
-        lines.append(f"- Documents: {n} uploaded file{'s' if n != 1 else ''} (use docs.list to see names)")
+        lines.append(
+            f"- Documents: {n} uploaded file{'s' if n != 1 else ''} (use docs.list to see names)"
+        )
 
     # Episodic
     if episodic_count > 0:
-        lines.append(f"- History: {episodic_count} past conversation{'s' if episodic_count != 1 else ''} searchable")
+        lines.append(
+            f"- History: {episodic_count} past conversation{'s' if episodic_count != 1 else ''} searchable"
+        )
 
     # Learned knowledge
     if learned_count > 0:
-        lines.append(f"- Learned: {learned_count} knowledge entr{'ies' if learned_count != 1 else 'y'} from past conversations")
+        lines.append(
+            f"- Learned: {learned_count} knowledge entr{'ies' if learned_count != 1 else 'y'} from past conversations"
+        )
 
     # Session
     if session_keys:
@@ -258,18 +268,20 @@ def build_directory(
 
 # ── Episodic count (lightweight query) ───────────────────────────────────────
 
+
 def get_episodic_and_learned_counts(user_id: int = 0) -> tuple[int, int]:
     """Both episodic-archive and learned counts in a single scan of
     episodic_entries. Returns (episodic_count, learned_count)."""
     try:
         from kai.store.db import get_conn
+
         conn = get_conn()
         row = conn.execute(
             "SELECT "
             "  SUM(CASE WHEN entry_type NOT IN ('turn', 'learned') THEN 1 ELSE 0 END), "
             "  SUM(CASE WHEN entry_type = 'learned' THEN 1 ELSE 0 END) "
             "FROM episodic_entries WHERE user_id = ?",
-            (user_id,)
+            (user_id,),
         ).fetchone()
         if not row:
             return 0, 0

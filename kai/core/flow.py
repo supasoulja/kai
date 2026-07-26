@@ -11,6 +11,7 @@ Viewers: `:flow` in the CLI, GET /debug/flow in the web API.
 Toggle with FLOW_TRACE in config.py. Recording must never break a turn —
 every entry point swallows its own errors.
 """
+
 import json
 import time
 
@@ -18,7 +19,7 @@ import kai.config as cfg
 from kai.core._app_state import get_current_user_id
 from kai.store.db import get_conn
 
-_MAX_FIELD = 6000   # truncate giant payload values (full file dumps etc.)
+_MAX_FIELD = 6000  # truncate giant payload values (full file dumps etc.)
 _schema_ready = False
 
 # Retention: trim the oldest rows past cfg.FLOW_LOG_MAX so the debug log can't
@@ -114,8 +115,7 @@ def _maybe_trim(conn) -> None:
     cap = getattr(cfg, "FLOW_LOG_MAX", 5000)
     try:
         conn.execute(
-            "DELETE FROM flow_log WHERE id <= "
-            "(SELECT MAX(id) FROM flow_log) - ?",
+            "DELETE FROM flow_log WHERE id <= (SELECT MAX(id) FROM flow_log) - ?",
             (cap,),
         )
         conn.commit()
@@ -150,11 +150,14 @@ def recent_turns(limit: int = 10, user_id: int | None = None) -> list[dict]:
         _ensure_schema(conn)
         where = "" if user_id is None else "WHERE user_id = ?"
         scope: list = [] if user_id is None else [user_id]
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT trace_id, MIN(ts) AS started, COUNT(*) AS steps FROM flow_log
             {where}
             GROUP BY trace_id ORDER BY started DESC LIMIT ?
-        """, (*scope, limit)).fetchall()
+        """,
+            (*scope, limit),
+        ).fetchall()
         out = []
         for tid, ts, steps in rows:
             row = conn.execute(

@@ -15,7 +15,9 @@ dropped.
 Note: this covers *first-party* tools shipped in the repo. Untrusted third-party
 marketplace packs load through the (sandboxed) pack loader, never this scan.
 """
+
 from __future__ import annotations
+
 import importlib
 import pkgutil
 import sys

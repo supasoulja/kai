@@ -2,16 +2,21 @@
 Loads persona.md and recent relationship log entries.
 Builds the [IDENTITY] block injected into every system prompt.
 """
+
 import re
 from datetime import datetime
 
 from kai.config import PERSONA_PATH
 from kai.store.db import get_conn
-from kai.system.platform import IS_WINDOWS as _IS_WINDOWS, IS_MAC as _IS_MAC
+from kai.system.platform import IS_MAC as _IS_MAC
+from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 
 _OS_NAME = "Windows" if _IS_WINDOWS else ("macOS" if _IS_MAC else "Linux")
-_PATH_STYLE = ("drive letters like C:\\ and D:\\." if _IS_WINDOWS
-               else "POSIX paths like /, /home, /mnt. There are no C:\\ drive letters here.")
+_PATH_STYLE = (
+    "drive letters like C:\\ and D:\\."
+    if _IS_WINDOWS
+    else "POSIX paths like /, /home, /mnt. There are no C:\\ drive letters here."
+)
 
 
 def _load_persona() -> str:
@@ -25,20 +30,18 @@ def _recent_relationship_entries(limit: int = 3, user_id: int = 0) -> list[str]:
     rows = conn.execute(
         "SELECT timestamp, entry_type, content FROM relationship_log "
         "WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-        (user_id, limit)
+        (user_id, limit),
     ).fetchall()
     return [f"[{row[0][:10]} / {row[1]}] {row[2]}" for row in reversed(rows)]
 
 
-def log_relationship_entry(
-    entry_id: str, entry_type: str, content: str, user_id: int = 0
-) -> None:
+def log_relationship_entry(entry_id: str, entry_type: str, content: str, user_id: int = 0) -> None:
     """Record a milestone, tone shift, or significant moment."""
     conn = get_conn()
     conn.execute(
         "INSERT OR IGNORE INTO relationship_log (id, user_id, timestamp, entry_type, content) "
         "VALUES (?, ?, ?, ?, ?)",
-        (entry_id, user_id, datetime.now().isoformat(), entry_type, content)
+        (entry_id, user_id, datetime.now().isoformat(), entry_type, content),
     )
     conn.commit()
 

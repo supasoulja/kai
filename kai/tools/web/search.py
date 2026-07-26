@@ -3,9 +3,10 @@ search.web — DuckDuckGo search (no API key). Returns top N titles + snippets +
 Primary endpoint is the DDG HTML page; falls back to the sturdier DDG-Lite page
 when the HTML layout parses nothing, so one DDG redesign doesn't mean zero results.
 """
-import urllib.request
-import urllib.parse
+
 import re
+import urllib.parse
+import urllib.request
 
 from kai.config import SEARCH_MAX_RESULTS
 from kai.tools.registry import registry
@@ -55,8 +56,7 @@ def web_search(query: str, recency: str = "", max_results: int | None = None) ->
         lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
     body = "\n\n".join(lines)
     return (
-        body
-        + "\n\n---\n"
+        body + "\n\n---\n"
         "Synthesize the above into a clear answer. Do not just repeat the snippets. "
         "Note if sources agree or conflict. End with:\n"
         "Sources:\n• [Site Name] — [url]  (one line per source used)"
@@ -113,20 +113,22 @@ def _parse_results(html: str, max_results: int) -> list[dict]:
 
     # DDG HTML returns results in <div class="result"> blocks
     # Title is in <a class="result__a">, snippet in <a class="result__snippet">
-    title_pattern   = re.compile(r'class="result__a"[^>]*>(.*?)</a>', re.DOTALL)
+    title_pattern = re.compile(r'class="result__a"[^>]*>(.*?)</a>', re.DOTALL)
     snippet_pattern = re.compile(r'class="result__snippet"[^>]*>(.*?)</a>', re.DOTALL)
-    url_pattern     = re.compile(r'class="result__url"[^>]*>(.*?)</span>', re.DOTALL)
+    url_pattern = re.compile(r'class="result__url"[^>]*>(.*?)</span>', re.DOTALL)
 
-    titles   = title_pattern.findall(html)
+    titles = title_pattern.findall(html)
     snippets = snippet_pattern.findall(html)
-    urls     = url_pattern.findall(html)
+    urls = url_pattern.findall(html)
 
     for i in range(min(len(titles), max_results)):
-        results.append({
-            "title":   _strip_tags(titles[i]).strip(),
-            "snippet": _strip_tags(snippets[i]).strip() if i < len(snippets) else "",
-            "url":     _strip_tags(urls[i]).strip() if i < len(urls) else "",
-        })
+        results.append(
+            {
+                "title": _strip_tags(titles[i]).strip(),
+                "snippet": _strip_tags(snippets[i]).strip() if i < len(snippets) else "",
+                "url": _strip_tags(urls[i]).strip() if i < len(urls) else "",
+            }
+        )
 
     return results
 
@@ -134,22 +136,24 @@ def _parse_results(html: str, max_results: int) -> list[dict]:
 def _parse_lite_results(html: str, max_results: int) -> list[dict]:
     """Parse the DDG-Lite results page. Titles/links come from <a class="result-link">
     anchors; snippets from <td class="result-snippet"> cells."""
-    link_pattern    = re.compile(
-        r'<a[^>]+class="result-link"[^>]+href="(.*?)"[^>]*>(.*?)</a>', re.DOTALL)
-    snippet_pattern = re.compile(
-        r'class="result-snippet"[^>]*>(.*?)</td>', re.DOTALL)
+    link_pattern = re.compile(
+        r'<a[^>]+class="result-link"[^>]+href="(.*?)"[^>]*>(.*?)</a>', re.DOTALL
+    )
+    snippet_pattern = re.compile(r'class="result-snippet"[^>]*>(.*?)</td>', re.DOTALL)
 
-    links    = link_pattern.findall(html)        # [(href, title), ...]
+    links = link_pattern.findall(html)  # [(href, title), ...]
     snippets = snippet_pattern.findall(html)
 
     results = []
     for i in range(min(len(links), max_results)):
         href, title = links[i]
-        results.append({
-            "title":   _strip_tags(title).strip(),
-            "snippet": _strip_tags(snippets[i]).strip() if i < len(snippets) else "",
-            "url":     _clean_lite_url(href),
-        })
+        results.append(
+            {
+                "title": _strip_tags(title).strip(),
+                "snippet": _strip_tags(snippets[i]).strip() if i < len(snippets) else "",
+                "url": _clean_lite_url(href),
+            }
+        )
     return results
 
 

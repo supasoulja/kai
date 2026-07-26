@@ -5,15 +5,19 @@ Extracted from brain.py so the HTTP wrapper lives apart from the turn-
 orchestration logic in Brain.  Owns: payload building, streaming/non-streaming
 chat, embeddings, and liveness/model-list probes.
 """
+
 import json
 import urllib.request
 from collections.abc import Generator
 
 import kai.config as cfg
 from kai.config import (
-    CHAT_MODEL, EMBED_MODEL,
-    OLLAMA_BASE_URL, CONTEXT_WINDOW,
-    TEMPERATURE_TOOL, TEMPERATURE_FINAL,
+    CHAT_MODEL,
+    CONTEXT_WINDOW,
+    EMBED_MODEL,
+    OLLAMA_BASE_URL,
+    TEMPERATURE_FINAL,
+    TEMPERATURE_TOOL,
 )
 
 
@@ -22,8 +26,13 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
 
     def _base_payload(
-        self, model: str, messages: list, think: bool, tools=None,
-        temperature: float = TEMPERATURE_FINAL, keep_alive: "str | int" = "10m",
+        self,
+        model: str,
+        messages: list,
+        think: bool,
+        tools=None,
+        temperature: float = TEMPERATURE_FINAL,
+        keep_alive: "str | int" = "10m",
     ) -> dict:
         p: dict = {
             "model": model,
@@ -33,7 +42,7 @@ class OllamaClient:
             "options": {
                 "num_ctx": CONTEXT_WINDOW,
                 "temperature": temperature,
-                "repeat_penalty": 1.15,   # prevent degenerate repetition loops
+                "repeat_penalty": 1.15,  # prevent degenerate repetition loops
                 "repeat_last_n": 128,
             },
         }
@@ -94,9 +103,9 @@ class OllamaClient:
         payload = self._base_payload(model, messages, think, tools, temperature, keep_alive)
         payload["stream"] = True
         with self._post("/api/chat", payload) as resp:
-            in_think  = False
+            in_think = False
             think_buf: list[str] = []
-            think_chars = 0   # running size of this reasoning trace (loop guard)
+            think_chars = 0  # running size of this reasoning trace (loop guard)
             blank_streak = 0  # consecutive whitespace-only tokens (output loop guard)
             for raw_line in resp:
                 line = raw_line.strip()
@@ -125,8 +134,11 @@ class OllamaClient:
                     if think_chars > cfg.THINK_CHAR_CAP:
                         # Runaway reasoning loop — flush what we have and bail so the
                         # caller forces a direct, think-off answer instead of spinning.
-                        yield "", False, {"think_block": "".join(think_buf).strip(),
-                                          "think_runaway": True}
+                        yield (
+                            "",
+                            False,
+                            {"think_block": "".join(think_buf).strip(), "think_runaway": True},
+                        )
                         return
                     continue
 
@@ -154,8 +166,11 @@ class OllamaClient:
                         think_chars += len(token)
                         yield "", False, {"think_token": token}
                         if think_chars > cfg.THINK_CHAR_CAP:
-                            yield "", False, {"think_block": "".join(think_buf).strip(),
-                                              "think_runaway": True}
+                            yield (
+                                "",
+                                False,
+                                {"think_block": "".join(think_buf).strip(), "think_runaway": True},
+                            )
                             return
                     continue
 
@@ -173,12 +188,14 @@ class OllamaClient:
                         return  # degenerate output loop — model stuck on whitespace
                 yield token, False, {}
 
-    def embed(self, text: str, model: str = EMBED_MODEL,
-              keep_alive: "str | int" = 0) -> list[float]:
+    def embed(
+        self, text: str, model: str = EMBED_MODEL, keep_alive: "str | int" = 0
+    ) -> list[float]:
         return self.embed_batch([text], model, keep_alive=keep_alive)[0]
 
-    def embed_batch(self, texts: list[str], model: str = EMBED_MODEL,
-                    keep_alive: "str | int" = 0) -> list[list[float]]:
+    def embed_batch(
+        self, texts: list[str], model: str = EMBED_MODEL, keep_alive: "str | int" = 0
+    ) -> list[list[float]]:
         """Embed a list of strings in one HTTP call. Returns one vector per input.
 
         keep_alive defaults to 0 — the embed model (a *secondary* model) unloads

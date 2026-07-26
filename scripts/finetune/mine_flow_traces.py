@@ -26,6 +26,7 @@ Requires that FLOW_TRACE was enabled (kai/config.py) when the turns were recorde
 
     python scripts/finetune/mine_flow_traces.py --limit 2000 --out-dir data/mined
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,10 +83,12 @@ def mine(limit: int, out_dir: Path) -> dict:
     seeds_path = out_dir / "seeds.jsonl"
 
     stats = Counter()
-    seen_otto: set[str] = set()      # dedup identical (input, line) pairs
+    seen_otto: set[str] = set()  # dedup identical (input, line) pairs
 
-    with otto_path.open("w", encoding="utf-8") as otto_fh, \
-         seeds_path.open("w", encoding="utf-8") as seeds_fh:
+    with (
+        otto_path.open("w", encoding="utf-8") as otto_fh,
+        seeds_path.open("w", encoding="utf-8") as seeds_fh,
+    ):
         for tid, steps in _steps_by_turn(limit):
             stats["turns"] += 1
             route = _first(steps, "route")
@@ -102,8 +105,9 @@ def mine(limit: int, out_dir: Path) -> dict:
                     key = f"{user_input}␟{line}"
                     if key not in seen_otto:
                         seen_otto.add(key)
-                        otto_fh.write(json.dumps(_otto_example(user_input, line),
-                                                 ensure_ascii=False) + "\n")
+                        otto_fh.write(
+                            json.dumps(_otto_example(user_input, line), ensure_ascii=False) + "\n"
+                        )
                         stats["otto_examples"] += 1
 
             # ── Seed row (per turn) ──
@@ -119,14 +123,20 @@ def mine(limit: int, out_dir: Path) -> dict:
                     parsed = {}
                 tool_calls.append({"name": s.get("name", ""), "args": parsed})
 
-            seeds_fh.write(json.dumps({
-                "trace_id": tid,
-                "input": user_input,
-                "handoff": (route or {}).get("handoff"),
-                "profile": triage.get("profile"),
-                "specialist": triage.get("specialist"),
-                "tool_calls": tool_calls,
-            }, ensure_ascii=False) + "\n")
+            seeds_fh.write(
+                json.dumps(
+                    {
+                        "trace_id": tid,
+                        "input": user_input,
+                        "handoff": (route or {}).get("handoff"),
+                        "profile": triage.get("profile"),
+                        "specialist": triage.get("specialist"),
+                        "tool_calls": tool_calls,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
             stats["seeds"] += 1
             if tool_calls:
                 stats["seeds_with_tools"] += 1
@@ -135,8 +145,9 @@ def mine(limit: int, out_dir: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--limit", type=int, default=2000, help="most-recent turns to scan")
     ap.add_argument("--out-dir", default="data/mined", help="output directory")
     args = ap.parse_args(argv)
@@ -144,16 +155,22 @@ def main(argv: list[str] | None = None) -> int:
     result = mine(args.limit, Path(args.out_dir))
     s = result["stats"]
     if not s.get("turns"):
-        print("No flow turns found. Was FLOW_TRACE enabled when these turns ran?\n"
-              "Set FLOW_TRACE = True in kai/config.py, use Kai for a while, then re-run.",
-              file=sys.stderr)
+        print(
+            "No flow turns found. Was FLOW_TRACE enabled when these turns ran?\n"
+            "Set FLOW_TRACE = True in kai/config.py, use Kai for a while, then re-run.",
+            file=sys.stderr,
+        )
         return 1
     print(f"scanned {s.get('turns', 0)} turns")
     print(f"  Otto routing examples : {s.get('otto_examples', 0)}  → {result['otto']}")
-    print(f"  seeds                 : {s.get('seeds', 0)} "
-          f"({s.get('seeds_with_tools', 0)} with tool calls)  → {result['seeds']}")
-    print("\nNext: feed seeds.jsonl to tool_test_loop.py to capture real tool outputs,\n"
-          "then verify_examples.py to gate the result before training.")
+    print(
+        f"  seeds                 : {s.get('seeds', 0)} "
+        f"({s.get('seeds_with_tools', 0)} with tool calls)  → {result['seeds']}"
+    )
+    print(
+        "\nNext: feed seeds.jsonl to tool_test_loop.py to capture real tool outputs,\n"
+        "then verify_examples.py to gate the result before training."
+    )
     return 0
 
 

@@ -17,6 +17,7 @@ Human brain analog: the real cerebellum receives an efference copy of a motor
 command BEFORE it executes, predicts the expected sensory outcome, and corrects
 in real time when reality diverges. This does the same thing for tool calls.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,27 +48,48 @@ class CerebellarResult:
 # ── Write-capable tools ────────────────────────────────────────────────────────
 # Anything that can modify state on the host or a remote node.
 # Pre-check applies tighter drift thresholds for these.
-_WRITE_TOOLS: frozenset[str] = frozenset({
-    "files.write", "files.edit", "files.append", "files.delete",
-    "sandbox.propose_move", "sandbox.propose_delete", "sandbox.propose_rename",
-    "sandbox.approve",
-    "system.clear_temp_files", "system.run_disk_cleanup",
-    "system.create_restore_point", "system.repair_files",
-    "system.disable_startup_program", "system.kill_process",
-    "pc.deep_scan",
-    "self.apply_persona_update",
-    "workspace.git_clone", "workspace.git_pull",
-})
+_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "files.write",
+        "files.edit",
+        "files.append",
+        "files.delete",
+        "sandbox.propose_move",
+        "sandbox.propose_delete",
+        "sandbox.propose_rename",
+        "sandbox.approve",
+        "system.clear_temp_files",
+        "system.run_disk_cleanup",
+        "system.create_restore_point",
+        "system.repair_files",
+        "system.disable_startup_program",
+        "system.kill_process",
+        "pc.deep_scan",
+        "self.apply_persona_update",
+        "workspace.git_clone",
+        "workspace.git_pull",
+    }
+)
 
 # ── Data-returning tools ───────────────────────────────────────────────────────
 # These should produce substantial output. A very short return is suspicious.
-_DATA_TOOLS: frozenset[str] = frozenset({
-    "system.info", "system.temps", "system.crashes",
-    "pc.network_info", "pc.event_logs", "pc.startup_programs",
-    "files.read", "files.list", "files.find_large", "files.find_old",
-    "search.web", "docs.search",
-    "network.full_diagnostic",
-})
+_DATA_TOOLS: frozenset[str] = frozenset(
+    {
+        "system.info",
+        "system.temps",
+        "system.crashes",
+        "pc.network_info",
+        "pc.event_logs",
+        "pc.startup_programs",
+        "files.read",
+        "files.list",
+        "files.find_large",
+        "files.find_old",
+        "search.web",
+        "docs.search",
+        "network.full_diagnostic",
+    }
+)
 
 # ── Error patterns in tool output ─────────────────────────────────────────────
 _ERROR_PATTERNS = re.compile(
@@ -106,10 +128,12 @@ _bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cerebellum-log")
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+
 def _embed_action(tool_name: str, tool_args: dict) -> list[float] | None:
     """Embed a text description of the proposed tool call. Returns None on failure."""
     try:
         from kai.llm.embed import embed as _fast_embed
+
         arg_summary = " ".join(str(v) for v in tool_args.values() if v)
         text = f"tool {tool_name} {arg_summary}".strip()
         return _fast_embed(text)
@@ -118,6 +142,7 @@ def _embed_action(tool_name: str, tool_args: dict) -> list[float] | None:
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
+
 
 def call_signature(tool_name: str, tool_args: dict) -> str:
     """Canonical signature for loop detection — same tool + same args.
@@ -275,6 +300,7 @@ def _write_log(
 ) -> None:
     try:
         from kai.store.db import get_conn
+
         conn = get_conn()
         conn.execute(
             "INSERT INTO cerebellum_log "

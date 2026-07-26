@@ -6,6 +6,7 @@ Browser automation tools — JS-rendered pages that research.fetch_url can't rea
 
 Uses Playwright headless Chromium. Falls back gracefully if Playwright isn't available.
 """
+
 import re
 import tempfile
 from pathlib import Path
@@ -21,6 +22,7 @@ _PLAYWRIGHT_ERR = (
 def _playwright_available() -> bool:
     try:
         import playwright  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -35,6 +37,7 @@ def _clean_text(raw: str) -> str:
 
 
 # ── browser.read_page ──────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="browser.read_page",
@@ -66,10 +69,11 @@ def read_page(url: str, wait_for: str = "") -> str:
 
     url = url.strip()
     if not url.startswith(("http://", "https://")):
-        return f"Invalid URL — must start with http:// or https://"
+        return "Invalid URL — must start with http:// or https://"
 
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
@@ -104,6 +108,7 @@ def read_page(url: str, wait_for: str = "") -> str:
         # Search mode: return an excerpt, not the whole page (same contract as
         # research.fetch_url). Deep/full reads go through research.add_to_library.
         from kai.config import WEB_EXCERPT_CHARS
+
         truncated = len(text) > WEB_EXCERPT_CHARS
         result = f"[browser] {url}\n\n{text[:WEB_EXCERPT_CHARS]}"
         if truncated:
@@ -118,6 +123,7 @@ def read_page(url: str, wait_for: str = "") -> str:
 
 
 # ── browser.screenshot ─────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="browser.screenshot",
@@ -147,7 +153,8 @@ def screenshot(url: str, full_page: bool = False) -> str:
         return "Invalid URL — must start with http:// or https://"
 
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright
 
         # Save to a known temp location so vision.describe can find it
         out_path = Path(tempfile.gettempdir()) / "kai_screenshot.png"

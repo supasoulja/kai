@@ -5,18 +5,19 @@ Tables (in kai.db):
   sessions         — one row per conversation
   session_messages — one row per message (user or assistant)
 """
+
 import uuid
 from datetime import datetime
 
 from kai.store.db import get_conn, like_escape
 
-
 # ── Write ────────────────────────────────────────────────────────────────────
+
 
 def new_session(title: str, user_id: int = 0) -> str:
     """Create a new session row and return its UUID."""
-    sid  = str(uuid.uuid4())
-    now  = datetime.now().isoformat()
+    sid = str(uuid.uuid4())
+    now = datetime.now().isoformat()
     conn = get_conn()
     conn.execute(
         "INSERT INTO sessions (id, user_id, title, started_at, last_active, message_count) "
@@ -44,8 +45,7 @@ def append_message(
         (session_id, user_id, role, content, now, turn_order, latency_ms),
     )
     conn.execute(
-        "UPDATE sessions SET message_count = message_count + 1, last_active = ? "
-        "WHERE id = ?",
+        "UPDATE sessions SET message_count = message_count + 1, last_active = ? WHERE id = ?",
         (now, session_id),
     )
     conn.commit()
@@ -64,6 +64,7 @@ def save_feedback(message_id: int, value: int) -> None:
 
 # ── Read ─────────────────────────────────────────────────────────────────────
 
+
 def list_sessions(limit: int = 50, user_id: int = 0) -> list[dict]:
     """Return sessions for this user, sorted by most recently active."""
     conn = get_conn()
@@ -74,10 +75,10 @@ def list_sessions(limit: int = 50, user_id: int = 0) -> list[dict]:
     ).fetchall()
     return [
         {
-            "id":            r[0],
-            "title":         r[1],
-            "started_at":    r[2],
-            "last_active":   r[3],
+            "id": r[0],
+            "title": r[1],
+            "started_at": r[2],
+            "last_active": r[3],
             "message_count": r[4],
         }
         for r in rows
@@ -120,10 +121,10 @@ def search_messages(query: str, limit: int = 10, user_id: int = 0) -> list[dict]
     ).fetchall()
     return [
         {
-            "role":       r[0],
-            "content":    r[1],
-            "timestamp":  r[2],
-            "session":    r[3],
+            "role": r[0],
+            "content": r[1],
+            "timestamp": r[2],
+            "session": r[3],
             "session_id": r[4],
         }
         for r in rows

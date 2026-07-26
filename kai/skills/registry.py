@@ -9,13 +9,16 @@ Skills can be:
 The registry scans all sources at startup, deduplicates by name, and provides
 lookup by exact name or trigger-keyword matching.
 """
+
 from __future__ import annotations
+
 import concurrent.futures
 import importlib
 import importlib.util
 import re
 import sys
-from dataclasses import dataclass, field as _dc_field
+from dataclasses import dataclass
+from dataclasses import field as _dc_field
 from pathlib import Path
 from typing import Any
 
@@ -50,19 +53,23 @@ _MAX_RECIPE_WORKERS = 8
 @dataclass
 class _RecipeStep:
     """One parsed step of a recipe: a tool call plus its data dependencies."""
-    idx: int                       # declaration order (drives deterministic output)
-    step_id: str                   # unique handle other steps reference
+
+    idx: int  # declaration order (drives deterministic output)
+    step_id: str  # unique handle other steps reference
     tool_name: str
-    args: dict[str, str]           # inline args; values may hold {{ref}} tokens
+    args: dict[str, str]  # inline args; values may hold {{ref}} tokens
     deps: set[str] = _dc_field(default_factory=set)  # step ids this one waits on
-    label: str = ""                # how to name this step in a user-facing error
+    label: str = ""  # how to name this step in a user-facing error
 
     def __post_init__(self) -> None:
         # Unnamed steps get an internal id (_s3) that would be meaningless in a
         # validation message shown in Settings — describe them by position instead.
         if not self.label:
-            self.label = (f"'{self.step_id}'" if not self.step_id.startswith("_s")
-                          else f"step {self.idx + 1} ({self.tool_name})")
+            self.label = (
+                f"'{self.step_id}'"
+                if not self.step_id.startswith("_s")
+                else f"step {self.idx + 1} ({self.tool_name})"
+            )
 
 
 def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
@@ -107,8 +114,7 @@ def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
     for s in steps:
         unknown = s.deps - ids
         if unknown:
-            raise ValueError(
-                f"{s.label} references unknown step {sorted(unknown)[0]!r}")
+            raise ValueError(f"{s.label} references unknown step {sorted(unknown)[0]!r}")
     return steps
 
 
@@ -160,7 +166,7 @@ def _parse_md_skill(path: Path) -> Skill | None:
     triggers = [t.strip() for t in triggers_raw.split(",") if t.strip()]
 
     # Extract steps — tool calls listed as "- tool.name arg1=val1 arg2=val2"
-    body = text[fm_match.end():]
+    body = text[fm_match.end() :]
     steps: list[str] = _LIST_ITEM_RE.findall(body)
 
     skill = _MarkdownSkill()
@@ -193,16 +199,18 @@ class _MarkdownSkill(Skill):
         try:
             steps = _parse_steps(self._steps)
         except ValueError as exc:
-            return SkillResult(success=False, output=f"[recipe] ERROR: {exc}",
-                               tool_calls=[])
+            return SkillResult(success=False, output=f"[recipe] ERROR: {exc}", tool_calls=[])
 
         # user_id/session_id live in threading.local(), which does NOT reach
         # worker threads — capture them here and re-establish inside each worker
         # so per-user DB scoping still holds for tools run in parallel.
         from kai.core._app_state import (
-            get_current_user_id, get_current_session_id,
-            set_current_user_id, set_current_session_id,
+            get_current_session_id,
+            get_current_user_id,
+            set_current_session_id,
+            set_current_user_id,
         )
+
         uid, sid = get_current_user_id(), get_current_session_id()
 
         def _run(tool_name: str, merged: dict) -> str:
@@ -210,8 +218,8 @@ class _MarkdownSkill(Skill):
             set_current_session_id(sid)
             return str(self.call_tool(tool_name, merged))
 
-        completed: dict[str, tuple[bool, str]] = {}   # step_id → (ok, output)
-        ran: set[str] = set()                         # steps we actually invoked
+        completed: dict[str, tuple[bool, str]] = {}  # step_id → (ok, output)
+        ran: set[str] = set()  # steps we actually invoked
         remaining = list(steps)
 
         while remaining:
@@ -220,7 +228,9 @@ class _MarkdownSkill(Skill):
                 # Nothing can advance but steps remain → cycle or unreachable dep.
                 for s in remaining:
                     completed[s.step_id] = (
-                        False, "ERROR: unresolved dependency (cycle or unknown step)")
+                        False,
+                        "ERROR: unresolved dependency (cycle or unknown step)",
+                    )
                 break
 
             # A step whose dependency failed can't run meaningfully — skip it and
@@ -230,7 +240,9 @@ class _MarkdownSkill(Skill):
                 failed = sorted(d for d in s.deps if not completed[d][0])
                 if failed:
                     completed[s.step_id] = (
-                        False, f"ERROR: skipped — dependency '{failed[0]}' failed")
+                        False,
+                        f"ERROR: skipped — dependency '{failed[0]}' failed",
+                    )
                     continue
                 resolved = {k: _resolve_refs(v, completed) for k, v in s.args.items()}
                 # Caller args are the low-priority base; inline args win.
@@ -241,8 +253,7 @@ class _MarkdownSkill(Skill):
             if prepared:
                 workers = min(len(prepared), _MAX_RECIPE_WORKERS)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    futures = {pool.submit(_run, s.tool_name, m): s
-                               for s, m in prepared}
+                    futures = {pool.submit(_run, s.tool_name, m): s for s, m in prepared}
                     for fut in concurrent.futures.as_completed(futures):
                         s = futures[fut]
                         ran.add(s.step_id)
@@ -276,6 +287,7 @@ def _parse_inline_args(raw: str) -> dict[str, str]:
 
 # ── Skill Registry ───────────────────────────────────────────────────────────
 
+
 class SkillRegistry:
     """
     Central registry for all skills. Scans built-in and user skill directories,
@@ -283,7 +295,7 @@ class SkillRegistry:
     """
 
     def __init__(self, tool_registry: Any | None = None):
-        self._skills: dict[str, Skill] = {}       # name → Skill instance
+        self._skills: dict[str, Skill] = {}  # name → Skill instance
         self._tool_registry = tool_registry
 
     @property
@@ -363,7 +375,7 @@ class SkillRegistry:
         count += self._scan_python_dir(builtin_dir, package="kai.skills")
 
         # 2. Extra directories (user skills, SKILL.md files)
-        for d in (extra_dirs or []):
+        for d in extra_dirs or []:
             if not d.is_dir():
                 continue
             count += self._scan_python_dir(d)
@@ -409,7 +421,9 @@ class SkillRegistry:
                         count += 1
             except Exception:
                 if cfg.DEBUG:
-                    import traceback; traceback.print_exc()
+                    import traceback
+
+                    traceback.print_exc()
         return count
 
     def _scan_md_dir(self, directory: Path) -> int:
@@ -429,7 +443,9 @@ class SkillRegistry:
                     count += 1
                 except ValueError:
                     if cfg.DEBUG:
-                        import traceback; traceback.print_exc()
+                        import traceback
+
+                        traceback.print_exc()
         return count
 
     @staticmethod

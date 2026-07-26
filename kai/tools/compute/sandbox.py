@@ -11,33 +11,51 @@ user has access — but destructive ops go through a two-step flow:
 
 Protected system paths are permanently blocked — no proposal, no override.
 """
+
 import shutil
 import time
 import uuid
 from pathlib import Path
 
-from kai.tools.registry import registry
-from kai.store.db import get_conn
 import kai.config as cfg
+from kai.store.db import get_conn
+from kai.tools.registry import registry
 
 # ── Protected paths (never touched, period) ──────────────────────────────────
 
 _PROTECTED_PATHS = {
-    "windows", "system32", "syswow64", "winsxs",
-    "system volume information", "$recycle.bin", "recovery",
-    "programdata", "boot", "efi",
+    "windows",
+    "system32",
+    "syswow64",
+    "winsxs",
+    "system volume information",
+    "$recycle.bin",
+    "recovery",
+    "programdata",
+    "boot",
+    "efi",
 }
 
 _PROTECTED_FILES = {
-    "bootmgr", "ntldr", "pagefile.sys", "swapfile.sys", "hiberfil.sys",
-    "ntdetect.com", "boot.ini", "autoexec.bat", "config.sys",
+    "bootmgr",
+    "ntldr",
+    "pagefile.sys",
+    "swapfile.sys",
+    "hiberfil.sys",
+    "ntdetect.com",
+    "boot.ini",
+    "autoexec.bat",
+    "config.sys",
 }
 
 _PROTECTED_EXTENSIONS = {".sys", ".dll", ".drv"}
 
 # These top-level dirs are read-only (can copy FROM, never write/move/delete INTO)
 _READ_ONLY_ROOTS = {
-    "windows", "program files", "program files (x86)", "programdata",
+    "windows",
+    "program files",
+    "program files (x86)",
+    "programdata",
 }
 
 
@@ -103,6 +121,7 @@ def _create_proposal(op: str, source: str, dest: str = "") -> dict:
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
+
 def _ensure_table():
     conn = get_conn()
     conn.execute("""
@@ -131,6 +150,7 @@ def _log_op(op: str, source: str, dest: str, status: str, user_id: int = 0):
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="sandbox.copy_to_workspace",
@@ -179,7 +199,7 @@ def copy_to_workspace(source: str, dest_name: str = "") -> str:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             size = dest.stat().st_size
-            sz = f"{size/1_048_576:.1f} MB" if size >= 1_048_576 else f"{size/1024:.1f} KB"
+            sz = f"{size / 1_048_576:.1f} MB" if size >= 1_048_576 else f"{size / 1024:.1f} KB"
             _log_op("copy_to_workspace", str(src), str(dest), "ok")
             return f"Copied → {dest}  ({sz})"
     except PermissionError:
@@ -244,7 +264,11 @@ def propose_move(source: str, dest: str) -> str:
         what = f"folder ({count} files)"
     else:
         size = src.stat().st_size
-        what = f"file ({size/1_048_576:.1f} MB)" if size >= 1_048_576 else f"file ({size/1024:.1f} KB)"
+        what = (
+            f"file ({size / 1_048_576:.1f} MB)"
+            if size >= 1_048_576
+            else f"file ({size / 1024:.1f} KB)"
+        )
 
     return (
         f"PROPOSAL [{proposal['proposal_id']}] — MOVE {what}\n"
@@ -293,11 +317,15 @@ def propose_delete(source: str) -> str:
     if is_dir:
         count = sum(1 for _ in src.rglob("*") if _.is_file())
         total_size = sum(f.stat().st_size for f in src.rglob("*") if f.is_file())
-        sz = f"{total_size/1_048_576:.1f} MB" if total_size >= 1_048_576 else f"{total_size/1024:.1f} KB"
+        sz = (
+            f"{total_size / 1_048_576:.1f} MB"
+            if total_size >= 1_048_576
+            else f"{total_size / 1024:.1f} KB"
+        )
         what = f"folder ({count} files, {sz} total)"
     else:
         size = src.stat().st_size
-        sz = f"{size/1_048_576:.1f} MB" if size >= 1_048_576 else f"{size/1024:.1f} KB"
+        sz = f"{size / 1_048_576:.1f} MB" if size >= 1_048_576 else f"{size / 1024:.1f} KB"
         what = f"file ({sz})"
 
     return (
@@ -380,7 +408,9 @@ def approve_proposal(proposal_id: str) -> str:
     _clean_expired()
     pid = proposal_id.strip()
     if pid not in _pending:
-        return f"Proposal '{pid}' not found or expired (proposals last 5 minutes). Create a new one."
+        return (
+            f"Proposal '{pid}' not found or expired (proposals last 5 minutes). Create a new one."
+        )
 
     p = _pending.pop(pid)
     op = p["op"]
@@ -424,7 +454,7 @@ def approve_proposal(proposal_id: str) -> str:
 
     except PermissionError:
         _log_op(op, str(source), p["dest"], "permission_denied")
-        return f"Permission denied. The file may be in use or require admin access."
+        return "Permission denied. The file may be in use or require admin access."
     except Exception as e:
         _log_op(op, str(source), p["dest"], f"error: {e}")
         return f"Operation failed: {e}"

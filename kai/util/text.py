@@ -4,6 +4,7 @@ Small text helpers shared across modules.
 Kept separate from brain.py so lightweight callers (e.g. sleep.py) can reuse
 them without importing the whole conversation engine.
 """
+
 import re
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)

@@ -1,18 +1,32 @@
 """
 self_inspect.py — lets Kai read her own source code, see recent changes, and propose persona updates.
 """
+
 import difflib
 import re
 from pathlib import Path
 
+from kai.config import PERSONA_PATH, ROOT_DIR
 from kai.tools.registry import registry
-from kai.config import ROOT_DIR, PERSONA_PATH
 
 _PROJECT_ROOT = ROOT_DIR
 
-_EXCLUDED_DIRS = {"__pycache__", ".git", "node_modules", "data", "KaiFiles",
-                  "kai's memory", ".mypy_cache", ".pytest_cache", ".venv",
-                  "venv", "env", ".env", "site-packages", "dist-info"}
+_EXCLUDED_DIRS = {
+    "__pycache__",
+    ".git",
+    "node_modules",
+    "data",
+    "KaiFiles",
+    "kai's memory",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "venv",
+    "env",
+    ".env",
+    "site-packages",
+    "dist-info",
+}
 _EXCLUDED_EXTENSIONS = {".db", ".bak", ".pyc", ".pyo", ".egg-info"}
 _MAX_FILE_SIZE = 100_000  # 100 KB — skip binary/huge files
 
@@ -84,7 +98,7 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
     try:
         target.resolve().relative_to(_PROJECT_ROOT.resolve())
     except ValueError:
-        return f"Access denied — path must be within the project directory."
+        return "Access denied — path must be within the project directory."
 
     if not target.exists():
         return f"Not found: {clean}"
@@ -112,7 +126,7 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
     if s > total:
         return f"{clean} has {total} lines — start_line {s} is past the end."
 
-    selected = lines[s - 1:e]
+    selected = lines[s - 1 : e]
     numbered = [f"{i:4d} | {line}" for i, line in enumerate(selected, start=s)]
     header = f"{clean} ({total} lines)"
     if s != 1 or e != total:
@@ -122,6 +136,7 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
 
 
 # ── Recent changes ──────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="self.recent_changes",
@@ -146,10 +161,14 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
 )
 def recent_changes(limit: int = 10, file: str = "") -> str:
     import subprocess
+
     limit = max(1, min(int(limit), 50))
     cmd = [
-        "git", "-C", str(_PROJECT_ROOT),
-        "log", f"-{limit}",
+        "git",
+        "-C",
+        str(_PROJECT_ROOT),
+        "log",
+        f"-{limit}",
         "--pretty=format:%h %ad %s",
         "--date=short",
         "--stat",
@@ -167,6 +186,7 @@ def recent_changes(limit: int = 10, file: str = "") -> str:
 
 
 # ── Live tool inventory ───────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="self.list_tools",
@@ -217,6 +237,7 @@ def list_tools(namespace: str = "") -> str:
 
 # ── Persona gap detection ────────────────────────────────────────────────────
 
+
 def _get_persona_text() -> str:
     if PERSONA_PATH.exists():
         return PERSONA_PATH.read_text(encoding="utf-8")
@@ -226,6 +247,7 @@ def _get_persona_text() -> str:
 def _get_registered_tools() -> list[str]:
     try:
         from kai.tools.registry import registry as _reg
+
         return sorted(_reg.list_tools())
     except Exception:
         return []
@@ -376,7 +398,7 @@ def _compute_persona_update(section: str, content: str) -> tuple[str, str, bool]
 
     if match:
         # Replace existing section
-        updated = persona[:match.start()] + new_section_text + "\n---\n\n" + persona[match.end():]
+        updated = persona[: match.start()] + new_section_text + "\n---\n\n" + persona[match.end() :]
     else:
         # New section — append at the end
         updated = persona.rstrip() + "\n\n---\n\n" + new_section_text
@@ -395,8 +417,10 @@ def persona_update_diff(section: str, content: str) -> str:
     if old == new:
         return ""
     diff = difflib.unified_diff(
-        old.splitlines(), new.splitlines(),
-        fromfile="persona.md (current)", tofile="persona.md (proposed)",
+        old.splitlines(),
+        new.splitlines(),
+        fromfile="persona.md (current)",
+        tofile="persona.md (proposed)",
         lineterm="",
     )
     return "\n".join(diff)

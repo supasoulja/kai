@@ -12,6 +12,7 @@ Lifecycle:
 Access the mutable singletons through the module (`state.ollama`), never via
 `from ... import ollama`, so reassignment at init time is visible everywhere.
 """
+
 import json
 import threading
 
@@ -43,6 +44,7 @@ def ensure_skill_registry():
     global skill_registry
     if skill_registry is None:
         from kai.skills import build_skill_registry
+
         skill_registry = build_skill_registry(tool_registry)
     return skill_registry
 
@@ -54,6 +56,7 @@ def reload_skills() -> int:
     if sr is None:
         return 0
     return sr.reload(extra_dirs=[cfg.ROOT_DIR / "user_skills"])
+
 
 # ── Per-user Brain + MemoryManager instances ─────────────────────────────────
 user_brains: dict[int, Brain] = {}
@@ -83,6 +86,7 @@ def get_or_create_brain(user_id: int) -> Brain:
         if brain is not None:
             return brain
         from kai.llm.embed import embed as _fast_embed
+
         memory = MemoryManager(embed_fn=_fast_embed, user_id=user_id)
         # Copy shared indexes so we don't re-embed per user
         memory._domain_index = dict(shared_domain_index)

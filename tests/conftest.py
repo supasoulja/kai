@@ -16,6 +16,7 @@ tracked schema init per-path, the per-module `cfg.DB_PATH = tmp` assignments
 silently did nothing — whichever module imported db first won, and the rest
 shared its database. That produced ~25 order-dependent "no such table" failures.
 """
+
 import os
 import tempfile
 from pathlib import Path

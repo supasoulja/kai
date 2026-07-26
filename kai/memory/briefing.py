@@ -12,6 +12,7 @@ Design note: briefing generation is intentionally LLM-free. It assembles
 structured facts from the DB. This means it works even when Ollama isn't
 loaded, adds zero VRAM pressure, and runs in under 100ms.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -56,6 +57,7 @@ def _get_stale_goals(user_id: int) -> list[dict]:
     """Return active goals with no progress in GOAL_STALE_DAYS."""
     try:
         from kai.store.db import get_conn
+
         cutoff = time.time() - (cfg.GOAL_STALE_DAYS * 86400)
         conn = get_conn()
         rows = conn.execute(
@@ -73,6 +75,7 @@ def _store(content: str, user_id: int) -> None:
     """Write briefing to pending_briefings table."""
     try:
         from kai.store.db import get_conn
+
         conn = get_conn()
         conn.execute(
             "INSERT INTO pending_briefings (id, user_id, generated_at, content, delivered) "
@@ -91,6 +94,7 @@ def get_pending(user_id: int = 0) -> str:
     """
     try:
         from kai.store.db import get_conn
+
         conn = get_conn()
         row = conn.execute(
             "SELECT id, content FROM pending_briefings "
@@ -109,10 +113,10 @@ def mark_delivered(user_id: int = 0) -> None:
     """Mark all pending briefings for user_id as delivered."""
     try:
         from kai.store.db import get_conn
+
         conn = get_conn()
         conn.execute(
-            "UPDATE pending_briefings SET delivered = 1 "
-            "WHERE user_id = ? AND delivered = 0",
+            "UPDATE pending_briefings SET delivered = 1 WHERE user_id = ? AND delivered = 0",
             (user_id,),
         )
         conn.commit()

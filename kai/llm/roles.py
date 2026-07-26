@@ -15,6 +15,7 @@ here for completeness and the future Settings → Brains matrix, but their runti
 wiring still flows through the existing mechanisms (CHAT_MODEL, set_active_brain,
 the embed configs); unifying those is Phase 4 (per-agent brains).
 """
+
 import json
 
 import kai.config as cfg
@@ -24,11 +25,11 @@ _ROLES_PATH = cfg.MEMORY_DIR / "roles.json"
 # Role defaults (from Part D). crew = the shared local tool model (Otto + all
 # specialists); voice = Kai's user-facing answer; memory = the semantic-read loop.
 ROLE_MODELS: dict[str, str] = {
-    "voice":      cfg.CHAT_MODEL,
-    "crew":       cfg.TOOL_MODEL_LEVELS.get("balanced", {}).get("model") or cfg.CHAT_MODEL,
-    "memory":     cfg.MEMORY_MODEL,
+    "voice": cfg.CHAT_MODEL,
+    "crew": cfg.TOOL_MODEL_LEVELS.get("balanced", {}).get("model") or cfg.CHAT_MODEL,
+    "memory": cfg.MEMORY_MODEL,
     "embed_fast": cfg.FAST_EMBED_MODEL,
-    "embed_hq":   cfg.HQ_EMBED_MODEL,
+    "embed_hq": cfg.HQ_EMBED_MODEL,
 }
 
 

@@ -29,8 +29,15 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # Re-export facades intentionally import names they don't use locally.
 "__init__.py" = ["F401"]
-# Tests lean on bare asserts and occasional unused fixtures.
-"tests/*" = ["F811", "F841"]
+# Tests lean on bare asserts and occasional unused fixtures, and legitimately
+# set up env vars / sys.path before importing the app (E402).
+"tests/*" = ["F811", "F841", "E402"]
+# Finetune/utility scripts also do setup-before-import.
+"scripts/*" = ["E402"]
+# web.py is the app entrypoint: it guards the uvicorn import and imports the
+# domain routers right where they're mounted (include_router), so its imports
+# are intentionally not all at the top.
+"web.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 # Treat the app package as first-party so its imports group together.

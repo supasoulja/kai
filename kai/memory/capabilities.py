@@ -14,6 +14,7 @@ STATE_DIR/capabilities_<user_id>.json. The FIRST time we look (no snapshot yet)
 we seed it to the full current toolset and surface nothing — a fresh install
 shouldn't announce all of Kai's tools as "new". Only tools added later appear.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,9 +57,7 @@ def _load_snapshot(user_id) -> set[str]:
 
 
 def _save_snapshot(user_id, names) -> None:
-    _snapshot_path(user_id).write_text(
-        json.dumps(sorted(names)), encoding="utf-8"
-    )
+    _snapshot_path(user_id).write_text(json.dumps(sorted(names)), encoding="utf-8")
 
 
 def new_capabilities(user_id) -> list[dict]:
@@ -82,11 +81,13 @@ def new_capabilities(user_id) -> list[dict]:
     groups: dict[str, list[dict]] = {}
     for name in sorted(new_names):
         info = live[name]
-        groups.setdefault(info["namespace"], []).append({
-            "name": name,
-            "tool": info["tool"],
-            "description": info["description"],
-        })
+        groups.setdefault(info["namespace"], []).append(
+            {
+                "name": name,
+                "tool": info["tool"],
+                "description": info["description"],
+            }
+        )
     return [{"namespace": ns, "tools": tools} for ns, tools in sorted(groups.items())]
 
 

@@ -33,13 +33,14 @@ the SPECIALISTS roster instead.
 Run from anywhere:
     python scripts/finetune/verify_examples.py --in data/raw.jsonl --out data/clean.jsonl
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 
 # Make the repo importable when run as a standalone script.
@@ -51,8 +52,8 @@ import kai.tools  # noqa: F401  — side effect: registers every @registry.tool(
 from kai.core import crew
 from kai.tools.registry import registry
 
-
 # ── Registry access (cached) ─────────────────────────────────────────────────────
+
 
 @lru_cache(maxsize=1)
 def _schema_index() -> dict[str, dict]:
@@ -66,14 +67,14 @@ def _schema_index() -> dict[str, dict]:
     return out
 
 
-@lru_cache(maxsize=None)
+@cache
 def slice_for(specialist: str) -> frozenset[str]:
     """The exact set of tool names a specialist is allowed to call."""
     ctm = registry.category_tool_map()
     return frozenset(crew.tools_for_specialist(specialist, ctm))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _prompt_to_specialist() -> dict[str, str]:
     """Reverse map: the verbatim crew prompt text → specialist name. Lets us infer
     which worker an example belongs to straight from its system message."""
@@ -92,6 +93,7 @@ def resolve_specialist(system_prompt: str) -> str | None:
 
 
 # ── The core check ───────────────────────────────────────────────────────────────
+
 
 @dataclass
 class CallCheck:
@@ -139,11 +141,12 @@ def verify_call(specialist: str, name: str, args: dict | None) -> CallCheck:
 
 # ── Example-level validation ─────────────────────────────────────────────────────
 
+
 @dataclass
 class ExampleResult:
     ok: bool
     specialist: str | None
-    kind: str                      # "specialist" | "otto" | "unknown"
+    kind: str  # "specialist" | "otto" | "unknown"
     calls: list[CallCheck] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
 
@@ -159,17 +162,20 @@ def verify_example(ex: dict) -> ExampleResult:
     specialist = (ex.get("meta") or {}).get("specialist") or resolve_specialist(system)
 
     if specialist is None:
-        return ExampleResult(False, None, "unknown",
-                             issues=["could not identify specialist from system prompt"])
+        return ExampleResult(
+            False, None, "unknown", issues=["could not identify specialist from system prompt"]
+        )
 
     # Otto: no tool calls; assistant emits a DISPATCH/FINISH line we can parse.
     if specialist == "Otto":
-        final = next((m.get("content", "") for m in reversed(msgs)
-                      if m.get("role") == "assistant"), "")
+        final = next(
+            (m.get("content", "") for m in reversed(msgs) if m.get("role") == "assistant"), ""
+        )
         decision = crew.parse_otto_decision(final)
         if decision is None:
-            return ExampleResult(False, "Otto", "otto",
-                                 issues=[f"Otto line did not parse: {final!r:.80}"])
+            return ExampleResult(
+                False, "Otto", "otto", issues=[f"Otto line did not parse: {final!r:.80}"]
+            )
         return ExampleResult(True, "Otto", "otto")
 
     # Specialist: check every assistant tool call.
@@ -185,8 +191,9 @@ def verify_example(ex: dict) -> ExampleResult:
     if not calls:
         # A specialist example with zero tool calls is the exact failure we want to
         # train OUT — unless it's a clean needs:/blocked: handback.
-        final = next((m.get("content", "") for m in reversed(msgs)
-                      if m.get("role") == "assistant"), "")
+        final = next(
+            (m.get("content", "") for m in reversed(msgs) if m.get("role") == "assistant"), ""
+        )
         status, _ = crew.parse_specialist_status(final)
         if status == "done":
             issues.append("zero tool calls but status=done (looks like a fabricated answer)")
@@ -195,6 +202,7 @@ def verify_example(ex: dict) -> ExampleResult:
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────────
+
 
 def _iter_jsonl(path: Path):
     with path.open(encoding="utf-8") as fh:
@@ -209,8 +217,9 @@ def _iter_jsonl(path: Path):
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--in", dest="inp", required=True, help="input JSONL of examples")
     ap.add_argument("--out", help="write only-passing examples here (JSONL)")
     ap.add_argument("--verbose", action="store_true", help="print a reason for every failure")
@@ -223,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
 
     out_fh = open(args.out, "w", encoding="utf-8") if args.out else None
     total = passed = 0
-    by_specialist: dict[str, list[int]] = {}   # name -> [pass, total]
+    by_specialist: dict[str, list[int]] = {}  # name -> [pass, total]
 
     for lineno, ex in _iter_jsonl(src):
         total += 1
@@ -242,8 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     if out_fh:
         out_fh.close()
 
-    print(f"\n{passed}/{total} examples passed "
-          f"({100 * passed / total:.0f}%)" if total else "no examples found")
+    print(
+        f"\n{passed}/{total} examples passed ({100 * passed / total:.0f}%)"
+        if total
+        else "no examples found"
+    )
     for name in sorted(by_specialist):
         p, t = by_specialist[name]
         print(f"  {name:8} {p}/{t}")

@@ -3,18 +3,21 @@ Brain ↔ cloud-brain wiring: _chat / _chat_stream routing + fail→local fallba
 and set_active_brain. Built via object.__new__(Brain) so no DB / MemoryManager
 is needed — these test the wrapper logic in isolation.
 """
+
 import os
+
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
 import pytest
 
+from kai.config import CHAT_MODEL
 from kai.core.brain import Brain
 from kai.core.engine import TurnEngine
-from kai.config import CHAT_MODEL
 
 
 class FakeOllama:
     """Stand-in local client (Brain.ollama)."""
+
     def __init__(self):
         self.chat_calls = []
         self.stream_calls = []
@@ -61,9 +64,12 @@ def _brain():
 
 # ── _chat ────────────────────────────────────────────────────────────────────
 
+
 def test_chat_uses_local_by_default():
     b = _brain()
-    assert b._chat([{"role": "user", "content": "hi"}])["message"]["content"] == f"local:{CHAT_MODEL}"
+    assert (
+        b._chat([{"role": "user", "content": "hi"}])["message"]["content"] == f"local:{CHAT_MODEL}"
+    )
 
 
 def test_chat_uses_cloud_when_active():
@@ -78,14 +84,16 @@ def test_chat_falls_back_to_local_on_cloud_failure():
     b._chat_client = FakeCloud(fail=True)
     b._chat_model = "gpt-4o-mini"
     out = b._chat([{"role": "user", "content": "hi"}])
-    assert out["message"]["content"] == f"local:{CHAT_MODEL}"   # fell back
+    assert out["message"]["content"] == f"local:{CHAT_MODEL}"  # fell back
     assert b.ollama.chat_calls == [CHAT_MODEL]
 
 
 def test_chat_local_failure_propagates():
     b = _brain()
+
     def boom(*a, **k):
         raise RuntimeError("local down")
+
     b.ollama.chat = boom
     with pytest.raises(RuntimeError):
         b._chat([{"role": "user", "content": "hi"}])
@@ -93,10 +101,16 @@ def test_chat_local_failure_propagates():
 
 # ── _chat_stream ─────────────────────────────────────────────────────────────
 
+
 def test_stream_local_by_default():
     b = _brain()
-    toks = [t for t, done, m in b._chat_stream([{"role": "user", "content": "x"}],
-                                               think=False, temperature=0.4) if not done]
+    toks = [
+        t
+        for t, done, m in b._chat_stream(
+            [{"role": "user", "content": "x"}], think=False, temperature=0.4
+        )
+        if not done
+    ]
     assert toks == ["local"]
 
 
@@ -104,22 +118,33 @@ def test_stream_cloud_when_active():
     b = _brain()
     b._chat_client = FakeCloud()
     b._chat_model = "claude-opus-4-8"
-    toks = [t for t, done, m in b._chat_stream([{"role": "user", "content": "x"}],
-                                               think=False, temperature=0.4) if not done]
+    toks = [
+        t
+        for t, done, m in b._chat_stream(
+            [{"role": "user", "content": "x"}], think=False, temperature=0.4
+        )
+        if not done
+    ]
     assert toks == ["cloud"]
 
 
 def test_stream_falls_back_when_cloud_fails_pretoken():
     b = _brain()
-    b._chat_client = FakeCloud(fail=True)   # raises before any token
+    b._chat_client = FakeCloud(fail=True)  # raises before any token
     b._chat_model = "claude-opus-4-8"
-    toks = [t for t, done, m in b._chat_stream([{"role": "user", "content": "x"}],
-                                               think=False, temperature=0.4) if not done]
-    assert toks == ["local"]                # fell back to local stream
+    toks = [
+        t
+        for t, done, m in b._chat_stream(
+            [{"role": "user", "content": "x"}], think=False, temperature=0.4
+        )
+        if not done
+    ]
+    assert toks == ["local"]  # fell back to local stream
     assert b.ollama.stream_calls == [CHAT_MODEL]
 
 
 # ── set_active_brain ─────────────────────────────────────────────────────────
+
 
 def test_set_active_brain_local():
     b = _brain()
@@ -135,9 +160,11 @@ def test_set_active_brain_cloud(monkeypatch):
     b.memory = type("M", (), {"set_fact": lambda *a, **k: None})()
     fake = FakeCloud()
     import kai.llm.resolve as resolve
+
     monkeypatch.setattr(resolve, "resolve_client", lambda entry, uid: fake)
     res = b.set_active_brain(
-        {"provider": "openai", "ollama_id": "gpt-4o-mini", "conn_id": "openai", "name": "GPT"})
+        {"provider": "openai", "ollama_id": "gpt-4o-mini", "conn_id": "openai", "name": "GPT"}
+    )
     assert b._chat_client is fake
     assert b._chat_model == "gpt-4o-mini"
     assert res["provider"] == "openai"

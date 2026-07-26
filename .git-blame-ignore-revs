@@ -1,0 +1,9 @@
+# Commits that are pure mechanical reformatting — skipped by `git blame` so
+# they don't obscure the real author of each line.
+#
+# Enable locally once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub applies this automatically.)
+
+# style: apply ruff autofix + formatter across the codebase
+a62db01c1452a9c1c203a7728588dbeff19e54ea

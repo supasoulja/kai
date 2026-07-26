@@ -3,14 +3,19 @@ Episodic memory — timestamped events stored as embeddings.
 Uses sqlite-vec for cosine similarity search.
 Falls back to substring search if sqlite-vec is not installed.
 """
+
 import json
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from kai.config import EPISODIC_TOP_K
 from kai.store.db import (
-    get_conn, sqlite_vec_available, like_escape, vec_knn, resort_by_rowid_order,
+    get_conn,
+    like_escape,
+    resort_by_rowid_order,
+    sqlite_vec_available,
+    vec_knn,
 )
 from kai.store.schema import EpisodicEntry
 
@@ -33,12 +38,12 @@ def add_entry(
     conn.execute(
         "INSERT INTO episodic_entries (id, user_id, content, timestamp, entry_type, metadata) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (entry_id, user_id, content, ts, entry_type, meta_json)
+        (entry_id, user_id, content, ts, entry_type, meta_json),
     )
     conn.commit()
-    rowid = conn.execute(
-        "SELECT rowid FROM episodic_entries WHERE id = ?", (entry_id,)
-    ).fetchone()[0]
+    rowid = conn.execute("SELECT rowid FROM episodic_entries WHERE id = ?", (entry_id,)).fetchone()[
+        0
+    ]
 
     # Embedding is best-effort — a failure here never loses the text entry above.
     # Skip embedding for raw turns — they are temporary staging deleted after
@@ -47,16 +52,20 @@ def add_entry(
     if embed_fn and sqlite_vec_available() and entry_type != "turn":
         try:
             import sqlite_vec
+
             embedding = embed_fn(content)
             conn.execute(
                 "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
-                (rowid, sqlite_vec.serialize_float32(embedding))
+                (rowid, sqlite_vec.serialize_float32(embedding)),
             )
             conn.commit()
         except Exception:
             from kai.config import DEBUG
+
             if DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+
+                traceback.print_exc()
 
     return entry_id
 
@@ -78,7 +87,9 @@ def search(
 
 
 def _vector_search(
-    query: str, embed_fn: EmbedFn, top_k: int,
+    query: str,
+    embed_fn: EmbedFn,
+    top_k: int,
     query_embedding: list[float] | None = None,
     user_id: int = 0,
 ) -> list[EpisodicEntry]:
@@ -95,7 +106,7 @@ def _vector_search(
         f"SELECT id, content, timestamp, entry_type, metadata "
         f"FROM episodic_entries WHERE rowid IN ({placeholders}) AND user_id = ? "
         f"LIMIT ?",
-        (*rowids, user_id, top_k)
+        (*rowids, user_id, top_k),
     ).fetchall()
 
     # Step 3: IN-clause order is arbitrary — restore KNN distance order.
@@ -111,7 +122,7 @@ def _text_search(query: str, top_k: int, user_id: int = 0) -> list[EpisodicEntry
         "FROM episodic_entries "
         "WHERE user_id = ? AND content LIKE ? ESCAPE '\\' "
         "ORDER BY timestamp DESC LIMIT ?",
-        (user_id, f"%{escaped}%", top_k)
+        (user_id, f"%{escaped}%", top_k),
     ).fetchall()
     return _rows_to_entries(rows)
 
@@ -142,7 +153,7 @@ def search_non_turns(
             f"FROM episodic_entries "
             f"WHERE rowid IN ({placeholders}) AND user_id = ? AND entry_type != 'turn' "
             f"LIMIT ?",
-            (*rowids, user_id, top_k)
+            (*rowids, user_id, top_k),
         ).fetchall()
 
         # Step 3: IN-clause order is arbitrary — restore KNN distance order.
@@ -157,7 +168,7 @@ def search_non_turns(
         "FROM episodic_entries "
         "WHERE user_id = ? AND entry_type != 'turn' AND content LIKE ? ESCAPE '\\' "
         "ORDER BY timestamp DESC LIMIT ?",
-        (user_id, f"%{escaped}%", top_k)
+        (user_id, f"%{escaped}%", top_k),
     ).fetchall()
     return _rows_to_entries(rows)
 
@@ -168,7 +179,7 @@ def recent(limit: int = 5, user_id: int = 0) -> list[EpisodicEntry]:
     rows = conn.execute(
         "SELECT id, content, timestamp, entry_type, metadata "
         "FROM episodic_entries WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-        (user_id, limit)
+        (user_id, limit),
     ).fetchall()
     return list(reversed(_rows_to_entries(rows)))
 
@@ -182,7 +193,7 @@ def get_pending_turns_text(user_id: int = 0) -> str:
     rows = conn.execute(
         "SELECT content FROM episodic_entries "
         "WHERE user_id = ? AND entry_type = 'turn' ORDER BY timestamp ASC",
-        (user_id,)
+        (user_id,),
     ).fetchall()
     return "\n\n".join(r[0] for r in rows)
 
@@ -193,7 +204,7 @@ def save_transcript(archive_id: str, content: str, user_id: int = 0) -> None:
     conn.execute(
         "INSERT INTO episodic_transcripts (archive_id, user_id, content, timestamp) "
         "VALUES (?, ?, ?, ?)",
-        (archive_id, user_id, content, datetime.now().isoformat())
+        (archive_id, user_id, content, datetime.now().isoformat()),
     )
     conn.commit()
 
@@ -203,7 +214,7 @@ def get_transcript(archive_id: str, user_id: int = 0) -> str | None:
     conn = get_conn()
     row = conn.execute(
         "SELECT content FROM episodic_transcripts WHERE archive_id = ? AND user_id = ?",
-        (archive_id, user_id)
+        (archive_id, user_id),
     ).fetchone()
     return row[0] if row else None
 
@@ -232,9 +243,10 @@ def archive_and_clear_turns(
     # deleted — both are needed inside the transaction below.
     transcript = get_pending_turns_text(user_id=user_id)
     turn_rowids = [
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT rowid FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
-            (user_id,)
+            (user_id,),
         ).fetchall()
     ]
 
@@ -251,8 +263,7 @@ def archive_and_clear_turns(
                 (entry_id, user_id, transcript, ts),
             )
         conn.execute(
-            "DELETE FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
-            (user_id,)
+            "DELETE FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'", (user_id,)
         )
         if turn_rowids and sqlite_vec_available():
             try:
@@ -272,19 +283,23 @@ def archive_and_clear_turns(
     if embed_fn and sqlite_vec_available():
         try:
             import sqlite_vec
+
             rowid = conn.execute(
                 "SELECT rowid FROM episodic_entries WHERE id = ?", (entry_id,)
             ).fetchone()[0]
             embedding = embed_fn(summary_text)
             conn.execute(
                 "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
-                (rowid, sqlite_vec.serialize_float32(embedding))
+                (rowid, sqlite_vec.serialize_float32(embedding)),
             )
             conn.commit()
         except Exception:
             from kai.config import DEBUG
+
             if DEBUG:
-                import traceback; traceback.print_exc()
+                import traceback
+
+                traceback.print_exc()
 
     return entry_id
 
@@ -299,15 +314,15 @@ def delete_turns(user_id: int = 0) -> None:
 
     # Collect rowids BEFORE deleting entries — needed to clean up episodic_vec.
     turn_rowids = [
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT rowid FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
-            (user_id,)
+            (user_id,),
         ).fetchall()
     ]
 
     conn.execute(
-        "DELETE FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'",
-        (user_id,)
+        "DELETE FROM episodic_entries WHERE user_id = ? AND entry_type = 'turn'", (user_id,)
     )
 
     # Remove orphaned vectors (same pattern as documents.py:delete_document)
@@ -331,11 +346,13 @@ def _rows_to_entries(rows: list) -> list[EpisodicEntry]:
             metadata = json.loads(row[4]) if row[4] else {}
         except Exception:
             metadata = {}  # corrupt metadata blob — don't let one bad row sink the read
-        entries.append(EpisodicEntry(
-            id=row[0],
-            content=row[1],
-            timestamp=datetime.fromisoformat(row[2]),
-            entry_type=row[3],
-            metadata=metadata,
-        ))
+        entries.append(
+            EpisodicEntry(
+                id=row[0],
+                content=row[1],
+                timestamp=datetime.fromisoformat(row[2]),
+                entry_type=row[3],
+                metadata=metadata,
+            )
+        )
     return entries

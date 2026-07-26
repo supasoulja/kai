@@ -5,6 +5,7 @@ Goals are long-running tasks that span multiple conversations.
 Kai holds the goal, tracks what's done, and picks up where it left off.
 Active goals are injected into every context block so they're never forgotten.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,12 +18,14 @@ from kai.tools.registry import registry
 
 def _get_conn():
     from kai.store.db import get_conn
+
     return get_conn()
 
 
 def _user_id() -> int:
     try:
         from kai.core._app_state import get_current_user_id
+
         return get_current_user_id() or 0
     except Exception:
         return 0
@@ -37,9 +40,16 @@ def _user_id() -> int:
         "Kai will track progress and pick up where it left off."
     ),
     parameters={
-        "title":       {"type": "string", "description": "Short goal name (e.g. 'Set up Nextcloud')", "required": True},
+        "title": {
+            "type": "string",
+            "description": "Short goal name (e.g. 'Set up Nextcloud')",
+            "required": True,
+        },
         "description": {"type": "string", "description": "What this goal is and why it matters"},
-        "steps":       {"type": "string", "description": "Comma-separated ordered steps to accomplish the goal"},
+        "steps": {
+            "type": "string",
+            "description": "Comma-separated ordered steps to accomplish the goal",
+        },
     },
 )
 def create_goal(title: str, description: str = "", steps: str = "") -> str:
@@ -57,7 +67,7 @@ def create_goal(title: str, description: str = "", steps: str = "") -> str:
     conn.commit()
     step_text = ""
     if step_list:
-        step_text = "\nSteps:\n" + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(step_list))
+        step_text = "\nSteps:\n" + "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(step_list))
     return f"Goal created: '{title}' (ID: {goal_id}){step_text}\nI'll track progress across our conversations."
 
 
@@ -97,9 +107,9 @@ def list_goals() -> str:
         "Call this after completing a step or making meaningful progress."
     ),
     parameters={
-        "goal_id": {"type": "string",  "description": "Goal ID from goals.list", "required": True},
+        "goal_id": {"type": "string", "description": "Goal ID from goals.list", "required": True},
         "advance": {"type": "boolean", "description": "Move to the next step (default true)"},
-        "notes":   {"type": "string",  "description": "Optional note about what was done"},
+        "notes": {"type": "string", "description": "Optional note about what was done"},
     },
 )
 def update_goal(goal_id: str, advance: bool = True, notes: str = "") -> str:
@@ -163,7 +173,7 @@ def complete_goal(goal_id: str) -> str:
     description="Abandon a goal — remove it from the active list.",
     parameters={
         "goal_id": {"type": "string", "description": "Goal ID from goals.list", "required": True},
-        "reason":  {"type": "string", "description": "Why the goal is being abandoned"},
+        "reason": {"type": "string", "description": "Why the goal is being abandoned"},
     },
 )
 def abandon_goal(goal_id: str, reason: str = "") -> str:

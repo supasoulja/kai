@@ -1,17 +1,19 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, ClassVar
+
 from pydantic import BaseModel
 
-
 # ── Memory types ───────────────────────────────────────────────────────────────
+
 
 @dataclass
 class SemanticFact:
     key: str
     value: str
-    source: str = "conversation"      # how it was learned
+    source: str = "conversation"  # how it was learned
     confidence: float = 1.0
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -25,10 +27,10 @@ class ProceduralRule:
 
 @dataclass
 class EpisodicEntry:
-    id: str                           # UUID
-    content: str                      # the text that was embedded
+    id: str  # UUID
+    content: str  # the text that was embedded
     timestamp: datetime
-    entry_type: str                   # "turn", "summary", "event"
+    entry_type: str  # "turn", "summary", "event"
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
 
@@ -37,11 +39,12 @@ class EpisodicEntry:
 class RelationshipEntry:
     id: str
     timestamp: datetime
-    entry_type: str                   # "milestone", "tone_shift", "founding"
+    entry_type: str  # "milestone", "tone_shift", "founding"
     content: str
 
 
 # ── Context block ──────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ContextBlock:
@@ -65,18 +68,18 @@ class ContextBlock:
 
     # Class-level constant: human-readable labels for session state keys
     _SESSION_LABELS: ClassVar[dict[str, str]] = {
-        "cpu_pct":       "CPU",
-        "ram_pct":       "RAM",
-        "disk_pct":      "Disk",
-        "gpu_temp_c":    "GPU temp",
-        "cpu_temp_c":    "CPU temp",
+        "cpu_pct": "CPU",
+        "ram_pct": "RAM",
+        "disk_pct": "Disk",
+        "gpu_temp_c": "GPU temp",
+        "cpu_temp_c": "CPU temp",
         "startup_count": "Startup programs",
-        "disk_free_gb":  "Disk free",
+        "disk_free_gb": "Disk free",
     }
     _SESSION_UNITS: ClassVar[dict[str, str]] = {
-        "cpu_pct":    "%",
-        "ram_pct":    "% used",
-        "disk_pct":   "% used",
+        "cpu_pct": "%",
+        "ram_pct": "% used",
+        "disk_pct": "% used",
         "gpu_temp_c": "°C",
         "cpu_temp_c": "°C",
         "disk_free_gb": " GB free",
@@ -84,6 +87,7 @@ class ContextBlock:
 
     def render(self) -> str:
         from datetime import datetime
+
         parts = []
 
         now = datetime.now()
@@ -93,7 +97,9 @@ class ContextBlock:
             parts.append(f"[IDENTITY]\n{self.identity.strip()}")
 
         if self.welcome_back:
-            parts.append(f"[WELCOME BACK — Your note to yourself from last session]\n{self.welcome_back.strip()}")
+            parts.append(
+                f"[WELCOME BACK — Your note to yourself from last session]\n{self.welcome_back.strip()}"
+            )
 
         if self.memory_directory:
             parts.append(self.memory_directory)
@@ -107,12 +113,13 @@ class ContextBlock:
 
         if self.semantic:
             lines = "\n".join(f"- {f.key}: {f.value}" for f in self.semantic)
-            parts.append(f"[SEMANTIC — Your long-term memory. Every entry here is a fact you know.]\n{lines}")
+            parts.append(
+                f"[SEMANTIC — Your long-term memory. Every entry here is a fact you know.]\n{lines}"
+            )
 
         if self.episodic:
             lines = "\n".join(
-                f"{e.timestamp.strftime('%Y-%m-%d %H:%M')}: {e.content}"
-                for e in self.episodic
+                f"{e.timestamp.strftime('%Y-%m-%d %H:%M')}: {e.content}" for e in self.episodic
             )
             parts.append(f"[EPISODIC]\n{lines}")
 
@@ -120,7 +127,7 @@ class ContextBlock:
             pairs = []
             for k, v in self.session_state.items():
                 label = self._SESSION_LABELS.get(k, k)
-                unit  = self._SESSION_UNITS.get(k, "")
+                unit = self._SESSION_UNITS.get(k, "")
                 pairs.append(f"{label}: {v}{unit}")
             parts.append(f"[SESSION]\n{', '.join(pairs)}")
 
@@ -136,20 +143,21 @@ class ContextBlock:
         if self.doc_inventory and self.rag_chunks:
             lines = []
             for doc in self.doc_inventory:
-                lines.append(f"- {doc['filename']} ({doc['file_type']}, {doc['chunk_count']} chunks)")
-            parts.append(
-                "[UPLOADED FILES]\n" + "\n".join(lines)
-            )
+                lines.append(
+                    f"- {doc['filename']} ({doc['file_type']}, {doc['chunk_count']} chunks)"
+                )
+            parts.append("[UPLOADED FILES]\n" + "\n".join(lines))
 
         return "\n\n".join(parts)
 
 
 # ── Brain I/O ──────────────────────────────────────────────────────────────────
 
+
 class BrainResponse(BaseModel):
-    type: str           # "final" | "tool"
-    text: str = ""      # set when type == "final"
-    tool_name: str = "" # set when type == "tool"
+    type: str  # "final" | "tool"
+    text: str = ""  # set when type == "final"
+    tool_name: str = ""  # set when type == "tool"
     tool_args: dict[str, Any] = {}
 
 

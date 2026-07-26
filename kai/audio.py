@@ -7,35 +7,36 @@ AudioManager — singleton for Kai's speech capabilities.
 Both are lazy-loaded — no startup cost if audio features aren't used.
 Thread-safe: inference calls are serialized per engine via locks.
 """
+
 import io
 import logging
 import re
 import struct
 import threading
-from typing import Iterator
+from collections.abc import Iterator
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
-_CLAUSE_RE   = re.compile(r"(?<=[,;:])\s+")
+_CLAUSE_RE = re.compile(r"(?<=[,;:])\s+")
 
 # URL handling for speech. Kokoro reads a full URL out one path-segment at a time
 # ("archive dot org slash details slash poweroflogic00laym"), which is unbearable
 # to listen to. We collapse links to just their host before synthesis. These run
 # ONLY on the copy handed to the TTS engine — the on-screen text keeps the real,
 # clickable link.
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")              # [label](url) → label
-_URL_RE     = re.compile(r"https?://(?:www\.)?([a-z0-9.-]+)(?:[/?#]\S*)?", re.IGNORECASE)
-_WWW_RE     = re.compile(r"\bwww\.([a-z0-9.-]+)(?:[/?#]\S*)?", re.IGNORECASE)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")  # [label](url) → label
+_URL_RE = re.compile(r"https?://(?:www\.)?([a-z0-9.-]+)(?:[/?#]\S*)?", re.IGNORECASE)
+_WWW_RE = re.compile(r"\bwww\.([a-z0-9.-]+)(?:[/?#]\S*)?", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
 
 # ── Lazy-load state ────────────────────────────────────────────────────────────
 
-_whisper_model  = None
-_kokoro_model   = None
-_whisper_lock   = threading.Lock()
-_kokoro_lock    = threading.Lock()
-_whisper_ready  = False
-_kokoro_ready   = False
+_whisper_model = None
+_kokoro_model = None
+_whisper_lock = threading.Lock()
+_kokoro_lock = threading.Lock()
+_whisper_ready = False
+_kokoro_ready = False
 
 
 def _get_whisper():
@@ -46,7 +47,9 @@ def _get_whisper():
         if _whisper_ready:
             return _whisper_model
         from faster_whisper import WhisperModel
+
         from kai.config import WHISPER_MODEL
+
         log.info(f"[audio] loading Whisper {WHISPER_MODEL!r}...")
         # device='auto' uses GPU if available, falls back to CPU
         _whisper_model = WhisperModel(WHISPER_MODEL, device="auto", compute_type="int8")
@@ -63,7 +66,9 @@ def _get_kokoro():
         if _kokoro_ready:
             return _kokoro_model
         from kokoro_onnx import Kokoro
+
         from kai.config import AUDIO_MODELS_DIR
+
         onnx = AUDIO_MODELS_DIR / "kokoro-v1.0.onnx"
         voices = AUDIO_MODELS_DIR / "voices-v1.0.bin"
         if not onnx.exists() or not voices.exists():
@@ -80,14 +85,16 @@ def _get_kokoro():
 
 # ── WAV helpers ────────────────────────────────────────────────────────────────
 
+
 def _samples_to_wav(samples, sample_rate: int) -> bytes:
     """Convert float32 numpy samples to WAV bytes."""
     import numpy as np
+
     pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
     data = pcm.tobytes()
 
     buf = io.BytesIO()
-    num_channels  = 1
+    num_channels = 1
     bits_per_sample = 16
     byte_rate = sample_rate * num_channels * bits_per_sample // 8
     block_align = num_channels * bits_per_sample // 8
@@ -98,8 +105,8 @@ def _samples_to_wav(samples, sample_rate: int) -> bytes:
     buf.write(struct.pack("<I", chunk_size))
     buf.write(b"WAVE")
     buf.write(b"fmt ")
-    buf.write(struct.pack("<I", 16))           # subchunk size
-    buf.write(struct.pack("<H", 1))            # PCM format
+    buf.write(struct.pack("<I", 16))  # subchunk size
+    buf.write(struct.pack("<H", 1))  # PCM format
     buf.write(struct.pack("<H", num_channels))
     buf.write(struct.pack("<I", sample_rate))
     buf.write(struct.pack("<I", byte_rate))
@@ -112,6 +119,7 @@ def _samples_to_wav(samples, sample_rate: int) -> bytes:
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
 
 def transcribe(audio_bytes: bytes) -> str:
     """
@@ -126,7 +134,7 @@ def transcribe(audio_bytes: bytes) -> str:
             buf,
             beam_size=5,
             language="en",
-            vad_filter=True,          # skip silent segments
+            vad_filter=True,  # skip silent segments
             vad_parameters={"min_silence_duration_ms": 500},
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
@@ -138,7 +146,8 @@ def synthesize(text: str, voice: str | None = None, speed: float | None = None) 
     Synthesize text to WAV bytes using Kokoro.
     Returns raw WAV bytes suitable for streaming to the browser.
     """
-    from kai.config import TTS_VOICE, TTS_SPEED
+    from kai.config import TTS_SPEED, TTS_VOICE
+
     voice = voice or TTS_VOICE
     speed = speed if speed is not None else TTS_SPEED
     text = _strip_urls_for_speech(text)
@@ -158,8 +167,10 @@ def _strip_urls_for_speech(text: str) -> str:
     punctuation caught by the host class is trimmed back off. Display text is
     never touched — callers pass a throwaway copy bound for the synth engine.
     """
+
     def _host(m: "re.Match") -> str:
         return m.group(1).rstrip(".,;:!?")
+
     text = _MD_LINK_RE.sub(r"\1", text)
     text = _URL_RE.sub(_host, text)
     text = _WWW_RE.sub(_host, text)
@@ -216,14 +227,17 @@ def _split_into_chunks(text: str, first_chunk_max: int = 80, max_chars: int = 30
     return chunks
 
 
-def synthesize_chunks(text: str, voice: str | None = None, speed: float | None = None) -> Iterator[bytes]:
+def synthesize_chunks(
+    text: str, voice: str | None = None, speed: float | None = None
+) -> Iterator[bytes]:
     """
     Synthesize text incrementally, yielding one complete WAV per sentence-chunk
     as soon as it's ready. Synthesizing the whole reply up front makes the
     listener wait several seconds in silence before anything plays — yielding
     per-chunk lets playback start after the first sentence instead.
     """
-    from kai.config import TTS_VOICE, TTS_SPEED
+    from kai.config import TTS_SPEED, TTS_VOICE
+
     voice = voice or TTS_VOICE
     speed = speed if speed is not None else TTS_SPEED
     text = _strip_urls_for_speech(text)

@@ -18,13 +18,12 @@ Covers:
   - Path traversal resistance
   - Unit: hash helpers, user_count, get_owner_id, voice WAV generation
 """
+
 import hashlib
 import io
-import math
 import os
 import secrets
 import sqlite3
-import struct
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,24 +36,28 @@ import kai.config as cfg
 
 _tmp_main = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp_main.close()
-cfg.DB_PATH   = Path(_tmp_main.name)
+cfg.DB_PATH = Path(_tmp_main.name)
 
 from kai.store.db import _reset_for_tests, get_conn
+
 _reset_for_tests()
 
 # Import and configure the app — no _init(), so no model loading
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import web as _web_module
 from web import app, setup_app
 
 # Call setup_app exactly once for the whole test session
 _setup_done = False
+
+
 def _ensure_setup():
     global _setup_done
     if not _setup_done:
         setup_app(host="127.0.0.1", port=7860, scheme="http")
         _setup_done = True
+
 
 _ensure_setup()
 
@@ -83,6 +86,7 @@ def _fresh_client(token: str | None = None) -> TestClient:
 _MACHINE_HASH = "test_machine_hash_for_security_tests"
 _user_counter = 0
 
+
 def _unique_name(prefix: str = "user") -> str:
     global _user_counter
     _user_counter += 1
@@ -92,6 +96,7 @@ def _unique_name(prefix: str = "user") -> str:
 def _create_user(name: str, pin: str = "1234") -> int:
     """Insert a user directly, bypassing machine key and the HTTP endpoint."""
     from kai.store import users as u
+
     result = u.create_user(name, pin, _MACHINE_HASH)
     assert result is not None, f"Failed to create user {name!r}"
     return result["id"]
@@ -101,7 +106,7 @@ def _make_session(user_id: int, user_name: str) -> str:
     """Inject a valid hashed session token into the DB. Returns the raw token."""
     token = secrets.token_urlsafe(32)
     tok_hash = hashlib.sha256(token.encode()).hexdigest()
-    expires  = (datetime.now() + timedelta(hours=1)).isoformat()
+    expires = (datetime.now() + timedelta(hours=1)).isoformat()
     conn = get_conn()
     conn.execute(
         "INSERT INTO session_tokens (token, user_id, user_name, created_at, expires_at) "
@@ -120,7 +125,8 @@ def _auth(token: str) -> dict:
 def _clear_users() -> None:
     """Remove all users and their sessions — used by tests that need an empty DB."""
     from kai.store.users import _ensure_table
-    _ensure_table()          # users table is created lazily; ensure it exists first
+
+    _ensure_table()  # users table is created lazily; ensure it exists first
     conn = get_conn()
     conn.execute("DELETE FROM session_tokens")
     conn.execute("DELETE FROM users")
@@ -134,6 +140,7 @@ def _clear_login_attempts() -> None:
 
 
 # ── Registration gate ─────────────────────────────────────────────────────────
+
 
 class TestRegistration:
     def test_first_user_can_register(self):
@@ -175,6 +182,7 @@ class TestRegistration:
 
 # ── Login rate limiting ───────────────────────────────────────────────────────
 
+
 class TestLoginRateLimit:
     def setup_method(self):
         _clear_login_attempts()
@@ -182,9 +190,8 @@ class TestLoginRateLimit:
     def test_five_failures_allowed(self):
         """Attempts 1-5 return 401 (wrong creds), not 429."""
         for i in range(5):
-            r = client.post("/users/login",
-                            json={"name": "nobody", "pin": f"wrong{i}"})
-            assert r.status_code == 401, f"Attempt {i+1} should be 401, got {r.status_code}"
+            r = client.post("/users/login", json={"name": "nobody", "pin": f"wrong{i}"})
+            assert r.status_code == 401, f"Attempt {i + 1} should be 401, got {r.status_code}"
 
     def test_sixth_attempt_rate_limited(self):
         """Attempt 6 from the same IP returns 429."""
@@ -204,11 +211,12 @@ class TestLoginRateLimit:
 
 # ── Session token lifecycle ───────────────────────────────────────────────────
 
+
 class TestSessionLifecycle:
     def setup_method(self):
-        self.uid  = _create_user(_unique_name("sess"))
+        self.uid = _create_user(_unique_name("sess"))
         self.name = f"sess_{self.uid}"
-        self.tok  = _make_session(self.uid, self.name)
+        self.tok = _make_session(self.uid, self.name)
         # Fresh client: new ASGI thread, new DB connection → sees just-committed data
         self.c = _fresh_client()
 
@@ -256,21 +264,21 @@ class TestSessionLifecycle:
 
 # ── Protected endpoints (H2a) ─────────────────────────────────────────────────
 
+
 class TestAuthGuard:
     PROTECTED = [
-        ("GET",  "/memory/facts"),
-        ("GET",  "/memory/episodic"),
-        ("GET",  "/sessions"),
-        ("GET",  "/info"),
-        ("GET",  "/dashboard/stats"),
-        ("GET",  "/docs/list"),
+        ("GET", "/memory/facts"),
+        ("GET", "/memory/episodic"),
+        ("GET", "/sessions"),
+        ("GET", "/info"),
+        ("GET", "/dashboard/stats"),
+        ("GET", "/docs/list"),
     ]
 
     @pytest.mark.parametrize("method,path", PROTECTED)
     def test_protected_endpoint_blocks_without_cookie(self, method, path):
         r = client.request(method, path)
-        assert r.status_code == 401, \
-            f"{method} {path} returned {r.status_code} — expected 401"
+        assert r.status_code == 401, f"{method} {path} returned {r.status_code} — expected 401"
 
     def test_event_stream_blocked_without_cookie(self):
         """H2a: /api/events/{id} must require auth."""
@@ -288,6 +296,7 @@ class TestAuthGuard:
 
 # ── WebSocket auth (H2b) ──────────────────────────────────────────────────────
 
+
 class TestWebSocketAuth:
     def test_websocket_rejects_without_cookie(self):
         """H2b: unauthenticated WS connection must be closed with 1008."""
@@ -296,8 +305,7 @@ class TestWebSocketAuth:
                 ws.receive_text()
             e = exc_info.value
             code = getattr(e, "code", None)
-            assert code == 1008, \
-                f"Expected WS close code 1008, got code={code!r} err={e!r}"
+            assert code == 1008, f"Expected WS close code 1008, got code={code!r} err={e!r}"
 
     def test_websocket_accepts_valid_cookie(self):
         """Valid session cookie allows WS handshake to complete."""
@@ -313,6 +321,7 @@ class TestWebSocketAuth:
 
 # ── Cross-user isolation (IDOR) ───────────────────────────────────────────────
 
+
 class TestUserIsolation:
     def setup_method(self):
         self.uid_a = _create_user(_unique_name("alice"))
@@ -326,15 +335,27 @@ class TestUserIsolation:
         conn.execute(
             "INSERT INTO sessions (id, user_id, title, started_at, last_active, message_count) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (self.bob_session_id, self.uid_b, "Bob's session",
-             datetime.now().isoformat(), datetime.now().isoformat(), 2),
+            (
+                self.bob_session_id,
+                self.uid_b,
+                "Bob's session",
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                2,
+            ),
         )
         conn.execute(
             "INSERT INTO session_messages "
             "(session_id, user_id, role, content, timestamp, turn_order) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (self.bob_session_id, self.uid_b, "user", "Bob's secret message",
-             datetime.now().isoformat(), 1),
+            (
+                self.bob_session_id,
+                self.uid_b,
+                "user",
+                "Bob's secret message",
+                datetime.now().isoformat(),
+                1,
+            ),
         )
         conn.commit()
         self.c = _fresh_client()
@@ -344,8 +365,9 @@ class TestUserIsolation:
         self.c.cookies.set("kai_session", self.tok_a)
         r = self.c.get(f"/sessions/{self.bob_session_id}/messages")
         assert r.status_code == 200
-        assert r.json() == [], \
+        assert r.json() == [], (
             "User A should get empty list for another user's session, not their messages"
+        )
 
     def test_user_a_cannot_load_user_b_session(self):
         """Loading another user's session must return 404."""
@@ -359,8 +381,9 @@ class TestUserIsolation:
         r = self.c.get("/sessions")
         assert r.status_code == 200
         for session in r.json():
-            assert session.get("user_id", self.uid_a) == self.uid_a, \
+            assert session.get("user_id", self.uid_a) == self.uid_a, (
                 "Session list must not include another user's sessions"
+            )
 
 
 class TestDataExport:
@@ -375,8 +398,7 @@ class TestDataExport:
             "INSERT INTO session_messages "
             "(session_id, user_id, role, content, timestamp, turn_order) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            ("export_sess", self.uid, "user", "remember this fact",
-             datetime.now().isoformat(), 1),
+            ("export_sess", self.uid, "user", "remember this fact", datetime.now().isoformat(), 1),
         )
         conn.commit()
         self.c = _fresh_client(self.tok)
@@ -409,6 +431,7 @@ class TestDataExport:
 
 # ── Voice upload size cap (M1) ────────────────────────────────────────────────
 
+
 class TestVoiceUploadCap:
     def setup_method(self):
         uid = _create_user(_unique_name("voicecap"))
@@ -439,6 +462,7 @@ class TestVoiceUploadCap:
 
 # ── TTS text size cap (M4) ────────────────────────────────────────────────────
 
+
 class TestTTSSizeCap:
     def setup_method(self):
         uid = _create_user(_unique_name("ttscap"))
@@ -460,6 +484,7 @@ class TestTTSSizeCap:
 
 # ── Path traversal ────────────────────────────────────────────────────────────
 
+
 class TestPathTraversal:
     def test_url_encoded_dotdot_blocked(self):
         """URL-encoded traversal via static files must not return 200."""
@@ -476,6 +501,7 @@ class TestPathTraversal:
 
 
 # ── Voice test WAV generation ─────────────────────────────────────────────────
+
 
 class TestVoiceTest:
     def test_voice_test_returns_wav(self):
@@ -494,22 +520,27 @@ class TestVoiceTest:
 
 # ── Unit: hash helpers ────────────────────────────────────────────────────────
 
+
 class TestHashHelpers:
     def test_hash_token_is_deterministic(self):
         from web import _hash_token
+
         assert _hash_token("abc") == _hash_token("abc")
 
     def test_hash_token_is_always_64_chars(self):
         from web import _hash_token
+
         for val in ["short", "a" * 100, secrets.token_urlsafe(32)]:
             assert len(_hash_token(val)) == 64
 
     def test_hash_token_different_inputs_differ(self):
         from web import _hash_token
+
         assert _hash_token("token_a") != _hash_token("token_b")
 
 
 # ── Unit: user helpers ────────────────────────────────────────────────────────
+
 
 class TestUserHelpers:
     def setup_method(self):
@@ -519,14 +550,17 @@ class TestUserHelpers:
 
     def test_user_count_is_correct(self):
         from kai.store.users import user_count
+
         assert user_count() == 2
 
     def test_get_owner_id_returns_first_user(self):
         from kai.store.users import get_owner_id
+
         assert get_owner_id() == min(self.id1, self.id2)
 
     def test_user_count_increases_on_create(self):
         from kai.store.users import user_count
+
         before = user_count()
         _create_user(_unique_name("extra"))
         assert user_count() == before + 1
@@ -534,13 +568,14 @@ class TestUserHelpers:
 
 # ── Admin server controls (shutdown / restart) ────────────────────────────────
 
+
 class TestAdminControls:
     """Owner-only gating + correct dispatch for /api/admin/* — the terminal
     request_* calls are patched so the test process never actually exits."""
 
     def setup_method(self):
         _clear_users()
-        self.owner_id = _create_user(_unique_name("owner"))   # lowest id = owner
+        self.owner_id = _create_user(_unique_name("owner"))  # lowest id = owner
         self.other_id = _create_user(_unique_name("other"))
         self.owner_tok = _make_session(self.owner_id, "owner")
         self.other_tok = _make_session(self.other_id, "other")
@@ -587,6 +622,7 @@ class TestAdminControls:
 
 # ── Account deletion: atomicity ───────────────────────────────────────────────
 
+
 class TestDeleteUserRollback:
     """delete_user runs ~10 DELETEs as one transaction; a failure partway must
     roll back rather than leave a half-deleted account or a dangling open txn."""
@@ -597,6 +633,7 @@ class TestDeleteUserRollback:
 
     def test_delete_user_rolls_back_on_failure(self):
         from kai.store import users as u
+
         real_conn = get_conn()
         name = _name_of(self.uid)
         before = u.user_count()
@@ -609,8 +646,12 @@ class TestDeleteUserRollback:
                 if sql.strip().startswith("DELETE FROM users"):
                     raise sqlite3.OperationalError("simulated failure mid-delete")
                 return real_conn.execute(sql, *args, **kwargs)
-            def commit(self):  return real_conn.commit()
-            def rollback(self): return real_conn.rollback()
+
+            def commit(self):
+                return real_conn.commit()
+
+            def rollback(self):
+                return real_conn.rollback()
 
         with patch.object(u, "get_conn", return_value=ConnProxy()):
             with pytest.raises(sqlite3.OperationalError):
@@ -624,6 +665,7 @@ class TestDeleteUserRollback:
 
     def test_delete_user_happy_path_removes_account(self):
         from kai.store import users as u
+
         before = u.user_count()
         assert u.delete_user(self.uid) is True
         assert u.user_count() == before - 1
@@ -637,9 +679,9 @@ def _name_of(uid: int) -> str:
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
+
 def teardown_module(module):
     try:
         os.unlink(_tmp_main.name)
-        os.unlink(_tmp_wd.name)
     except Exception:
         pass

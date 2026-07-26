@@ -7,11 +7,13 @@ restore point first where appropriate.
 Platform: Windows only (uses PowerShell).  On Linux these tools return
 a helpful message instead of crashing.
 """
-import re
+
 import datetime
-from kai.tools.registry import registry
-from kai.tools._shell import run_powershell
+import re
+
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools._shell import run_powershell
+from kai.tools.registry import registry
 
 _LINUX_MSG = "This tool is only available on Windows."
 
@@ -132,7 +134,7 @@ def disable_startup_program(program_name: str) -> str:
         f"  }} "
         f"}}; "
         f"if (-not $found) {{ Write-Output \"Startup entry '$name' not found in registry. "
-        f"It may be a shortcut-based entry — check Task Manager > Startup tab.\" }}"
+        f'It may be a shortcut-based entry — check Task Manager > Startup tab." }}'
     )
     stdout, stderr = _ps(cmd, timeout=15)
     if stderr and "error" in stderr.lower():
@@ -184,7 +186,9 @@ def repair_files() -> str:
         # Find the result line (contains "found" or "did not find" or "repaired")
         for line in lines:
             low = line.lower()
-            if any(k in low for k in ("found", "repaired", "could not", "did not find", "no integrity")):
+            if any(
+                k in low for k in ("found", "repaired", "could not", "did not find", "no integrity")
+            ):
                 return line
         return lines[-1] if lines else "sfc /scannow completed (no output captured)."
     return "sfc /scannow ran but produced no output. Try running as administrator."
@@ -210,11 +214,11 @@ def kill_process(process_name: str) -> str:
         return _LINUX_MSG + " On Linux, use: kill or pkill."
     name = _ps_escape(process_name.strip())
     # Check if it's running first
-    check_cmd = f"Get-Process -Name '{name.replace('.exe','')}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
+    check_cmd = f"Get-Process -Name '{name.replace('.exe', '')}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
     pids, _ = _ps(check_cmd, timeout=8)
     if not pids.strip():
         return f"Process '{name}' is not currently running."
-    kill_cmd = f"Stop-Process -Name '{name.replace('.exe','')}' -Force -ErrorAction Stop"
+    kill_cmd = f"Stop-Process -Name '{name.replace('.exe', '')}' -Force -ErrorAction Stop"
     stdout, stderr = _ps(kill_cmd, timeout=10)
     if stderr and "error" in stderr.lower():
         return f"Could not kill '{name}': {stderr[:200]}"

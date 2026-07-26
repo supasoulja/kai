@@ -12,12 +12,12 @@ Memory routing:
   The router classifies queries and activates only relevant memory domains.
   Domain index is built once at startup and cached here.
 """
-from typing import Callable
 
-from kai.memory import semantic, procedural, episodic, extractor, context
-from kai.memory import router
+from collections.abc import Callable
+
+from kai.memory import context, episodic, extractor, procedural, router, semantic
 from kai.memory.knowledge import KnowledgeStore
-from kai.store.schema import SemanticFact, ProceduralRule, EpisodicEntry, ContextBlock
+from kai.store.schema import ContextBlock, EpisodicEntry, ProceduralRule, SemanticFact
 
 EmbedFn = Callable[[str], list[float]] | None
 
@@ -35,9 +35,7 @@ class MemoryManager:
 
     # ── Router ────────────────────────────────────────────────────────────────
 
-    def init_router(
-        self, embed_batch_fn: Callable[[list[str]], list[list[float]]]
-    ) -> None:
+    def init_router(self, embed_batch_fn: Callable[[list[str]], list[list[float]]]) -> None:
         """
         Build the memory domain index at startup.
         Embeds 7 domain descriptions in one batch call (~30ms).
@@ -77,10 +75,15 @@ class MemoryManager:
 
     # ── Episodic ───────────────────────────────────────────────────────────────
 
-    def add_episode(self, content: str, entry_type: str = "turn", metadata: dict | None = None) -> str:
+    def add_episode(
+        self, content: str, entry_type: str = "turn", metadata: dict | None = None
+    ) -> str:
         return episodic.add_entry(
-            content, embed_fn=self.embed_fn, entry_type=entry_type,
-            metadata=metadata, user_id=self.user_id,
+            content,
+            embed_fn=self.embed_fn,
+            entry_type=entry_type,
+            metadata=metadata,
+            user_id=self.user_id,
         )
 
     def search_episodes(self, query: str, top_k: int = 5) -> list[EpisodicEntry]:
@@ -101,8 +104,8 @@ class MemoryManager:
         # transcript. (See episodic.archive_and_clear_turns.)
         episodic.archive_and_clear_turns(
             summary_text,
-            embed_fn = self.embed_fn,
-            user_id  = self.user_id,
+            embed_fn=self.embed_fn,
+            user_id=self.user_id,
         )
 
     def get_transcript(self, archive_id: str) -> str | None:
@@ -143,7 +146,8 @@ class MemoryManager:
         include_welcome_back: bool = True,
     ) -> str:
         return self.build_context(
-            query, query_embedding=query_embedding,
+            query,
+            query_embedding=query_embedding,
             include_welcome_back=include_welcome_back,
         ).render()
 
@@ -155,15 +159,17 @@ class MemoryManager:
         """Save a fact the researcher discovered to this user's knowledge store."""
         self._knowledge.learn(content, embed_fn=self.embed_fn, source=source, topic=topic)
 
-    def search_knowledge(self, query: str, top_k: int = 5,
-                         query_embedding: list[float] | None = None) -> list[dict]:
+    def search_knowledge(
+        self, query: str, top_k: int = 5, query_embedding: list[float] | None = None
+    ) -> list[dict]:
         """Vector search the user's learned knowledge store.
 
         `query_embedding` (if given) reuses an embedding already computed this
         turn instead of re-embedding the query.
         """
-        return self._knowledge.search(query, embed_fn=self.embed_fn, top_k=top_k,
-                                      query_embedding=query_embedding)
+        return self._knowledge.search(
+            query, embed_fn=self.embed_fn, top_k=top_k, query_embedding=query_embedding
+        )
 
     def knowledge_count(self) -> int:
         return self._knowledge.count()

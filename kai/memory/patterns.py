@@ -11,6 +11,7 @@ Example: user runs system.temps every evening around 7 PM →
 All logging is async (fire-and-forget). Pattern detection is a fast DB
 aggregate query, never an LLM call.
 """
+
 from __future__ import annotations
 
 import time
@@ -24,13 +25,13 @@ _bg = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pattern-log")
 
 # Human-readable labels for proactive suggestions
 _TOOL_SUGGEST: dict[str, str] = {
-    "system.temps":           "check temps",
-    "system.info":            "run a system check",
-    "pc.network_info":        "check your network",
-    "files.disk_usage":       "check disk space",
-    "files.find_large":       "scan for large files",
-    "pc.event_logs":          "scan event logs",
-    "search.web":             "search the web",
+    "system.temps": "check temps",
+    "system.info": "run a system check",
+    "pc.network_info": "check your network",
+    "files.disk_usage": "check disk space",
+    "files.find_large": "scan for large files",
+    "pc.event_logs": "scan event logs",
+    "search.web": "search the web",
 }
 
 
@@ -44,6 +45,7 @@ def log_tool_call(tool_name: str, user_id: int = 0, topic: str = "") -> None:
 def _write_pattern(tool_name: str, user_id: int, topic: str) -> None:
     try:
         from kai.store.db import get_conn
+
         now = datetime.now()
         conn = get_conn()
         conn.execute(
@@ -73,6 +75,7 @@ def get_proactive_suggestion(user_id: int = 0) -> str:
 
 def _check_patterns(user_id: int) -> str:
     from kai.store.db import get_conn
+
     now = datetime.now()
     hour = now.hour
     dow = now.weekday()
@@ -92,8 +95,7 @@ def _check_patterns(user_id: int) -> str:
         ORDER BY cnt DESC
         LIMIT 1
         """,
-        (user_id, dow, max(0, hour - window), min(23, hour + window),
-         cfg.PATTERN_MIN_SAMPLES),
+        (user_id, dow, max(0, hour - window), min(23, hour + window), cfg.PATTERN_MIN_SAMPLES),
     ).fetchall()
 
     if not rows:

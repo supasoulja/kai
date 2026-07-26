@@ -9,31 +9,29 @@ every node score in the tree. Low relationship depth compresses scores toward
 neutral (Kai is less certain, asserts less). High depth lets scores spread out.
 """
 
-import json                              # for serializing state to/from the database
-import time                              # for timestamps
-import sqlite3                           # the database driver
-import threading                         # thread-local connection cache (see _conn)
-from pathlib import Path                 # clean path handling
-from dataclasses import dataclass, asdict, field, fields  # asdict turns a dataclass into a dict
-
+import json  # for serializing state to/from the database
+import sqlite3  # the database driver
+import threading  # thread-local connection cache (see _conn)
+import time  # for timestamps
+from dataclasses import asdict, dataclass, field, fields  # asdict turns a dataclass into a dict
+from pathlib import Path  # clean path handling
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-
-from kai.config import STATE_DIR as _STATE_DIR   # runtime data: var/state/{user_id}.db
-
+from kai.config import STATE_DIR as _STATE_DIR  # runtime data: var/state/{user_id}.db
 
 # ─── State dataclasses ────────────────────────────────────────────────────────
 # Each one captures a different "who" — the person, Kai herself, or the bond
 # between them. None of them can be derived from the others.
 
+
 @dataclass
 class UserState:
     """What's going on with the person right now. Recomputed often — this drifts fast."""
 
-    emotional_register: str = "neutral"   # "stressed" | "focused" | "venting" | "casual" | "neutral"
-    session_intent: str = "unknown"        # "troubleshooting" | "task" | "casual" | "unknown"
-    terseness: float = 0.5                 # 0=verbose, 1=one-word answers — shifts how Kai reads tone
-    recent_override_rate: float = 0.0      # fraction of Kai's recent suggestions they overrode
+    emotional_register: str = "neutral"  # "stressed" | "focused" | "venting" | "casual" | "neutral"
+    session_intent: str = "unknown"  # "troubleshooting" | "task" | "casual" | "unknown"
+    terseness: float = 0.5  # 0=verbose, 1=one-word answers — shifts how Kai reads tone
+    recent_override_rate: float = 0.0  # fraction of Kai's recent suggestions they overrode
     last_updated: float = field(default_factory=time.time)
 
 
@@ -41,10 +39,10 @@ class UserState:
 class KaiState:
     """Kai's own internal read on herself this session. The variable that makes her a personality."""
 
-    self_confidence: float = 0.7           # drops when corrected, recovers slowly over good turns
-    certainty_in_user_read: float = 0.5    # how well Kai feels she actually knows this person
-    correction_count_session: int = 0      # how many times the user has corrected Kai today
-    intuition_active: bool = False         # True when something feels off but isn't fully formed yet
+    self_confidence: float = 0.7  # drops when corrected, recovers slowly over good turns
+    certainty_in_user_read: float = 0.5  # how well Kai feels she actually knows this person
+    correction_count_session: int = 0  # how many times the user has corrected Kai today
+    intuition_active: bool = False  # True when something feels off but isn't fully formed yet
     last_updated: float = field(default_factory=time.time)
 
 
@@ -55,22 +53,23 @@ class RelationshipState:
     Persistent. Accumulates slowly. Changes here should be rare and meaningful.
     """
 
-    trust_trajectory: str = "building"      # "building" | "stable" | "declining"
-    relationship_depth: float = 0.0         # 0=stranger, 1=years of context — grows slowly
-    session_count: int = 0                  # total number of sessions together
-    validation_count: int = 0               # times the user confirmed Kai's read was right
-    correction_count: int = 0               # times the user corrected Kai's read
-    shorthand_level: float = 0.0            # how much Kai can assume without spelling it out
-    override_by_domain: dict = field(       # e.g. {"hardware": 1, "tone": 6}
-        default_factory=dict                 # default_factory=dict avoids the mutable-default bug
+    trust_trajectory: str = "building"  # "building" | "stable" | "declining"
+    relationship_depth: float = 0.0  # 0=stranger, 1=years of context — grows slowly
+    session_count: int = 0  # total number of sessions together
+    validation_count: int = 0  # times the user confirmed Kai's read was right
+    correction_count: int = 0  # times the user corrected Kai's read
+    shorthand_level: float = 0.0  # how much Kai can assume without spelling it out
+    override_by_domain: dict = field(  # e.g. {"hardware": 1, "tone": 6}
+        default_factory=dict  # default_factory=dict avoids the mutable-default bug
     )
     persistent_disagreements: list = field(
-        default_factory=list                 # topics they keep landing on differently
+        default_factory=list  # topics they keep landing on differently
     )
     last_updated: float = field(default_factory=time.time)
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
+
 
 def _db_path(user_id: str) -> Path:
     """Path to this user's state database."""
@@ -83,7 +82,7 @@ def delete_user_db(user_id) -> None:
 
     Called by store.users.delete_user. Best-effort: missing files are ignored.
     """
-    _close(user_id)          # evict the cached connection so the file can be unlinked
+    _close(user_id)  # evict the cached connection so the file can be unlinked
     base = _STATE_DIR / f"{user_id}.db"
     for p in (base, base.with_suffix(".db-wal"), base.with_suffix(".db-shm")):
         try:
@@ -97,7 +96,7 @@ def _connect(user_id: str) -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(user_id))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")   # wait up to 5s if the file is locked
+    conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if the file is locked
     conn.execute("""
         CREATE TABLE IF NOT EXISTS state (
             key          TEXT PRIMARY KEY,   -- "user" | "kai" | "relationship"
@@ -146,22 +145,25 @@ def _close(user_id) -> None:
 
 def _save(user_id: str, key: str, obj) -> None:
     """Serialize a dataclass instance to JSON and upsert it under its key."""
-    data = json.dumps(asdict(obj))           # asdict() converts dataclass → dict; dumps → JSON string
+    data = json.dumps(asdict(obj))  # asdict() converts dataclass → dict; dumps → JSON string
     with _conn(user_id) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO state VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET   -- upsert: overwrite if this key already exists
                 data = excluded.data,
                 last_updated = excluded.last_updated
-        """, (key, data, time.time()))
+        """,
+            (key, data, time.time()),
+        )
 
 
 def _load(user_id: str, key: str, cls):
     """Load and deserialize a state object, or return a fresh default instance."""
     with _conn(user_id) as conn:
         row = conn.execute("SELECT data FROM state WHERE key = ?", (key,)).fetchone()
-    if row is None:                          # no record yet — first time talking to this user
-        return cls()                          # cls() calls the dataclass constructor with all defaults
+    if row is None:  # no record yet — first time talking to this user
+        return cls()  # cls() calls the dataclass constructor with all defaults
     # Be defensive: a corrupt blob or a row written before a dataclass field was
     # added/removed must not crash the read. Keep only keys the dataclass knows,
     # and fall back to defaults if the JSON itself is unparseable.
@@ -174,6 +176,7 @@ def _load(user_id: str, key: str, cls):
 
 
 # ─── Public load/save API ─────────────────────────────────────────────────────
+
 
 def load_user_state(user_id: str) -> UserState:
     return _load(user_id, "user", UserState)
@@ -204,13 +207,14 @@ def save_relationship_state(user_id: str, state: RelationshipState) -> None:
 
 # ─── Update helpers — small, meaningful mutations called by the memory model ──
 
+
 def record_validation(user_id: str) -> None:
     """User confirmed Kai's read was right. Strengthens trust and depth slowly."""
     rel = load_relationship_state(user_id)
     rel.validation_count += 1
     # depth grows slowly and asymptotically — each validation matters less as trust builds
     rel.relationship_depth = min(1.0, rel.relationship_depth + 0.02)
-    if rel.trust_trajectory == "declining":      # a validation can interrupt a decline
+    if rel.trust_trajectory == "declining":  # a validation can interrupt a decline
         rel.trust_trajectory = "stable"
     save_relationship_state(user_id, rel)
 
@@ -225,7 +229,7 @@ def record_correction(user_id: str, domain: str = "") -> None:
 
     rel = load_relationship_state(user_id)
     rel.correction_count += 1
-    if domain:                                     # track which domains generate friction
+    if domain:  # track which domains generate friction
         rel.override_by_domain[domain] = rel.override_by_domain.get(domain, 0) + 1
     # repeated corrections without validation in between suggest declining trust
     if rel.correction_count > rel.validation_count * 2 and rel.correction_count > 3:
@@ -243,7 +247,7 @@ def record_session_start(user_id: str) -> None:
     save_relationship_state(user_id, rel)
 
     kai = load_kai_state(user_id)
-    kai.correction_count_session = 0              # session-scoped counter resets
+    kai.correction_count_session = 0  # session-scoped counter resets
     kai.self_confidence = min(1.0, kai.self_confidence + 0.05)  # small recovery between sessions
     save_kai_state(user_id, kai)
 
@@ -251,14 +255,15 @@ def record_session_start(user_id: str) -> None:
 # ─── Context modifier — the bridge into the scoring equation ──────────────────
 
 _TRUST_FACTOR = {
-    "building": 1.0,     # neutral — still establishing the baseline
-    "stable":   1.0,     # neutral — relationship is healthy
-    "declining": 0.8,    # dampen scores — be more tentative when trust is shaky
+    "building": 1.0,  # neutral — still establishing the baseline
+    "stable": 1.0,  # neutral — relationship is healthy
+    "declining": 0.8,  # dampen scores — be more tentative when trust is shaky
 }
 
 
-def compute_context_modifier(user_id: str, rel: "RelationshipState | None" = None,
-                             kai: "KaiState | None" = None) -> float:
+def compute_context_modifier(
+    user_id: str, rel: "RelationshipState | None" = None, kai: "KaiState | None" = None
+) -> float:
     """
     Combine all three state stores into the single scalar the scorer multiplies in.
 
@@ -277,13 +282,13 @@ def compute_context_modifier(user_id: str, rel: "RelationshipState | None" = Non
         kai = load_kai_state(user_id)
 
     # Low depth compresses toward 0.5 (cautious); high depth allows full range up to 1.0
-    depth_factor = 0.5 + (rel.relationship_depth * 0.5)         # ranges 0.5–1.0
+    depth_factor = 0.5 + (rel.relationship_depth * 0.5)  # ranges 0.5–1.0
 
     # Declining trust dampens every score — Kai surfaces things more tentatively
     trust_factor = _TRUST_FACTOR.get(rel.trust_trajectory, 1.0)  # 0.8 or 1.0
 
     # Kai's own self-confidence this session sets a soft ceiling
-    confidence_factor = 0.7 + (kai.self_confidence * 0.3)       # ranges 0.91–1.0 at typical values
+    confidence_factor = 0.7 + (kai.self_confidence * 0.3)  # ranges 0.91–1.0 at typical values
 
     return depth_factor * trust_factor * confidence_factor
 
@@ -300,11 +305,11 @@ def explain_context_modifier(user_id: str) -> dict:
     return {
         "final_modifier": round(depth_factor * trust_factor * confidence_factor, 4),
         "factors": {
-            "relationship_depth":   round(rel.relationship_depth, 4),
-            "depth_factor":         round(depth_factor, 4),
-            "trust_trajectory":     rel.trust_trajectory,
-            "trust_factor":         trust_factor,
-            "kai_self_confidence":  round(kai.self_confidence, 4),
-            "confidence_factor":    round(confidence_factor, 4),
+            "relationship_depth": round(rel.relationship_depth, 4),
+            "depth_factor": round(depth_factor, 4),
+            "trust_trajectory": rel.trust_trajectory,
+            "trust_factor": trust_factor,
+            "kai_self_confidence": round(kai.self_confidence, 4),
+            "confidence_factor": round(confidence_factor, 4),
         },
     }

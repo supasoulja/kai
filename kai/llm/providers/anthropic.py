@@ -20,6 +20,7 @@ Format differences this adapter bridges (vs the Ollama/OpenAI shape):
 Default model is claude-opus-4-8 (current most-capable Opus) when the registry
 entry doesn't pin one.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,13 @@ _DEFAULT_MAX_TOKENS = 8192
 
 
 class AnthropicClient(BaseHTTPProvider):
-    def __init__(self, api_key: str, base_url: str = _DEFAULT_BASE,
-                 default_model: str = _DEFAULT_MODEL,
-                 max_tokens: int = _DEFAULT_MAX_TOKENS):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = _DEFAULT_BASE,
+        default_model: str = _DEFAULT_MODEL,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+    ):
         self.api_key = api_key or ""
         self.base_url = (base_url or _DEFAULT_BASE).rstrip("/")
         self.default_model = default_model or _DEFAULT_MODEL
@@ -45,9 +50,11 @@ class AnthropicClient(BaseHTTPProvider):
 
     # ── HTTP seams (transport in BaseHTTPProvider; only auth headers differ) ─
     def _headers(self) -> dict:
-        return {"content-type": "application/json",
-                "x-api-key": self.api_key,
-                "anthropic-version": _API_VERSION}
+        return {
+            "content-type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": _API_VERSION,
+        }
 
     # ── Request normalization (Ollama-shaped → Anthropic) ──────────────────
     @staticmethod
@@ -87,16 +94,28 @@ class AnthropicClient(BaseHTTPProvider):
                 for i, tc in enumerate(m.get("tool_calls") or []):
                     fn = tc.get("function", {})
                     tcid = tc.get("id") or f"toolu_{i}"
-                    blocks.append({"type": "tool_use", "id": tcid,
-                                   "name": fn.get("name", ""),
-                                   "input": self._coerce_args(fn.get("arguments"))})
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tcid,
+                            "name": fn.get("name", ""),
+                            "input": self._coerce_args(fn.get("arguments")),
+                        }
+                    )
                     pending_ids.append(tcid)
-                conv.append({"role": "assistant",
-                             "content": blocks or [{"type": "text", "text": " "}]})
+                conv.append(
+                    {"role": "assistant", "content": blocks or [{"type": "text", "text": " "}]}
+                )
             elif role == "tool":
                 tcid = pending_ids.pop(0) if pending_ids else "toolu_0"
-                conv.append({"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": tcid, "content": content or ""}]})
+                conv.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": tcid, "content": content or ""}
+                        ],
+                    }
+                )
             else:  # user
                 conv.append({"role": "user", "content": content or " "})
 
@@ -129,9 +148,15 @@ class AnthropicClient(BaseHTTPProvider):
             elif bt == "thinking":
                 think_parts.append(block.get("thinking", ""))
             elif bt == "tool_use":
-                tool_calls.append({"id": block.get("id"),
-                                   "function": {"name": block.get("name", ""),
-                                                "arguments": block.get("input", {})}})
+                tool_calls.append(
+                    {
+                        "id": block.get("id"),
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": block.get("input", {}),
+                        },
+                    }
+                )
         msg: dict = {"role": "assistant", "content": "".join(text_parts)}
         if think_parts:
             msg["thinking"] = "".join(think_parts)
@@ -140,24 +165,35 @@ class AnthropicClient(BaseHTTPProvider):
         return msg
 
     # ── Public surface (matches LLMClient / OllamaClient) ───────────────────
-    def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             model: str = "", think: bool = False,
-             temperature: float = 0.0, keep_alive: str = "10m") -> dict:
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str = "",
+        think: bool = False,
+        temperature: float = 0.0,
+        keep_alive: str = "10m",
+    ) -> dict:
         data = self._post_json("/v1/messages", self._build(messages, tools, model, think, False))
         return {"message": self._to_ollama_message(data)}
 
-    def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                    model: str = "", think: bool = False,
-                    temperature: float = 0.0
-                    ) -> Generator[tuple[str, bool, dict], None, None]:
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str = "",
+        think: bool = False,
+        temperature: float = 0.0,
+    ) -> Generator[tuple[str, bool, dict], None, None]:
         text_parts: list[str] = []
         tool_acc: dict[int, dict] = {}
-        for line in self._post_stream("/v1/messages",
-                                      self._build(messages, tools, model, think, True)):
+        for line in self._post_stream(
+            "/v1/messages", self._build(messages, tools, model, think, True)
+        ):
             line = line.strip()
             if not line.startswith("data:"):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len("data:") :].strip()
             if not data:
                 continue
             try:
@@ -169,7 +205,10 @@ class AnthropicClient(BaseHTTPProvider):
                 cb = evt.get("content_block", {})
                 if cb.get("type") == "tool_use":
                     tool_acc[evt.get("index", 0)] = {
-                        "id": cb.get("id"), "name": cb.get("name", ""), "json": ""}
+                        "id": cb.get("id"),
+                        "name": cb.get("name", ""),
+                        "json": "",
+                    }
             elif et == "content_block_delta":
                 delta = evt.get("delta", {})
                 dt = delta.get("type")
@@ -194,8 +233,7 @@ class AnthropicClient(BaseHTTPProvider):
                     args = json.loads(s["json"]) if s["json"].strip() else {}
                 except json.JSONDecodeError:
                     args = {}
-                tcs.append({"id": s["id"],
-                            "function": {"name": s["name"], "arguments": args}})
+                tcs.append({"id": s["id"], "function": {"name": s["name"], "arguments": args}})
             final["tool_calls"] = tcs
         yield "", True, final
 
@@ -214,11 +252,17 @@ class AnthropicClient(BaseHTTPProvider):
             return False
 
 
-def _build_client(api_key: str | None = None, base_url: str | None = None,
-                  default_model: str | None = None, **_ignored) -> AnthropicClient:
-    return AnthropicClient(api_key=api_key or "",
-                           base_url=base_url or _DEFAULT_BASE,
-                           default_model=default_model or _DEFAULT_MODEL)
+def _build_client(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    default_model: str | None = None,
+    **_ignored,
+) -> AnthropicClient:
+    return AnthropicClient(
+        api_key=api_key or "",
+        base_url=base_url or _DEFAULT_BASE,
+        default_model=default_model or _DEFAULT_MODEL,
+    )
 
 
 register_provider("anthropic", _build_client)

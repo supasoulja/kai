@@ -6,6 +6,7 @@ Usage:
     python web.py --port 8080
     python web.py --no-browser
 """
+
 import argparse
 import asyncio
 import ipaddress
@@ -15,8 +16,8 @@ import os
 import secrets
 import socket as _socket
 import sys
-import time as _time
 import threading
+import time as _time
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,24 +33,22 @@ except ModuleNotFoundError:
     sys.exit(1)
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import kai.config as cfg
-from kai.core import bootstrap
-from kai.core import lifecycle
-from kai.util import log as _klog
-from kai.core.brain import _strip_thinking, _build_compress_messages
-from kai.llm.ollama import OllamaClient
-from kai.memory.manager import MemoryManager
-from kai.tools import registry as tool_registry
-from kai.core import events as _events
-from kai.core._app_state import set_embed_fn as _set_embed_fn
-
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 # Request shapes live in kai/api/models.py so routers and web.py share them.
-from kai.api.models import ChatRequest, LoginRequest, GreetingRequest
+from kai.api.models import ChatRequest, GreetingRequest, LoginRequest
+from kai.core import bootstrap, lifecycle
+from kai.core import events as _events
+from kai.core._app_state import set_embed_fn as _set_embed_fn
+from kai.core.brain import _build_compress_messages, _strip_thinking
+from kai.llm.ollama import OllamaClient
+from kai.memory.manager import MemoryManager
+from kai.tools import registry as tool_registry
+from kai.util import log as _klog
 
 # Maximum input length — prevents accidental context blowout
 _MAX_INPUT_CHARS = 8000
@@ -77,6 +76,7 @@ def _issue_token(user_info: dict) -> str:
     """Create, persist (as a hash), and return a new session token.
     Prunes expired tokens as a side effect to prevent unbounded table growth."""
     from kai.store.db import get_conn
+
     token = secrets.token_urlsafe(32)
     now = datetime.now().isoformat()
     expires = (datetime.now() + timedelta(seconds=_SESSION_TTL)).isoformat()
@@ -96,11 +96,11 @@ def _get_session(token: str) -> dict | None:
     if not token:
         return None
     from kai.store.db import get_conn
+
     now = datetime.now().isoformat()
     conn = get_conn()
     row = conn.execute(
-        "SELECT user_id, user_name FROM session_tokens "
-        "WHERE token = ? AND expires_at > ?",
+        "SELECT user_id, user_name FROM session_tokens WHERE token = ? AND expires_at > ?",
         (_hash_token(token), now),
     ).fetchone()
     if not row:
@@ -111,6 +111,7 @@ def _get_session(token: str) -> dict | None:
 def _revoke_token(token: str) -> None:
     """Delete a session token from the DB."""
     from kai.store.db import get_conn
+
     conn = get_conn()
     conn.execute("DELETE FROM session_tokens WHERE token = ?", (_hash_token(token),))
     conn.commit()
@@ -121,6 +122,7 @@ def _migrate_session_tokens() -> None:
     Existing browser cookies still work — the client sends the plaintext token,
     we hash it on lookup, which now matches the upgraded DB value."""
     from kai.store.db import get_conn
+
     conn = get_conn()
     rows = conn.execute("SELECT token FROM session_tokens").fetchall()
     for (tok,) in rows:
@@ -131,12 +133,13 @@ def _migrate_session_tokens() -> None:
             )
     conn.commit()
 
+
 # ── Login rate limiting ──────────────────────────────────────────────────────
 # Limits login attempts per IP to prevent brute-forcing the 4-digit PIN.
 # Window = 15 minutes, max 5 attempts. Persisted in the DB so a server restart
 # can't reset the counter.
 
-_LOGIN_WINDOW    = 900   # 15 minutes in seconds
+_LOGIN_WINDOW = 900  # 15 minutes in seconds
 _LOGIN_MAX_TRIES = 5
 
 
@@ -144,6 +147,7 @@ def _check_login_rate(ip: str) -> bool:
     """Return True if this IP is allowed to attempt login, False if rate-limited.
     Writes an attempt record and prunes expired ones on each call."""
     from kai.store.db import get_conn
+
     now = _time.time()
     window_start = now - _LOGIN_WINDOW
     conn = get_conn()
@@ -170,11 +174,16 @@ class _AuthGuard:
     """
 
     # Routes that never require auth (no cookie parsing needed)
-    _PUBLIC = frozenset({
-        "/login", "/users", "/users/login", "/users/register",
-        "/api/show-window",  # single-instance lock (desktop app)
-        "/voice/test",       # audio pipeline test — no auth, no kokoro
-    })
+    _PUBLIC = frozenset(
+        {
+            "/login",
+            "/users",
+            "/users/login",
+            "/users/register",
+            "/api/show-window",  # single-instance lock (desktop app)
+            "/voice/test",  # audio pipeline test — no auth, no kokoro
+        }
+    )
     _PUBLIC_PREFIXES = ("/static/", "/ws/", "/computer")
 
     # Routes that parse the cookie but don't reject if missing
@@ -199,7 +208,7 @@ class _AuthGuard:
                 for part in val.decode().split(";"):
                     part = part.strip()
                     if part.startswith("kai_session="):
-                        token = part[len("kai_session="):]
+                        token = part[len("kai_session=") :]
                         break
                 break
 
@@ -224,9 +233,9 @@ class _SecurityHeaders:
 
     _BASE = [
         (b"x-content-type-options", b"nosniff"),
-        (b"x-frame-options",       b"DENY"),
-        (b"referrer-policy",       b"strict-origin-when-cross-origin"),
-        (b"permissions-policy",    b"camera=(), microphone=(), geolocation=()"),
+        (b"x-frame-options", b"DENY"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
     ]
 
     def __init__(self, app):
@@ -244,14 +253,16 @@ class _SecurityHeaders:
         script_src = b"script-src 'self' 'unsafe-inline'"
         if os.environ.get("KAI_ENTRYPOINT") == "app":
             script_src += b" 'unsafe-eval'"
-        csp = (b"default-src 'self'; " + script_src + b"; "
-               b"style-src 'self' 'unsafe-inline'; "
-               b"img-src 'self' data:; "
-               b"connect-src 'self'; "
-               b"font-src 'self'; "
-               b"object-src 'none'; "
-               b"base-uri 'self'; "
-               b"form-action 'self'")
+        csp = (
+            b"default-src 'self'; " + script_src + b"; "
+            b"style-src 'self' 'unsafe-inline'; "
+            b"img-src 'self' data:; "
+            b"connect-src 'self'; "
+            b"font-src 'self'; "
+            b"object-src 'none'; "
+            b"base-uri 'self'; "
+            b"form-action 'self'"
+        )
         self._headers = self._BASE + [(b"content-security-policy", csp)]
 
     async def __call__(self, scope, receive, send):
@@ -278,28 +289,57 @@ class _SecurityHeaders:
 # their original private names here for the routes still defined in this module.
 from kai.api.deps import get_user as _get_user
 
-
 # ── App state ──────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Kai")
 
 # Domain routers extracted from this module (see kai/api/). Self-contained:
 # voice depends only on kai.audio; study depends only on kai.api.deps + kai.store.db.
-from kai.api import voice as _voice_router, study as _study_router, admin as _admin_router
+from kai.api import admin as _admin_router
+from kai.api import study as _study_router
+from kai.api import voice as _voice_router
+from kai.api.routes import (
+    dashboard as _dashboard_router,
+)
+from kai.api.routes import (
+    debug as _debug_router,
+)
+from kai.api.routes import (
+    documents as _documents_router,
+)
+from kai.api.routes import (
+    feedback as _feedback_router,
+)
+from kai.api.routes import (
+    memory as _memory_router,
+)
 from kai.api.routes import (
     pages as _pages_router,
-    dashboard as _dashboard_router,
-    memory as _memory_router,
+)
+from kai.api.routes import (
     sessions as _sessions_router,
-    feedback as _feedback_router,
+)
+from kai.api.routes import (
     settings as _settings_router,
-    debug as _debug_router,
-    documents as _documents_router,
+)
+from kai.api.routes import (
     system as _system_router,
 )
-for _r in (_voice_router, _study_router, _admin_router, _pages_router,
-           _dashboard_router, _memory_router, _sessions_router, _feedback_router,
-           _settings_router, _debug_router, _documents_router, _system_router):
+
+for _r in (
+    _voice_router,
+    _study_router,
+    _admin_router,
+    _pages_router,
+    _dashboard_router,
+    _memory_router,
+    _sessions_router,
+    _feedback_router,
+    _settings_router,
+    _debug_router,
+    _documents_router,
+    _system_router,
+):
     app.include_router(_r.router)
 
 # Brain registry + shared singletons now live in kai/api/state.py so route
@@ -310,10 +350,10 @@ for _r in (_voice_router, _study_router, _admin_router, _pages_router,
 # _state.ollama is reassigned at init, so it is always read as _state.ollama.
 from kai.api import state as _state
 
-_user_brains       = _state.user_brains
-_user_brains_lock  = _state.user_brains_lock
+_user_brains = _state.user_brains
+_user_brains_lock = _state.user_brains_lock
 _get_or_create_brain = _state.get_or_create_brain
-_brain_for           = _state.brain_for
+_brain_for = _state.brain_for
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 # Static HTML pages + asset stamping now live in kai/api/routes/pages.py;
@@ -322,14 +362,15 @@ _brain_for           = _state.brain_for
 # were extracted to kai/api/routes/ (mounted above via include_router).
 from kai.api.routes.pages import STATIC_DIR as _STATIC_DIR
 
-
 # ── User auth ──────────────────────────────────────────────────────────────────
 # The machine key hash is added server-side to every auth call.
 # The browser never sees the machine key — it only sends name + PIN.
 
+
 @app.get("/users")
 async def get_users():
     from kai.store import users as _users
+
     return {"names": _users.list_users()}
 
 
@@ -342,9 +383,12 @@ async def login_user(req: LoginRequest, response: Response, request: Request = N
     """
     client_ip = request.client.host if request and request.client else "unknown"
     if not _check_login_rate(client_ip):
-        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 15 minutes.")
+        raise HTTPException(
+            status_code=429, detail="Too many login attempts. Try again in 15 minutes."
+        )
     from kai.store import users as _users
     from kai.system.device import key_hash
+
     user = _users.authenticate(req.name.strip(), req.pin.strip(), key_hash())
     if not user:
         raise HTTPException(status_code=401, detail="Invalid name or PIN")
@@ -375,6 +419,7 @@ async def register_user(req: LoginRequest, response: Response):
     """
     from kai.store import users as _users
     from kai.system.device import key_hash
+
     if _users.user_count() > 0:
         raise HTTPException(
             status_code=403,
@@ -415,6 +460,7 @@ async def add_user(req: LoginRequest, request: Request):
     """
     from kai.store import users as _users
     from kai.system.device import key_hash
+
     user = _get_user(request)
     if not user or user["user_id"] != _users.get_owner_id():
         raise HTTPException(status_code=403, detail="Only the owner can add users.")
@@ -455,8 +501,11 @@ async def export_account(request: Request):
     import io
     import zipfile
     from pathlib import Path
+
+    from kai.memory import knowledge as _knowledge
+    from kai.memory import state as _state
+    from kai.memory import tree as _tree
     from kai.store import users as _users
-    from kai.memory import tree as _tree, state as _state, knowledge as _knowledge
 
     def _build_zip() -> bytes:
         buf = io.BytesIO()
@@ -510,6 +559,7 @@ async def delete_account(request: Request, response: Response):
             brain.shutdown()
 
     from kai.store import users as _users
+
     deleted = _users.delete_user(uid)
     if not deleted:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -530,15 +580,19 @@ async def chat(req: ChatRequest, request: Request):
 
     user_input = req.message.strip()
     if not user_input:
+
         async def empty():
-            yield f'data: {json.dumps({"type":"done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
         return StreamingResponse(empty(), media_type="text/event-stream")
 
     # Reject excessively long input to prevent context blowout
     if len(user_input) > _MAX_INPUT_CHARS:
+
         async def too_long():
-            yield f'data: {json.dumps({"type":"error","text":f"Message too long ({len(user_input)} chars). Max is {_MAX_INPUT_CHARS}."})}\n\n'
-            yield f'data: {json.dumps({"type":"done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'error', 'text': f'Message too long ({len(user_input)} chars). Max is {_MAX_INPUT_CHARS}.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
         return StreamingResponse(too_long(), media_type="text/event-stream")
 
     loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
@@ -546,9 +600,7 @@ async def chat(req: ChatRequest, request: Request):
 
     def run_brain() -> None:
         def on_status(text: str) -> None:
-            asyncio.run_coroutine_threadsafe(
-                q.put({"type": "status", "text": text}), loop
-            )
+            asyncio.run_coroutine_threadsafe(q.put({"type": "status", "text": text}), loop)
 
         for attempt in range(2):
             emitted = False
@@ -562,7 +614,11 @@ async def chat(req: ChatRequest, request: Request):
                         if meta.get("latency_ms") is not None:
                             event["latency_ms"] = meta["latency_ms"]
                     elif meta.get("confirm_tool"):
-                        event = {"type": "confirm_tool", "name": meta["name"], "label": meta["label"]}
+                        event = {
+                            "type": "confirm_tool",
+                            "name": meta["name"],
+                            "label": meta["label"],
+                        }
                         if meta.get("diff"):
                             event["diff"] = meta["diff"]
                     elif meta.get("think_step"):
@@ -580,8 +636,12 @@ async def chat(req: ChatRequest, request: Request):
                 _log.exception("Chat stream error")
                 # If Ollama crashed mid-session and nothing streamed yet,
                 # try bringing it back up and retry once before giving up.
-                if (not emitted and attempt == 0 and "connect" in str(exc).lower()
-                        and bootstrap.ensure_ollama_running(_state.ollama)):
+                if (
+                    not emitted
+                    and attempt == 0
+                    and "connect" in str(exc).lower()
+                    and bootstrap.ensure_ollama_running(_state.ollama)
+                ):
                     asyncio.run_coroutine_threadsafe(
                         q.put({"type": "status", "text": "Ollama restarted — retrying..."}), loop
                     )
@@ -591,9 +651,7 @@ async def chat(req: ChatRequest, request: Request):
                     safe_msg = "Could not reach Ollama. Is it running?"
                 else:
                     safe_msg = "Something went wrong. Check the server log for details."
-                asyncio.run_coroutine_threadsafe(
-                    q.put({"type": "error", "text": safe_msg}), loop
-                )
+                asyncio.run_coroutine_threadsafe(q.put({"type": "error", "text": safe_msg}), loop)
                 asyncio.run_coroutine_threadsafe(q.put({"type": "done"}), loop)
                 break
         _first_reply_done.set()  # unblock deferred archive thread
@@ -604,9 +662,9 @@ async def chat(req: ChatRequest, request: Request):
         while True:
             try:
                 event = await asyncio.wait_for(q.get(), timeout=300)
-            except asyncio.TimeoutError:
-                yield f'data: {json.dumps({"type":"error","text":"Response timed out."})}\n\n'
-                yield f'data: {json.dumps({"type":"done"})}\n\n'
+            except TimeoutError:
+                yield f"data: {json.dumps({'type': 'error', 'text': 'Response timed out.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
             yield f"data: {json.dumps(event)}\n\n"
             if event["type"] == "done":
@@ -641,7 +699,7 @@ async def chat_greeting(req: GreetingRequest, request: Request):
             for token, done, _meta in brain.generate_greeting(fresh=req.fresh):
                 event = {"type": "done"} if done else {"type": "token", "text": token}
                 asyncio.run_coroutine_threadsafe(q.put(event), loop)
-        except Exception as exc:
+        except Exception:
             _log.exception("Greeting stream error")
             # A failed greeting should be silent — just end the stream.
             asyncio.run_coroutine_threadsafe(q.put({"type": "done"}), loop)
@@ -652,8 +710,8 @@ async def chat_greeting(req: GreetingRequest, request: Request):
         while True:
             try:
                 event = await asyncio.wait_for(q.get(), timeout=120)
-            except asyncio.TimeoutError:
-                yield f'data: {json.dumps({"type":"done"})}\n\n'
+            except TimeoutError:
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
             yield f"data: {json.dumps(event)}\n\n"
             if event["type"] == "done":
@@ -667,6 +725,7 @@ async def chat_greeting(req: GreetingRequest, request: Request):
 
 
 # ── Activity event endpoints ──────────────────────────────────────────────────
+
 
 @app.websocket("/ws/activity/{session_id}")
 async def ws_activity(ws: WebSocket, session_id: str):
@@ -696,7 +755,7 @@ async def ws_activity(ws: WebSocket, session_id: str):
             try:
                 payload = await asyncio.wait_for(q.get(), timeout=30)
                 await ws.send_text(payload)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send keepalive ping to detect dead connections
                 await ws.send_text('{"type":"ping"}')
     except WebSocketDisconnect:
@@ -753,8 +812,8 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
     # Wait up to 10 min for the first reply — if it never comes, archive anyway.
     _first_reply_done.wait(timeout=600)
 
-    from kai.memory import episodic as _episodic
     from kai.llm.embed import embed as _fast_embed
+    from kai.memory import episodic as _episodic
     from kai.store.db import get_conn
 
     # Collect all user IDs that have pending (uncompressed) turns
@@ -799,7 +858,10 @@ def _init() -> None:
         sys.exit(1)
 
     # ── Fast CPU embedding — no VRAM, no model swaps ─────────────────────
-    from kai.llm.embed import embed as fast_embed, embed_batch as fast_embed_batch, warm_up as _warm_embed
+    from kai.llm.embed import embed as fast_embed
+    from kai.llm.embed import embed_batch as fast_embed_batch
+    from kai.llm.embed import warm_up as _warm_embed
+
     _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
 
     # Shared embed function for tools that need embeddings (e.g. RAG)
@@ -812,6 +874,7 @@ def _init() -> None:
     # ── Pre-warm: build shared indexes once so per-user brains skip this step ──
     # Memory router (one embedding per domain) + tool index (one per category)
     from kai.memory import router as _router
+
     try:
         _state.shared_domain_index = _router.build_domain_index(fast_embed_batch)
     except Exception:
@@ -842,14 +905,17 @@ def _init() -> None:
         t_warm = _time.monotonic()
         try:
             import urllib.request
-            warm_payload = json.dumps({
-                "model": cfg.CHAT_MODEL,
-                "messages": [{"role": "user", "content": "hi"}],
-                "stream": False,
-                "think": False,
-                "keep_alive": "10m",
-                "options": {"num_predict": 1},
-            }).encode("utf-8")
+
+            warm_payload = json.dumps(
+                {
+                    "model": cfg.CHAT_MODEL,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                    "think": False,
+                    "keep_alive": "10m",
+                    "options": {"num_predict": 1},
+                }
+            ).encode("utf-8")
             warm_req = urllib.request.Request(
                 f"{_state.ollama.base_url}/api/chat",
                 data=warm_payload,
@@ -865,8 +931,9 @@ def _init() -> None:
     threading.Thread(target=_prewarm_chat_model, daemon=True).start()
 
     # ── Autonomous scheduler ──────────────────────────────────────────────────
-    from kai.memory.scheduler import get_scheduler
     from kai.memory.briefing import generate_and_store as _gen_briefing
+    from kai.memory.scheduler import get_scheduler
+
     sched = get_scheduler()
     sched.add_daily(cfg.BRIEFING_TIME, lambda: _gen_briefing(user_id=0), name="morning-briefing")
     sched.start()
@@ -876,6 +943,7 @@ def _init() -> None:
 
     # Upgrade awareness — detect version changes and write an episodic memory entry
     from kai.system.upgrade import check_for_upgrade
+
     upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
         print(f"[+] Upgrade detected: {upgrade_msg[:80]}...")
@@ -885,16 +953,19 @@ def _init() -> None:
     def _warm_audio():
         try:
             from kai.audio import _get_whisper
+
             _get_whisper()
             print("[+] Whisper STT ready")
         except Exception as exc:
             print(f"[!] Whisper pre-warm failed: {exc}")
         try:
             from kai.audio import _get_kokoro
+
             _get_kokoro()
             print("[+] Kokoro TTS ready")
         except Exception as exc:
             print(f"[!] Kokoro pre-warm failed: {exc}")
+
     threading.Thread(target=_warm_audio, daemon=True).start()
 
     # Archive any raw turns left from the previous session so they're searchable
@@ -902,10 +973,12 @@ def _init() -> None:
 
     # Register shutdown hook: sleep cycle + HQ re-embed for every per-user brain
     import atexit
+
     def _on_shutdown():
         with _user_brains_lock:
             brains = list(_user_brains.values())
         bootstrap.run_shutdown(_state.ollama, brains, call_brain_shutdown=True)
+
     atexit.register(_on_shutdown)
 
 
@@ -926,9 +999,9 @@ def _generate_self_signed_cert(cert_dir: Path, lan_ip: str | None = None) -> tup
     When lan_ip is given, includes it as a SAN so phone browsers accept the cert."""
     try:
         from cryptography import x509
-        from cryptography.x509.oid import NameOID
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
     except ImportError:
         print("[!] TLS requires the 'cryptography' package.")
         print(f"    Fix: {sys.executable} -m pip install cryptography")
@@ -937,9 +1010,9 @@ def _generate_self_signed_cert(cert_dir: Path, lan_ip: str | None = None) -> tup
     cert_dir.mkdir(parents=True, exist_ok=True)
     # Use a separate cert file for LAN mode so it doesn't collide with the localhost cert.
     cert_name = "kai-lan.crt" if lan_ip else "kai.crt"
-    key_name  = "kai-lan.key" if lan_ip else "kai.key"
+    key_name = "kai-lan.key" if lan_ip else "kai.key"
     cert_path = cert_dir / cert_name
-    key_path  = cert_dir / key_name
+    key_path = cert_dir / key_name
 
     if cert_path.exists() and key_path.exists():
         return str(cert_path), str(key_path)
@@ -965,18 +1038,24 @@ def _generate_self_signed_cert(cert_dir: Path, lan_ip: str | None = None) -> tup
         .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
         .sign(key, hashes.SHA256())
     )
-    key_path.write_bytes(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
-    ))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     print(f"[+] Generated self-signed TLS cert: {cert_path}")
     return str(cert_path), str(key_path)
 
 
-def setup_app(host: str = "127.0.0.1", port: int = 7860,
-              scheme: str = "http", extra_origins: list[str] | None = None) -> None:
+def setup_app(
+    host: str = "127.0.0.1",
+    port: int = 7860,
+    scheme: str = "http",
+    extra_origins: list[str] | None = None,
+) -> None:
     """Set up middleware, mount static files, and initialise Kai.
 
     Call once before starting uvicorn.  Extracted from main() so that
@@ -987,6 +1066,7 @@ def setup_app(host: str = "127.0.0.1", port: int = 7860,
     # Server Console panel shows what the launching terminal sees. Install first
     # so init/model-load logs below are captured too.
     from kai.util import logbuf
+
     logbuf.install()
 
     origins = [
@@ -1014,16 +1094,19 @@ def main() -> None:
     os.environ.setdefault("KAI_ENTRYPOINT", "web")
 
     parser = argparse.ArgumentParser(description="Kai web UI")
-    parser.add_argument("--port",       type=int, default=7860)
-    parser.add_argument("--host",       default="127.0.0.1",
-                        help="Bind address (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--tls",        action="store_true",
-                        help="Enable HTTPS with an auto-generated self-signed cert")
-    parser.add_argument("--cert",       help="Path to TLS certificate file")
-    parser.add_argument("--key",        help="Path to TLS private key file")
-    parser.add_argument("--lan",        action="store_true",
-                        help="Bind to 0.0.0.0 with auto-TLS so phones on the same network can connect")
+    parser.add_argument(
+        "--tls", action="store_true", help="Enable HTTPS with an auto-generated self-signed cert"
+    )
+    parser.add_argument("--cert", help="Path to TLS certificate file")
+    parser.add_argument("--key", help="Path to TLS private key file")
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="Bind to 0.0.0.0 with auto-TLS so phones on the same network can connect",
+    )
     args = parser.parse_args()
 
     # Certs live under var/ (honors KAI_VAR_DIR), not inside the source package.
@@ -1075,8 +1158,8 @@ def main() -> None:
     if lan_ip:
         phone_url = f"https://{lan_ip}:{args.port}"
         print(f"[✓] Phone URL:  {phone_url}")
-        print(f"    → Open on phone, tap Advanced → Proceed (one-time cert trust)")
-        print(f"    → After trusting: Add to Home Screen for app-like access")
+        print("    → Open on phone, tap Advanced → Proceed (one-time cert trust)")
+        print("    → After trusting: Add to Home Screen for app-like access")
 
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()

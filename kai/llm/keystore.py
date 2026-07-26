@@ -18,6 +18,7 @@ Guarantees:
 The table is created lazily (like flow_log), so importing this module never
 forces schema work.
 """
+
 import base64
 import hashlib
 from datetime import datetime
@@ -55,13 +56,13 @@ def _cipher():
     global _cipher_cache
     if _cipher_cache is None:
         from cryptography.fernet import Fernet
+
         material = hashlib.sha256(device.get_key() + b"kai-llm-keystore-v1").digest()
         _cipher_cache = Fernet(base64.urlsafe_b64encode(material))
     return _cipher_cache
 
 
-def set_key(user_id: int, conn_id: str, secret: str,
-            provider: str, base_url: str = "") -> None:
+def set_key(user_id: int, conn_id: str, secret: str, provider: str, base_url: str = "") -> None:
     """Store (or replace) an encrypted API key for one connection.
 
     conn_id is a stable per-user label for the connection (e.g. "openrouter").
@@ -116,10 +117,7 @@ def list_connections(user_id: int) -> list[dict]:
         "WHERE user_id = ? ORDER BY created_at",
         (user_id,),
     ).fetchall()
-    return [
-        {"conn_id": r[0], "provider": r[1], "base_url": r[2], "created_at": r[3]}
-        for r in rows
-    ]
+    return [{"conn_id": r[0], "provider": r[1], "base_url": r[2], "created_at": r[3]} for r in rows]
 
 
 def delete_key(user_id: int, conn_id: str) -> bool:

@@ -9,6 +9,7 @@ escape vectors: path traversal, absolute paths, and symlinks pointing out.
 
 Fast — no Ollama, no DB.
 """
+
 import os
 from pathlib import Path
 
@@ -82,6 +83,7 @@ def test_edit_cannot_touch_source_tree(workspace):
 # back as a success-wrapped "Failed to…" string, or the model reports work it
 # never did (the fabrication class the lxc fix closed).
 
+
 def test_edit_missing_file_raises(workspace):
     with pytest.raises(FileNotFoundError):
         w.workspace_edit("nope.txt", "a", "b")
@@ -100,6 +102,7 @@ def test_write_failure_raises(workspace, monkeypatch):
     # Simulate an OS-level write failure (disk full / permissions).
     def boom(*_a, **_k):
         raise OSError("No space left on device")
+
     monkeypatch.setattr(Path, "write_text", boom)
     with pytest.raises(RuntimeError) as exc:
         w.workspace_write("x.txt", "data")
@@ -113,6 +116,7 @@ def test_git_clone_nonzero_exit_raises(workspace, monkeypatch):
         returncode = 128
         stdout = ""
         stderr = "fatal: repository not found"
+
     monkeypatch.setattr(w.subprocess, "run", lambda *a, **k: _R())
     with pytest.raises(RuntimeError) as exc:
         w.workspace_git_clone("https://example.com/repo.git")

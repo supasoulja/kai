@@ -11,8 +11,10 @@ Security model:
   - The plain key is never sent to the browser or stored in the database.
     Only its hash lives in the DB.
 """
+
 import hashlib
 import secrets
+
 from kai.config import MEMORY_DIR
 
 _KEY_FILE = MEMORY_DIR / "device.key"
@@ -34,9 +36,10 @@ def get_key() -> bytes:
         _KEY_FILE.write_text(_device_key.hex())
         try:
             import stat
-            _KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)   # owner read/write only
+
+            _KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # owner read/write only
         except Exception:
-            pass   # Windows may not support chmod — acceptable
+            pass  # Windows may not support chmod — acceptable
         print(f"[+] Machine certificate created: {_KEY_FILE}")
 
     return _device_key

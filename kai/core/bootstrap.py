@@ -7,10 +7,11 @@ running migrations + seeding, and the shutdown ritual (sleep cycle + HQ
 re-embed). Those live here so a change to one can't silently drift from the
 other.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 from kai.util import log
 
@@ -37,7 +38,8 @@ def ensure_ollama_running(ollama, timeout: float = 15.0) -> bool:
     log.info("Ollama is not running — starting it...")
     subprocess.Popen(
         [ollama_path, "serve"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
@@ -62,9 +64,10 @@ def is_model_installed(ollama, model: str) -> bool:
 
 def run_migrations_and_seed() -> None:
     """Run system-level DB migrations and seed default procedural rules (user 0)."""
+    from kai.core.sleep import promote_checkpoint_on_startup
     from kai.memory import semantic as _semantic
     from kai.memory.procedural import seed_defaults
-    from kai.core.sleep import promote_checkpoint_on_startup
+
     _semantic.migrate()
     seed_defaults()
     # If the last run crashed, turn its leftover checkpoint into a recall trail.
@@ -80,4 +83,5 @@ def run_shutdown(ollama, brains: Iterable, *, call_brain_shutdown: bool = False)
     lifecycle drains each brain (wait=True) so in-flight work always finishes.
     """
     from kai.core import lifecycle
+
     lifecycle.graceful_shutdown(ollama, list(brains), reason="atexit")

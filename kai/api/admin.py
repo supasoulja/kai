@@ -11,6 +11,7 @@ re-exec) lives in kai.core.lifecycle. These endpoints just authorize and kick
 it off; the work runs on a worker thread so the HTTP response returns before the
 process goes away. The dashboard polls /shutdown-status to show progress.
 """
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class RestartRequest(BaseModel):
-    mode: str = "hard"   # "soft" = rebuild in place; "hard" = re-exec the process
+    mode: str = "hard"  # "soft" = rebuild in place; "hard" = re-exec the process
 
 
 def _require_owner(request: Request) -> int:
@@ -71,4 +72,5 @@ async def logs(request: Request, after: int = 0):
     """
     _require_owner(request)
     from kai.util import logbuf
+
     return logbuf.snapshot(after_seq=after)

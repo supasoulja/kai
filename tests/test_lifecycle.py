@@ -13,6 +13,7 @@ Covers:
   - idempotency: a second call is a no-op
   - is_shutting_down() flips while the ritual runs
 """
+
 import os
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
@@ -42,13 +43,20 @@ def _reset_lifecycle(monkeypatch):
     """Reset module state and stub the heavy/side-effecting steps."""
     lifecycle._shutdown_started.clear()
     lifecycle._soft_restarting.clear()
-    lifecycle._progress.update({
-        "phase": "idle", "detail": "", "pct": 0,
-        "active": False, "done": False, "mode": "",
-    })
+    lifecycle._progress.update(
+        {
+            "phase": "idle",
+            "detail": "",
+            "pct": 0,
+            "active": False,
+            "done": False,
+            "mode": "",
+        }
+    )
     # Stub the steps that would touch Ollama / global pools.
     import kai.core.sleep as sleep_mod
     import kai.llm.embed as embed_mod
+
     monkeypatch.setattr(sleep_mod, "run_sleep_cycle", lambda ollama, brain: None)
     monkeypatch.setattr(embed_mod, "shutdown_reembed", lambda progress_cb=None: None)
     monkeypatch.setattr(lifecycle, "_close_module_pools", lambda: None)
@@ -64,7 +72,7 @@ def test_graceful_shutdown_drains_not_cancels():
     lifecycle.graceful_shutdown(ollama=object(), brains=[brain], reason="test")
 
     assert brain.drained is True
-    assert brain.hard_shutdown is False          # drain (wait=True), never cancel
+    assert brain.hard_shutdown is False  # drain (wait=True), never cancel
     assert lifecycle.is_shutting_down() is True
     prog = lifecycle.get_progress()
     assert prog["done"] is True
@@ -76,10 +84,11 @@ def test_shutdown_runs_drain_before_reembed(monkeypatch):
     brain = FakeBrain(order)
     import kai.core.sleep as sleep_mod
     import kai.llm.embed as embed_mod
-    monkeypatch.setattr(sleep_mod, "run_sleep_cycle",
-                        lambda ollama, b: order.append("sleep"))
-    monkeypatch.setattr(embed_mod, "shutdown_reembed",
-                        lambda progress_cb=None: order.append("reembed"))
+
+    monkeypatch.setattr(sleep_mod, "run_sleep_cycle", lambda ollama, b: order.append("sleep"))
+    monkeypatch.setattr(
+        embed_mod, "shutdown_reembed", lambda progress_cb=None: order.append("reembed")
+    )
 
     lifecycle.graceful_shutdown(ollama=object(), brains=[brain], reason="test")
 
@@ -95,4 +104,4 @@ def test_graceful_shutdown_is_idempotent():
     lifecycle.graceful_shutdown(ollama=object(), brains=[b2], reason="second")
 
     assert b1.drained is True
-    assert b2.drained is False                    # second call short-circuits
+    assert b2.drained is False  # second call short-circuits

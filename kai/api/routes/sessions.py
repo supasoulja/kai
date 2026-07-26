@@ -1,4 +1,5 @@
 """Session history — list past sessions, fetch their messages, restore one."""
+
 from fastapi import APIRouter, HTTPException, Request
 
 from kai.api.deps import uid_for

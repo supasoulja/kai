@@ -12,6 +12,7 @@ An adapter subclasses ``BaseHTTPProvider``, sets ``self.base_url``, and override
 ``_headers()``; everything API-specific (payload building, response/stream
 parsing, the public chat surface) stays in the adapter.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,7 @@ from collections.abc import Generator
 class ProviderError(RuntimeError):
     """A cloud call failed (auth, rate limit, network). Carries an HTTP status
     when there is one so the caller can decide whether to fall back to local."""
+
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
@@ -36,6 +38,7 @@ class BaseHTTPProvider:
     ``_get_json`` methods are the "HTTP seams" that tests monkeypatch on the
     instance, so their names and signatures are part of the contract.
     """
+
     base_url: str
 
     def _headers(self) -> dict:
@@ -44,7 +47,10 @@ class BaseHTTPProvider:
     def _open(self, path: str, payload: dict | None, method: str, timeout: int):
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         req = urllib.request.Request(
-            f"{self.base_url}{path}", data=data, headers=self._headers(), method=method,
+            f"{self.base_url}{path}",
+            data=data,
+            headers=self._headers(),
+            method=method,
         )
         try:
             return urllib.request.urlopen(req, timeout=timeout)
@@ -54,7 +60,9 @@ class BaseHTTPProvider:
                 body = e.read().decode("utf-8")[:500]
             except Exception:
                 pass
-            raise ProviderError(f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code) from e
+            raise ProviderError(
+                f"{self.base_url}{path} → HTTP {e.code}: {body}", status=e.code
+            ) from e
         except Exception as e:
             raise ProviderError(f"{self.base_url}{path} unreachable: {e}") from e
 

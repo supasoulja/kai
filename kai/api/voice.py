@@ -4,6 +4,7 @@ Voice endpoints — speech-to-text (mic upload) and text-to-speech (streamed).
 Self-contained: depends only on kai.audio (loaded lazily) and FastAPI. Mounted
 by web.py via app.include_router(voice.router).
 """
+
 import asyncio
 import logging
 
@@ -32,22 +33,37 @@ async def voice_transcribe(request: Request):
             content={"error": "Audio upload exceeds 25 MB limit"},
         )
     try:
-        from kai.audio import transcribe
         import subprocess
+
+        from kai.audio import transcribe
 
         content_type = request.headers.get("content-type", "audio/wav")
         if "wav" not in content_type:
             result = subprocess.run(
-                ["ffmpeg", "-y", "-i", "pipe:0",
-                 "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
-                input=audio_bytes, capture_output=True, timeout=30,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    "pipe:0",
+                    "-vn",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "wav",
+                    "pipe:1",
+                ],
+                input=audio_bytes,
+                capture_output=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 audio_bytes = result.stdout
 
-        text = await asyncio.get_event_loop().run_in_executor(
-            None, transcribe, audio_bytes
-        )
+        text = await asyncio.get_event_loop().run_in_executor(None, transcribe, audio_bytes)
         return {"text": text}
     except asyncio.CancelledError:
         raise
@@ -66,7 +82,7 @@ async def voice_tts(request: Request):
     Body: {"text": "...", "voice": "af_heart", "speed": 1.0}
     """
     body = await request.json()
-    text  = (body.get("text") or "").strip()
+    text = (body.get("text") or "").strip()
     voice = body.get("voice") or None
     speed = body.get("speed") or None
 
@@ -107,17 +123,30 @@ async def voice_tts(request: Request):
 async def voice_test():
     """Public endpoint — returns a short 440Hz beep WAV. No auth, no Kokoro.
     Use to verify the browser audio pipeline works before debugging TTS."""
-    import math, struct, io
+    import io
+    import math
+    import struct
+
     sr, dur, freq = 22050, 1.0, 440.0
     n = int(sr * dur)
-    samples = b"".join(struct.pack("<h", int(math.sin(2 * math.pi * freq * i / sr) * 16000)) for i in range(n))
+    samples = b"".join(
+        struct.pack("<h", int(math.sin(2 * math.pi * freq * i / sr) * 16000)) for i in range(n)
+    )
     buf = io.BytesIO()
-    buf.write(b"RIFF"); buf.write(struct.pack("<I", 36 + len(samples))); buf.write(b"WAVE")
-    buf.write(b"fmt "); buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
-    buf.write(b"data"); buf.write(struct.pack("<I", len(samples))); buf.write(samples)
+    buf.write(b"RIFF")
+    buf.write(struct.pack("<I", 36 + len(samples)))
+    buf.write(b"WAVE")
+    buf.write(b"fmt ")
+    buf.write(struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+    buf.write(b"data")
+    buf.write(struct.pack("<I", len(samples)))
+    buf.write(samples)
     wav = buf.getvalue()
-    return Response(content=wav, media_type="audio/wav",
-                    headers={"Content-Length": str(len(wav)), "Cache-Control": "no-cache"})
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={"Content-Length": str(len(wav)), "Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/voice/voices")
@@ -129,6 +158,7 @@ async def voice_list():
     """
     try:
         from kai.audio import list_voices
+
         voices = await asyncio.get_event_loop().run_in_executor(None, list_voices)
         return {"voices": voices}
     except Exception:

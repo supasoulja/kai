@@ -4,6 +4,7 @@ Auth uses the shared ``require_user(request)`` guard (M3) — called at the top 
 each handler, matching this codebase's style (cf. admin.py's ``_require_owner``) —
 rather than a hand-rolled ``if not get_user(...): 401`` copied into each one.
 """
+
 import asyncio
 import json
 
@@ -22,6 +23,7 @@ async def flow_recent(request: Request):
     """Recent turns with trace ids — open /debug/flow/{trace_id} for the detail."""
     require_user(request)
     from kai.core import flow as _flow
+
     uid = uid_for(request)
     return {"enabled": cfg.FLOW_TRACE, "turns": _flow.recent_turns(limit=20, user_id=uid)}
 
@@ -41,16 +43,20 @@ async def flow_live(request: Request):
             cursor = row[0] if row else 0
         except Exception:
             cursor = 0  # table doesn't exist yet — first recorded step creates it
-        yield f'data: {json.dumps({"kind": "hello", "live": True})}\n\n'
+        yield f"data: {json.dumps({'kind': 'hello', 'live': True})}\n\n"
         while True:
             if await request.is_disconnected():
                 break
             try:
-                rows = get_conn().execute(
-                    "SELECT id, trace_id, ts, kind, data FROM flow_log "
-                    "WHERE id > ? AND user_id = ? ORDER BY id LIMIT 200",
-                    (cursor, uid),
-                ).fetchall()
+                rows = (
+                    get_conn()
+                    .execute(
+                        "SELECT id, trace_id, ts, kind, data FROM flow_log "
+                        "WHERE id > ? AND user_id = ? ORDER BY id LIMIT 200",
+                        (cursor, uid),
+                    )
+                    .fetchall()
+                )
                 for rid, tid, ts, kind, data in rows:
                     cursor = rid
                     evt = {"trace_id": tid, "ts": ts, "kind": kind, **json.loads(data)}
@@ -71,5 +77,6 @@ async def flow_detail(trace_id: str, request: Request):
     """Every step of one turn: model requests, raw responses, thinking, tools."""
     require_user(request)
     from kai.core import flow as _flow
+
     uid = uid_for(request)
     return {"trace_id": trace_id, "steps": _flow.get_flow(trace_id, user_id=uid)}

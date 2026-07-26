@@ -6,6 +6,7 @@ Audio analysis tools — transcribe and understand audio from any source.
 Uses faster-whisper (local Whisper) for transcription.
 Uses ffmpeg to extract audio from video files before transcribing.
 """
+
 import io
 import subprocess
 import tempfile
@@ -16,8 +17,8 @@ import httpx
 
 from kai.tools.registry import registry
 
-_MAX_DURATION_SEC = 7200   # 2 hours max
-_MAX_FILE_BYTES   = 500 * 1024 * 1024  # 500 MB
+_MAX_DURATION_SEC = 7200  # 2 hours max
+_MAX_FILE_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
 def _ffmpeg_available() -> bool:
@@ -35,14 +36,20 @@ def _extract_audio_to_wav(input_path: str) -> bytes:
     """
     result = subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-vn",                     # drop video stream
-            "-acodec", "pcm_s16le",   # 16-bit PCM
-            "-ar", "16000",            # 16kHz sample rate
-            "-ac", "1",               # mono
-            "-f", "wav",
-            "pipe:1",                  # output to stdout
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-vn",  # drop video stream
+            "-acodec",
+            "pcm_s16le",  # 16-bit PCM
+            "-ar",
+            "16000",  # 16kHz sample rate
+            "-ac",
+            "1",  # mono
+            "-f",
+            "wav",
+            "pipe:1",  # output to stdout
         ],
         capture_output=True,
         timeout=300,
@@ -74,6 +81,7 @@ def _download_file(url: str) -> tuple[bytes, str]:
 def _transcribe_wav_bytes(wav_bytes: bytes, language: str = "en") -> dict:
     """Run faster-whisper on WAV bytes. Returns {text, language, duration}."""
     from kai.audio import _get_whisper
+
     model = _get_whisper()
 
     buf = io.BytesIO(wav_bytes)
@@ -99,6 +107,7 @@ def _transcribe_wav_bytes(wav_bytes: bytes, language: str = "en") -> dict:
 
 
 # ── audio.transcribe ───────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="audio.transcribe",
@@ -179,8 +188,8 @@ def transcribe_media(source: str, language: str = "en") -> str:
         # ── Transcribe ────────────────────────────────────────────────────────
         result = _transcribe_wav_bytes(wav_bytes, language=language)
 
-        text     = result["text"]
-        lang     = result["language"]
+        text = result["text"]
+        lang = result["language"]
         duration = result["duration_sec"]
 
         if not text:

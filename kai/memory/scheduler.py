@@ -13,11 +13,12 @@ Usage:
 
 Stopping: sched.stop()  — sets event and lets the thread exit cleanly
 """
+
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 
 class Scheduler:
@@ -35,9 +36,7 @@ class Scheduler:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="kai-scheduler"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="kai-scheduler")
         self._thread.start()
 
     def stop(self) -> None:

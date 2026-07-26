@@ -19,6 +19,7 @@ Public API
     warm_up()                                   # pre-load model (call at startup)
     shutdown_reembed()                          # HQ re-embed at shutdown
 """
+
 import os
 import threading
 from pathlib import Path
@@ -29,8 +30,8 @@ import kai.config as cfg
 
 # ── Singleton state ──────────────────────────────────────────────────────────
 
-_session = None     # onnxruntime.InferenceSession
-_tokenizer = None   # tokenizers.Tokenizer
+_session = None  # onnxruntime.InferenceSession
+_tokenizer = None  # tokenizers.Tokenizer
 _lock = threading.Lock()
 
 # Model files are downloaded once to this cache directory
@@ -146,6 +147,7 @@ def _embed_texts(texts: list[str]) -> np.ndarray:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+
 def embed(text: str) -> list[float]:
     """Embed a single string. Returns a 384-dim float list (~5 ms on CPU)."""
     result = _embed_texts([text])
@@ -180,6 +182,7 @@ def warm_up() -> None:
 
 # ── Shutdown: HQ re-embed ────────────────────────────────────────────────────
 
+
 def shutdown_reembed(progress_cb=None) -> None:
     """
     Re-embed all stored entries with the heavy Qwen model into shadow HQ tables.
@@ -193,6 +196,7 @@ def shutdown_reembed(progress_cb=None) -> None:
 
     Best-effort — failures are printed but never raise.
     """
+
     def _tick(detail: str = "", pct: int | None = None) -> None:
         if progress_cb:
             try:
@@ -207,6 +211,7 @@ def shutdown_reembed(progress_cb=None) -> None:
 
     # Check if Ollama is alive
     from kai.llm.ollama import OllamaClient
+
     ollama = OllamaClient(cfg.OLLAMA_BASE_URL)
     if not ollama.is_alive():
         print("[!] Ollama not running — skipping HQ re-embed")
@@ -248,7 +253,7 @@ def shutdown_reembed(progress_cb=None) -> None:
             texts = [content for _, content in to_embed]
             try:
                 embeddings = ollama.embed_batch(texts, model=cfg.HQ_EMBED_MODEL)
-                for (rid, _), emb in zip(to_embed, embeddings):
+                for (rid, _), emb in zip(to_embed, embeddings, strict=True):
                     conn.execute(
                         "INSERT OR REPLACE INTO episodic_vec_hq (rowid, embedding) VALUES (?, ?)",
                         (rid, sqlite_vec.serialize_float32(emb)),
@@ -259,9 +264,7 @@ def shutdown_reembed(progress_cb=None) -> None:
                 print(f"[!] HQ episodic re-embed failed: {exc}")
 
     # ── RAG chunks ───────────────────────────────────────────────────────
-    rag_rows = conn.execute(
-        "SELECT rowid, content FROM rag_chunks"
-    ).fetchall()
+    rag_rows = conn.execute("SELECT rowid, content FROM rag_chunks").fetchall()
 
     if rag_rows:
         existing_rag = set()
@@ -284,14 +287,16 @@ def shutdown_reembed(progress_cb=None) -> None:
                     batch_texts = texts[i : i + batch_size]
                     batch_items = to_embed_rag[i : i + batch_size]
                     embeddings = ollama.embed_batch(batch_texts, model=cfg.HQ_EMBED_MODEL)
-                    for (rid, _), emb in zip(batch_items, embeddings):
+                    for (rid, _), emb in zip(batch_items, embeddings, strict=True):
                         conn.execute(
                             "INSERT OR REPLACE INTO rag_chunks_vec_hq (rowid, embedding) VALUES (?, ?)",
                             (rid, sqlite_vec.serialize_float32(emb)),
                         )
                     conn.commit()
-                    _tick(f"{min(i + batch_size, total)}/{total} document chunks",
-                          int(min(i + batch_size, total) * 100 / total))
+                    _tick(
+                        f"{min(i + batch_size, total)}/{total} document chunks",
+                        int(min(i + batch_size, total) * 100 / total),
+                    )
                 print(f"[+] HQ re-embed: {len(to_embed_rag)} RAG chunks done")
             except Exception as exc:
                 print(f"[!] HQ RAG re-embed failed: {exc}")

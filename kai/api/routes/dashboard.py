@@ -1,4 +1,5 @@
 """Dashboard basics — sidebar info, stat-card counts, and clear-conversation."""
+
 import re
 import threading
 
@@ -15,8 +16,8 @@ _HIGHLIGHT_KEYS = {"user_name", "user_role", "location", "gaming"}
 _HIGHLIGHT_LABELS = {
     "user_name": "name",
     "user_role": "role",
-    "location":  "location",
-    "gaming":    "games",
+    "location": "location",
+    "gaming": "games",
 }
 
 
@@ -24,7 +25,7 @@ _HIGHLIGHT_LABELS = {
 async def info(request: Request):
     brain = brain_for(request)
     memory = brain.memory
-    facts   = memory.list_facts()
+    facts = memory.list_facts()
     recents = memory.recent_episodes(limit=1)
 
     # Build memory highlights: stable user facts worth showing in sidebar
@@ -38,15 +39,16 @@ async def info(request: Request):
             break
 
     from kai.store import users as _users
+
     uid = uid_for(request)
 
     return {
-        "model":          brain.model,
-        "facts":          len(facts),
+        "model": brain.model,
+        "facts": len(facts),
         "context_window": cfg.CONTEXT_WINDOW,
-        "last_seen":      recents[0].timestamp.strftime("%b %d") if recents else None,
-        "highlights":     highlights,
-        "is_owner":       uid != 0 and uid == _users.get_owner_id(),
+        "last_seen": recents[0].timestamp.strftime("%b %d") if recents else None,
+        "highlights": highlights,
+        "is_owner": uid != 0 and uid == _users.get_owner_id(),
     }
 
 
@@ -66,9 +68,7 @@ async def dashboard_stats(request: Request):
         "SELECT COUNT(DISTINCT doc_id) FROM rag_documents WHERE user_id = ? OR shared = 1",
         (uid,),
     ).fetchone()[0]
-    notes_count = conn.execute(
-        "SELECT COUNT(*) FROM notes WHERE user_id = ?", (uid,)
-    ).fetchone()[0]
+    notes_count = conn.execute("SELECT COUNT(*) FROM notes WHERE user_id = ?", (uid,)).fetchone()[0]
     return {
         "facts": facts_count,
         "sessions": sessions_count,

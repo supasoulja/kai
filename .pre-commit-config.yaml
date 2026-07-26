@@ -1,0 +1,15 @@
+# Automated formatting + linting for Kai's Python code.
+#   Install once:   pre-commit install
+#   Run on demand:  pre-commit run --all-files
+# Keep `rev` below in lockstep with the ruff pin in requirements-dev.txt.
+#
+# The first run fetches this hook repo once, then caches it. For strict-offline
+# setups, replace the block below with a `repo: local` hook that invokes the
+# project's own ruff (language: system).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff-check    # linter (with autofix)
+        args: [--fix]
+      - id: ruff-format   # formatter

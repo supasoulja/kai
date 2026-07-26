@@ -8,6 +8,7 @@ Flow per turn:
   4. Strip <think> tags (log in debug mode)
   5. Commit turn to memory
 """
+
 import json
 import re
 import threading
@@ -17,25 +18,27 @@ from collections import deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import kai.config as cfg
 from kai.config import (
     CHAT_MODEL,
-    TEMPERATURE_REASON, HISTORY_CHAR_LIMIT, HISTORY_COMPRESS_KEEP,
+    HISTORY_CHAR_LIMIT,
+    HISTORY_COMPRESS_KEEP,
+    TEMPERATURE_REASON,
 )
-from kai.memory.privacy import learning_enabled
-from kai.core.history import HistoryManager
+from kai.core import events
+from kai.core import flow as flow_rec
+from kai.core import trace as trace_log
 from kai.core.crew_runner import CrewRunner
 from kai.core.engine import TurnEngine
+from kai.core.history import HistoryManager
+from kai.core.tool_gate import _TOOL_SIGNALS, _query_needs_thinking, _query_needs_tools
 from kai.llm.ollama import OllamaClient
 from kai.memory.manager import MemoryManager
-from kai.util.text import strip_thinking as _strip_thinking
-from kai.core.tool_gate import _TOOL_SIGNALS, _query_needs_thinking, _query_needs_tools
-from kai.core import trace as trace_log
-from kai.core import flow as flow_rec
+from kai.memory.privacy import learning_enabled
 from kai.store import sessions
-from kai.core import events
+from kai.util.text import strip_thinking as _strip_thinking
 
 if TYPE_CHECKING:
     from kai.tools.registry import ToolRegistry
@@ -67,7 +70,6 @@ _CONFIRM_RE = re.compile(
 # the tool loop that uses them.
 
 
-
 # ── Pre-LLM intent fast-paths ────────────────────────────────────────────────
 # When the WHOLE user message is one of these common, unambiguous commands, run
 # the tool directly and skip the tool-round model call entirely (see
@@ -77,12 +79,48 @@ _CONFIRM_RE = re.compile(
 # passing mention inside a larger request. Order doesn't matter (patterns are
 # mutually exclusive by construction).
 _FAST_PATHS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"^\s*(?:what(?:'?s| is)?\s+(?:the\s+)?)?time(?:\s+is\s+it)?(?:\s+(?:now|today))?\s*[?.!]*\s*$", re.I), "time.now"),
-    (re.compile(r"^\s*(?:what(?:'?s| is)?\s+)?(?:the\s+|today'?s\s+)?date(?:\s+(?:today|now))?\s*[?.!]*\s*$", re.I), "time.now"),
-    (re.compile(r"^\s*(?:list|show|what)\s+(?:are\s+)?(?:my\s+|the\s+)?(?:running\s+)?(?:containers|cts|vms|lxc)\b[^?.!]*[?.!]*\s*$", re.I), "lxc.list"),
-    (re.compile(r"^\s*(?:check|get|show|what(?:'?s| is)?)\s*(?:the\s+|my\s+)?weather\b[^?.!]*[?.!]*\s*$", re.I), "weather.current"),
-    (re.compile(r"^\s*(?:check|show|get|what(?:'?s| are)?)\s*(?:my\s+|the\s+)?(?:cpu\s+|gpu\s+|system\s+)?temp(?:erature)?s?\b[^?.!]*[?.!]*\s*$", re.I), "system.temps"),
-    (re.compile(r"^\s*(?:check|show|get|what(?:'?s| is)?)\s*(?:my\s+|the\s+)?disk\s+(?:usage|space|health)\b[^?.!]*[?.!]*\s*$", re.I), "files.disk_usage"),
+    (
+        re.compile(
+            r"^\s*(?:what(?:'?s| is)?\s+(?:the\s+)?)?time(?:\s+is\s+it)?(?:\s+(?:now|today))?\s*[?.!]*\s*$",
+            re.I,
+        ),
+        "time.now",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:what(?:'?s| is)?\s+)?(?:the\s+|today'?s\s+)?date(?:\s+(?:today|now))?\s*[?.!]*\s*$",
+            re.I,
+        ),
+        "time.now",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:list|show|what)\s+(?:are\s+)?(?:my\s+|the\s+)?(?:running\s+)?(?:containers|cts|vms|lxc)\b[^?.!]*[?.!]*\s*$",
+            re.I,
+        ),
+        "lxc.list",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:check|get|show|what(?:'?s| is)?)\s*(?:the\s+|my\s+)?weather\b[^?.!]*[?.!]*\s*$",
+            re.I,
+        ),
+        "weather.current",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:check|show|get|what(?:'?s| are)?)\s*(?:my\s+|the\s+)?(?:cpu\s+|gpu\s+|system\s+)?temp(?:erature)?s?\b[^?.!]*[?.!]*\s*$",
+            re.I,
+        ),
+        "system.temps",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:check|show|get|what(?:'?s| is)?)\s*(?:my\s+|the\s+)?disk\s+(?:usage|space|health)\b[^?.!]*[?.!]*\s*$",
+            re.I,
+        ),
+        "files.disk_usage",
+    ),
 ]
 
 # A clause joiner ("... and ...", commas) means the message carries more than one
@@ -98,15 +136,20 @@ _WEATHER_COMPOUND_RE = re.compile(r"\b(?:and|then|also|plus|as well as)\b|[;]", 
 # returns the IP-geolocated city instead (the Boise→Denver bug). Extract it
 # here so the deterministic path is correct, not just fast.
 _WEATHER_LOC_RE = re.compile(
-    r"\bweather\b[^?.!]*?\b(?:in|for|at|near|around|of)\s+(?P<loc>.+?)\s*[?.!]*$", re.I)
+    r"\bweather\b[^?.!]*?\b(?:in|for|at|near|around|of)\s+(?P<loc>.+?)\s*[?.!]*$", re.I
+)
 # Phrases that follow "in/for/at" but name a TIME, not a place — never a location.
 _NOT_A_PLACE = re.compile(
     r"^(?:the\s+)?(?:today|tomorrow|tonight|now|right\s+now|later|this\s+\w+|next\s+\w+|"
     r"the\s+(?:morning|afternoon|evening|weekend|week|day)|a\s+(?:bit|while|moment)|"
-    r"noon|midnight|lunch)\b", re.I)
+    r"noon|midnight|lunch)\b",
+    re.I,
+)
 _TRAILING_TIME_RE = re.compile(
     r"\s+(?:today|tomorrow|tonight|right\s+now|now|later|"
-    r"this\s+(?:morning|afternoon|evening|week|weekend)|next\s+week)\s*$", re.I)
+    r"this\s+(?:morning|afternoon|evening|week|weekend)|next\s+week)\s*$",
+    re.I,
+)
 
 
 def _weather_location(text: str) -> str:
@@ -133,7 +176,7 @@ def _match_fast_path(user_input: str) -> tuple[str, dict] | None:
     Most fast-paths are no-arg ({}), but weather carries its extracted location.
     """
     text = user_input.strip()
-    if not text or len(text) > 80:   # commands are short; long text is a real request
+    if not text or len(text) > 80:  # commands are short; long text is a real request
         return None
     for pattern, tool_name in _FAST_PATHS:
         if not pattern.match(text):
@@ -181,8 +224,6 @@ def foreground_busy() -> bool:
         return _active_turns > 0
 
 
-
-
 # Shared compression prompt — used by _maybe_compress_history, flush_history_snapshot,
 # and web.py _archive_pending_turns. Defined once to avoid drift.
 COMPRESS_PROMPT = (
@@ -206,7 +247,7 @@ GROUNDING_RULE = (
     "\n\n[CRITICAL GROUNDING RULE]\n"
     "Before stating ANY fact about this system, ask: did a tool result "
     "or [SEMANTIC] entry provide this data in THIS conversation? "
-    "If not — call a tool first, or say \"I'd need to check that.\" "
+    'If not — call a tool first, or say "I\'d need to check that." '
     "Never fabricate numbers, outputs, or success messages."
 )
 
@@ -241,13 +282,13 @@ ANSWER_REVERIFY_NUDGE = (
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _build_compress_messages(raw_text: str) -> list[dict]:
     """Build the messages list for a compression call. Single source of truth."""
     return [{"role": "user", "content": f"{COMPRESS_PROMPT}\n\n{raw_text}\n\nSummary:"}]
 
 
 # ── Brain ──────────────────────────────────────────────────────────────────────
-
 
 
 class Brain:
@@ -269,20 +310,21 @@ class Brain:
         self._final_temp: float = cfg.TEMPERATURE_FINAL  # per-session final-answer temp
         self._cancel = threading.Event()  # set by request_stop() to abort the current turn
         self.user_id = user_id
-        self.skill_registry = skill_registry          # kai.skills.SkillRegistry (optional)
+        self.skill_registry = skill_registry  # kai.skills.SkillRegistry (optional)
         self._disabled_tools: set[str] = self._load_disabled_tools()  # Settings → Tools off
-        self._history = HistoryManager()         # session history, lock, turn counters, compression
-        self.session_id: str | None = None       # current persisted session UUID
+        self._history = HistoryManager()  # session history, lock, turn counters, compression
+        self.session_id: str | None = None  # current persisted session UUID
         self._tool_index: dict[str, list[float]] = {}  # name → embedding vector, built lazily
         self._tool_index_ready: bool = False
-        self._memory_router_ready: bool = False       # memory domain index built lazily
-        self._handoff_router_ready: bool = False      # handoff pattern index seeded lazily
+        self._memory_router_ready: bool = False  # memory domain index built lazily
+        self._handoff_router_ready: bool = False  # handoff pattern index seeded lazily
         from kai.memory.knowledge import HandoffRouter
+
         self._handoff_router = HandoffRouter()
-        self._crew = CrewRunner(self)                 # agent-crew execution layer
-        self._pending_confirm: dict | None = None     # tool call awaiting user confirmation
+        self._crew = CrewRunner(self)  # agent-crew execution layer
+        self._pending_confirm: dict | None = None  # tool call awaiting user confirmation
         self._tool_level: str = cfg.DEFAULT_TOOL_LEVEL  # which model runs tool rounds
-        self._tool_model: str | None = None             # resolved lazily, availability-checked
+        self._tool_model: str | None = None  # resolved lazily, availability-checked
         self._tool_model_resolved: bool = False
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
         # Exchanges queued for knowledge extraction, drained only when no turn is
@@ -308,6 +350,7 @@ class Brain:
         # [TOOLS] block. Failures are swallowed inside; never blocks construction.
         if self.tool_registry:
             from kai.memory.tool_docs import ensure_tool_docs_synced
+
             ensure_tool_docs_synced(self.user_id)
 
         # Re-apply a persisted cloud brain selection (best-effort; no-op if local).
@@ -344,7 +387,8 @@ class Brain:
         else:
             self._disabled_tools.discard(name)
         self.memory.set_fact(
-            "disabled_tools", json.dumps(sorted(self._disabled_tools)),
+            "disabled_tools",
+            json.dumps(sorted(self._disabled_tools)),
             source="user_setting",
         )
         return self._disabled_tools
@@ -364,8 +408,12 @@ class Brain:
             temp = custom_temps[key]
         self._think = bool(preset["think"])
         self._final_temp = max(cfg.TEMP_MIN, min(cfg.TEMP_MAX, float(temp)))
-        return {"key": key, "label": preset["label"],
-                "think": self._think, "temp": self._final_temp}
+        return {
+            "key": key,
+            "label": preset["label"],
+            "think": self._think,
+            "temp": self._final_temp,
+        }
 
     def set_temperature(self, temp: float) -> float:
         """Override the final-answer temperature for this session (slider). Clamped."""
@@ -386,9 +434,12 @@ class Brain:
         self._tool_level = key
         self._tool_model_resolved = False  # re-check availability on next use
         model, available = self._engine._resolve_tool_model()
-        return {"key": key, "label": level["label"],
-                "model": level["model"], "available": available}
-
+        return {
+            "key": key,
+            "label": level["label"],
+            "model": level["model"],
+            "available": available,
+        }
 
     # ── Active chat brain (local Ollama or a connected cloud brain) ───────────
 
@@ -405,6 +456,7 @@ class Brain:
             self._chat_client = self.ollama
         else:
             from kai.llm.resolve import resolve_client
+
             self._chat_client = resolve_client(entry, self.user_id)
         self._chat_model = model_id
         self.model = model_id
@@ -428,22 +480,27 @@ class Brain:
             if not name:
                 return
             from kai.llm import models as _models
+
             entry = _models.get_model(name)
             if entry and entry.get("provider", "ollama") != "ollama":
                 self.set_active_brain(entry, persist=False)
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
-
-
 
     # ── Engine delegators ────────────────────────────────────────────────────
     # The tool loop moved to TurnEngine (kai/core/engine.py). These thin
     # forwarders keep the historical Brain call surface — used by tests and by
     # Brain's own streaming / grounding / learning paths — pointing at the engine.
-    def _chat(self, messages: list[dict], tools: list[dict] | None = None,
-              think: bool = False, temperature: float | None = None) -> dict:
+    def _chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        think: bool = False,
+        temperature: float | None = None,
+    ) -> dict:
         return self._engine._chat(messages, tools=tools, think=think, temperature=temperature)
 
     def _chat_stream(self, messages: list[dict], think: bool, temperature: float):
@@ -457,7 +514,9 @@ class Brain:
         Whatever has been generated so far is kept and finalized."""
         self._cancel.set()
 
-    def generate_greeting(self, fresh: bool = False) -> Generator[tuple[str, bool, dict], None, None]:
+    def generate_greeting(
+        self, fresh: bool = False
+    ) -> Generator[tuple[str, bool, dict], None, None]:
         """Stream Kai's own opening line so she starts the conversation.
 
         fresh=False (cold open): may use her welcome-back note + memory to pick up
@@ -469,7 +528,8 @@ class Brain:
         standalone DB turn — the session is created normally on the user's first reply.
         """
         context = self.memory.render_context(
-            query="", include_welcome_back=not fresh,
+            query="",
+            include_welcome_back=not fresh,
         )
         if fresh:
             directive = (
@@ -488,13 +548,15 @@ class Brain:
             )
         messages = [
             {"role": "system", "content": context},
-            {"role": "user",   "content": directive},
+            {"role": "user", "content": directive},
         ]
         # A Stop left over from a previous turn must not kill the greeting —
         # this is a fresh generation, so clear the flag like run_stream does.
         self._cancel.clear()
         full_text, _ = yield from self._stream_answer(
-            messages, think=False, forward_thinking=False,
+            messages,
+            think=False,
+            forward_thinking=False,
         )
         _, clean = _strip_thinking(full_text)
         clean = clean.strip()
@@ -529,18 +591,20 @@ class Brain:
             return []
         schemas = []
         for info in self.skill_registry.list_skills():
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": f"skill.{info['name']}",
-                    "description": info["description"],
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": f"skill.{info['name']}",
+                        "description": info["description"],
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                        },
                     },
-                },
-            })
+                }
+            )
         return schemas
 
     def run_skill(self, name: str, args: dict | None = None) -> dict:
@@ -581,8 +645,9 @@ class Brain:
         """The temperature used for the final answer this session."""
         return self._final_temp
 
-    def prime_indexes(self, tool_index: dict[str, list[float]] | None = None,
-                      router_ready: bool = False) -> None:
+    def prime_indexes(
+        self, tool_index: dict[str, list[float]] | None = None, router_ready: bool = False
+    ) -> None:
         """Seed the per-user tool index + readiness flags from shared, already-built
         indexes so a freshly-created Brain skips re-embedding them."""
         if tool_index is not None:
@@ -640,15 +705,16 @@ class Brain:
         Tool calls are handled internally (non-streaming) before the
         final answer is streamed.
         """
-        trace_id  = trace_id or str(uuid.uuid4())[:8]
+        trace_id = trace_id or str(uuid.uuid4())[:8]
         turn_start = time.monotonic()
         tools_used: list[str] = []
-        self._cancel.clear()   # fresh turn — clear any prior stop request
+        self._cancel.clear()  # fresh turn — clear any prior stop request
 
         # Bind this turn's user/session to the thread up front so flow records
         # (route, rounds, etc.) are user-scoped — not just calls made after the
         # first tool dispatch, which re-sets these in _execute_tool.
-        from kai.core._app_state import set_current_user_id, set_current_session_id
+        from kai.core._app_state import set_current_session_id, set_current_user_id
+
         set_current_user_id(self.user_id)
         set_current_session_id(self.session_id)
 
@@ -658,13 +724,18 @@ class Brain:
         if self._pending_confirm and _CONFIRM_RE.match(user_input.strip()):
             print(f"[confirm] user confirmed — executing {self._pending_confirm['name']}")
             yield from self._run_confirmed_tool(
-                user_input, trace_id, turn_start, on_status,
+                user_input,
+                trace_id,
+                turn_start,
+                on_status,
             )
             return
 
         # If the user said something other than confirm, clear the pending tool
         if self._pending_confirm:
-            print(f"[confirm] user said '{user_input}' — clearing pending {self._pending_confirm['name']}")
+            print(
+                f"[confirm] user said '{user_input}' — clearing pending {self._pending_confirm['name']}"
+            )
             self._pending_confirm = None
 
         # Thinking is gated by the active preset first (self._think), then
@@ -689,25 +760,38 @@ class Brain:
         history = self._history.window(_HISTORY_HARD_CAP)
         # Never replay failure placeholders — otherwise the model mimics them.
         # (Also scrubs any "[no response]" already stored from earlier sessions.)
-        history = [m for m in history
-                   if not (m.get("role") == "assistant"
-                           and m.get("content", "").strip() in _FAILURE_MARKERS)]
+        history = [
+            m
+            for m in history
+            if not (
+                m.get("role") == "assistant" and m.get("content", "").strip() in _FAILURE_MARKERS
+            )
+        ]
         messages: list[dict] = [
             {"role": "system", "content": context},
             *history,
-            {"role": "user",   "content": user_input},
+            {"role": "user", "content": user_input},
         ]
         tools_schema = self._select_tool_schema(user_input, history, query_emb, handoff_mode)
 
         try:
-            _offered = ([t["function"]["name"] for t in tools_schema]
-                        if isinstance(tools_schema, list) else [])
+            _offered = (
+                [t["function"]["name"] for t in tools_schema]
+                if isinstance(tools_schema, list)
+                else []
+            )
         except Exception:
             _offered = ["?"]
-        flow_rec.record(trace_id, "route", input=user_input, handoff=handoff_mode,
-                        think=use_think, tool_level=self._tool_level,
-                        context_chars=len(context),
-                        tools_offered=", ".join(_offered) or "none")
+        flow_rec.record(
+            trace_id,
+            "route",
+            input=user_input,
+            handoff=handoff_mode,
+            think=use_think,
+            tool_level=self._tool_level,
+            context_chars=len(context),
+            tools_offered=", ".join(_offered) or "none",
+        )
 
         # ── Tool-call rounds (non-streaming) ──────────────────────────────────
         # If the model answers directly in a tool round, the rounds return that
@@ -721,9 +805,14 @@ class Brain:
             fast_tool, fast_args = fast
             flow_rec.record(trace_id, "fast_path_hit", name=fast_tool, args=fast_args)
             yield from self._engine._run_fast_path(
-                fast_tool, messages, tools_used, args=fast_args,
-                query_emb=query_emb, user_input=user_input,
-                trace_id=trace_id, on_status=on_status,
+                fast_tool,
+                messages,
+                tools_used,
+                args=fast_args,
+                query_emb=query_emb,
+                user_input=user_input,
+                trace_id=trace_id,
+                on_status=on_status,
             )
         elif cfg.CREW_ENABLED and self.tool_registry:
             # Crew path (Part C/3b): triage → specialist(s); findings injected as
@@ -731,21 +820,34 @@ class Brain:
             # _run_tool_rounds loop is bypassed entirely on this branch.
             # run_turn returns the triage think decision for the streamed answer.
             use_think = yield from self._crew.run_turn(
-                user_input, messages, tools_used, query_emb=query_emb,
-                handoff_mode=handoff_mode, tools_open=bool(tools_schema),
-                trace_id=trace_id, on_status=on_status,
+                user_input,
+                messages,
+                tools_used,
+                query_emb=query_emb,
+                handoff_mode=handoff_mode,
+                tools_open=bool(tools_schema),
+                trace_id=trace_id,
+                on_status=on_status,
             )
         elif tools_schema:
             direct = yield from self._engine._run_tool_rounds(
-                messages, tools_schema, tools_used,
-                query_emb=query_emb, user_input=user_input,
-                trace_id=trace_id, on_status=on_status,
+                messages,
+                tools_schema,
+                tools_used,
+                query_emb=query_emb,
+                user_input=user_input,
+                trace_id=trace_id,
+                on_status=on_status,
             )
         if direct is not None:
             raw_text, clean = direct
             msg_id, latency_ms = self._finalize_turn(
-                user_input=user_input, clean_text=clean, raw_text=raw_text,
-                trace_id=trace_id, context=context, tools_used=tools_used,
+                user_input=user_input,
+                clean_text=clean,
+                raw_text=raw_text,
+                trace_id=trace_id,
+                context=context,
+                tools_used=tools_used,
                 turn_start=turn_start,
             )
             yield clean, False, {}
@@ -774,38 +876,51 @@ class Brain:
         streamed_live = not verify
 
         full_text, had_think = yield from self._stream_answer(
-            messages, think=final_think, forward_thinking=True,
+            messages,
+            think=final_think,
+            forward_thinking=True,
             forward_tokens=streamed_live,
         )
         _, clean_text = _strip_thinking(full_text)
 
         if verify and clean_text:
             from kai.memory import cerebellum as _cb
+
             v = _cb.verify_answer(clean_text, user_input, tools_used)
-            _cb.log_result("answer", "verify", v, self.user_id,
-                           output_snippet=clean_text[:500])
+            _cb.log_result("answer", "verify", v, self.user_id, output_snippet=clean_text[:500])
             if v.verdict >= _cb.Verdict.FLAG:
                 flow_rec.record(trace_id, "answer_reverify", reason=v.reason)
                 messages.append({"role": "system", "content": ANSWER_REVERIFY_NUDGE})
                 full_text, had_think = yield from self._stream_answer(
-                    messages, think=False, forward_thinking=False, forward_tokens=False,
+                    messages,
+                    think=False,
+                    forward_thinking=False,
+                    forward_tokens=False,
                 )
                 _, clean_text = _strip_thinking(full_text)
 
-        flow_rec.record(trace_id, "final_answer", think=final_think,
-                        had_think=had_think, text=full_text)
+        flow_rec.record(
+            trace_id, "final_answer", think=final_think, had_think=had_think, text=full_text
+        )
 
         if not clean_text and not self._cancel.is_set():
             # Model produced no visible output — thinking swallowed the answer, a
             # tool round left nothing, or the tool model returned no call and the
             # chat model went silent. Retry once with an explicit nudge so the
             # model writes a real reply instead of nothing. (Skipped on Stop.)
-            messages.append({"role": "system", "content": (
-                "Reply to the user now, directly and in plain text. "
-                "Do not call any tools."
-            )})
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Reply to the user now, directly and in plain text. Do not call any tools."
+                    ),
+                }
+            )
             retry_text, _ = yield from self._stream_answer(
-                messages, think=False, forward_thinking=False, forward_tokens=streamed_live,
+                messages,
+                think=False,
+                forward_thinking=False,
+                forward_tokens=streamed_live,
             )
             flow_rec.record(trace_id, "retry_answer", text=retry_text)
             _, clean_text = _strip_thinking(retry_text)
@@ -822,8 +937,12 @@ class Brain:
             yield clean_text, False, {}
 
         msg_id, latency_ms = self._finalize_turn(
-            user_input=user_input, clean_text=clean_text, raw_text=full_text,
-            trace_id=trace_id, context=context, tools_used=tools_used,
+            user_input=user_input,
+            clean_text=clean_text,
+            raw_text=full_text,
+            trace_id=trace_id,
+            context=context,
+            tools_used=tools_used,
             turn_start=turn_start,
         )
         yield "", True, self._done_meta(msg_id, latency_ms)
@@ -847,6 +966,7 @@ class Brain:
         query_emb: list[float] | None = None
         try:
             from kai.llm.embed import embed as _fast_embed
+
             query_emb = _fast_embed(user_input)
         except Exception:
             pass
@@ -858,9 +978,12 @@ class Brain:
         if query_emb:
             try:
                 from kai.llm.embed import embed as _fast_embed
+
                 self._ensure_handoff_router()
                 handoff_mode, handoff_conf = self._handoff_router.route(
-                    user_input, _fast_embed, query_emb=query_emb,
+                    user_input,
+                    _fast_embed,
+                    query_emb=query_emb,
                 )
                 if cfg.DEBUG:
                     print(f"[handoff] mode={handoff_mode} conf={handoff_conf:.3f}")
@@ -869,13 +992,13 @@ class Brain:
         return query_emb, handoff_mode
 
     def _build_turn_context(
-        self, user_input: str, query_emb: list[float] | None,
+        self,
+        user_input: str,
+        query_emb: list[float] | None,
         trace_id: str = "",
     ) -> str:
         """Render the memory context block + learned knowledge + grounding rule."""
-        context = self.memory.render_context(
-            query=user_input, query_embedding=query_emb
-        )
+        context = self.memory.render_context(query=user_input, query_embedding=query_emb)
         # Tree memory: [MEMORY CONTEXT] ranked by the Version C equation.
         # Prepended so relationship state + ranked facts sit at the very top.
         tree_block = self._render_tree_context(query_emb, trace_id)
@@ -887,13 +1010,9 @@ class Brain:
             if self.memory.knowledge_count() > 0:
                 hits = self.memory.search_knowledge(user_input, query_embedding=query_emb)
                 if hits:
-                    lines = [
-                        f"[{h['topic'] or 'general'}] {h['content']}"
-                        for h in hits
-                    ]
-                    knowledge_block = (
-                        "[LEARNED KNOWLEDGE — from past research]\n"
-                        + "\n---\n".join(lines)
+                    lines = [f"[{h['topic'] or 'general'}] {h['content']}" for h in hits]
+                    knowledge_block = "[LEARNED KNOWLEDGE — from past research]\n" + "\n---\n".join(
+                        lines
                     )
                     context = knowledge_block + "\n\n" + context
         except Exception:
@@ -911,20 +1030,22 @@ class Brain:
         """
         try:
             from kai.memory import tree as _mtree
+
             uid = str(self.user_id)
             if _mtree.count_facts(uid) == 0:
                 return ""
             import numpy as _np
+
             from kai.memory import loop as _memloop
-            q = (_np.asarray(query_emb, dtype=_np.float32)
-                 if query_emb else None)
+
+            q = _np.asarray(query_emb, dtype=_np.float32) if query_emb else None
             block, flags = _memloop.gather_context(uid, q)
-            flow_rec.record(trace_id, "memory_tree", block=block,
-                            flags=len(flags))
+            flow_rec.record(trace_id, "memory_tree", block=block, flags=len(flags))
             return block
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
             return ""
 
@@ -963,20 +1084,24 @@ class Brain:
         selection_emb = query_emb
         if gate == "follow_up":
             recent = history[-4:]
-            candidates = [m for m in reversed(recent)
-                          if m.get("role") == "user"
-                          and _TOOL_SIGNALS.search(m.get("content", ""))]
+            candidates = [
+                m
+                for m in reversed(recent)
+                if m.get("role") == "user" and _TOOL_SIGNALS.search(m.get("content", ""))
+            ]
             if not candidates:
-                candidates = [m for m in reversed(recent)
-                              if _TOOL_SIGNALS.search(m.get("content", ""))]
+                candidates = [
+                    m for m in reversed(recent) if _TOOL_SIGNALS.search(m.get("content", ""))
+                ]
             if candidates:
                 try:
                     from kai.llm.embed import embed as _fast_embed
+
                     selection_emb = _fast_embed(candidates[0]["content"][:500])
                 except Exception:
                     pass
 
-        excluded = self._disabled_tools or None   # tools the user turned off
+        excluded = self._disabled_tools or None  # tools the user turned off
         if self._tool_index and selection_emb:
             try:
                 tools_schema = self.tool_registry.select_tools_by_category(
@@ -991,7 +1116,6 @@ class Brain:
         if tools_schema and self.skill_registry:
             tools_schema = list(tools_schema) + self._skill_schemas()
         return tools_schema
-
 
     def _ground_evidence(
         self,
@@ -1027,28 +1151,36 @@ class Brain:
         if len(set(tools_used)) >= _FACT_EXTRACT_THRESHOLD:
             if on_status:
                 on_status("Analyzing results...")
-            messages.append({"role": "system", "content": (
-                "Summarize the factual findings from the tool results above. "
-                "One bullet per finding. Only include data the tools returned. "
-                "No interpretation, no speculation, no training-data fill-in."
-            )})
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize the factual findings from the tool results above. "
+                        "One bullet per finding. Only include data the tools returned. "
+                        "No interpretation, no speculation, no training-data fill-in."
+                    ),
+                }
+            )
             fact_resp = self._chat(messages, think=False, temperature=TEMPERATURE_REASON)
             facts = fact_resp.get("message", {}).get("content", "").strip()
             _, facts = _strip_thinking(facts)
             flow_rec.record(trace_id, "grounding", mode="two-phase", facts=facts)
             if facts:
                 messages.append({"role": "assistant", "content": facts})
-                messages.append({"role": "system", "content": (
-                    "Good. Now write your response to the user based ONLY on "
-                    "the verified facts above. Use your natural voice. "
-                    "Do not add data beyond what was extracted. "
-                    "If the user needs information you don't have, say so."
-                )})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Good. Now write your response to the user based ONLY on "
+                            "the verified facts above. Use your natural voice. "
+                            "Do not add data beyond what was extracted. "
+                            "If the user needs information you don't have, say so."
+                        ),
+                    }
+                )
         else:
-            flow_rec.record(trace_id, "grounding", mode="light",
-                            evidence_chars=len(evidence_text))
-            messages.append({"role": "system",
-                             "content": EVIDENCE_PROMPT + evidence_text})
+            flow_rec.record(trace_id, "grounding", mode="light", evidence_chars=len(evidence_text))
+            messages.append({"role": "system", "content": EVIDENCE_PROMPT + evidence_text})
 
     def _stream_answer(
         self,
@@ -1073,7 +1205,9 @@ class Brain:
         _tokens: list[str] = []
         had_think = False
         for token, done, meta in self._chat_stream(
-            messages, think=think, temperature=self._final_temp,
+            messages,
+            think=think,
+            temperature=self._final_temp,
         ):
             if done:
                 break
@@ -1144,9 +1278,12 @@ class Brain:
         if self._history.turn_count <= 1:
             self._mark_session_notes_delivered()
         if self.session_id:
-            events.emit(events.EVENT_STREAM_END, self.session_id,
-                        tools_used=tools_used,
-                        duration=round(latency_ms / 1000, 3))
+            events.emit(
+                events.EVENT_STREAM_END,
+                self.session_id,
+                tools_used=tools_used,
+                duration=round(latency_ms / 1000, 3),
+            )
         # commit + learn + compression: runs off the hot path
         self._bg_pool.submit(self._post_turn, user_input, clean_text)
         return msg_id, latency_ms
@@ -1170,9 +1307,10 @@ class Brain:
         delivery — mark them so the next session starts clean."""
         try:
             from kai.memory.context import (
-                mark_welcome_back_delivered,
                 mark_briefing_delivered,
+                mark_welcome_back_delivered,
             )
+
             mark_welcome_back_delivered()
             mark_briefing_delivered(user_id=self.user_id)
         except Exception:
@@ -1196,9 +1334,12 @@ class Brain:
         result = self._engine._execute_tool_traced(tool_name, tool_args, trace_id)
 
         # Build messages with the tool result injected
-        context = self.memory.render_context(
-            query=user_input,
-        ) + GROUNDING_RULE
+        context = (
+            self.memory.render_context(
+                query=user_input,
+            )
+            + GROUNDING_RULE
+        )
         history = self._history.window(_HISTORY_HARD_CAP)
 
         evidence = str(result.get("output", ""))[:3000]
@@ -1206,18 +1347,22 @@ class Brain:
             {"role": "system", "content": context},
             *history,
             {"role": "user", "content": user_input},
-            {"role": "assistant", "content": "",
-             "tool_calls": [{"function": {"name": tool_name, "arguments": tool_args}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": tool_name, "arguments": tool_args}}],
+            },
             {"role": "tool", "content": json.dumps(result)},
             {"role": "system", "content": EVIDENCE_PROMPT + evidence},
         ]
 
         self._emit_status("Responding...", on_status)
         full_text, _ = yield from self._stream_answer(
-            messages, think=False, forward_thinking=False,
+            messages,
+            think=False,
+            forward_thinking=False,
         )
-        flow_rec.record(trace_id, "final_answer", confirmed_tool=tool_name,
-                        text=full_text)
+        flow_rec.record(trace_id, "final_answer", confirmed_tool=tool_name, text=full_text)
         _, clean_text = _strip_thinking(full_text)
         if not clean_text:
             clean_text = self._fallback_text(tools_used)
@@ -1228,13 +1373,19 @@ class Brain:
             yield clean_text, False, {}
 
         msg_id, latency_ms = self._finalize_turn(
-            user_input=user_input, clean_text=clean_text, raw_text=full_text,
-            trace_id=trace_id, context=context, tools_used=tools_used,
+            user_input=user_input,
+            clean_text=clean_text,
+            raw_text=full_text,
+            trace_id=trace_id,
+            context=context,
+            tools_used=tools_used,
             turn_start=turn_start,
         )
         yield "", True, self._done_meta(msg_id, latency_ms)
 
-    def _persist_turn(self, user_input: str, response: str, latency_ms: int | None = None) -> int | None:
+    def _persist_turn(
+        self, user_input: str, response: str, latency_ms: int | None = None
+    ) -> int | None:
         """Persist user+assistant messages to the sessions DB. Returns assistant message id."""
         try:
             if not self.session_id:
@@ -1243,16 +1394,27 @@ class Brain:
                 # (feeds the Version C context modifier).
                 try:
                     from kai.memory import state as _mstate
+
                     _mstate.record_session_start(str(self.user_id))
                 except Exception:
                     pass
-            sessions.append_message(self.session_id, "user",      user_input, self._history.turn_order, user_id=self.user_id)
-            msg_id = sessions.append_message(self.session_id, "assistant", response, self._history.turn_order + 1, user_id=self.user_id, latency_ms=latency_ms)
+            sessions.append_message(
+                self.session_id, "user", user_input, self._history.turn_order, user_id=self.user_id
+            )
+            msg_id = sessions.append_message(
+                self.session_id,
+                "assistant",
+                response,
+                self._history.turn_order + 1,
+                user_id=self.user_id,
+                latency_ms=latency_ms,
+            )
             self._history.advance_turn_order(2)
             return msg_id
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
             return None  # session persistence failure never breaks a conversation
 
@@ -1266,20 +1428,23 @@ class Brain:
         start_time: float,
     ) -> None:
         try:
-            trace_log.record(trace_log.TraceEntry(
-                trace_id     = trace_id,
-                timestamp    = datetime.now().isoformat(),
-                user_input   = user_input,
-                model        = self.model,
-                context_len  = len(context),
-                tool_calls   = tools_used,
-                elapsed_ms   = int((time.monotonic() - start_time) * 1000),
-                response_len = len(response),
-                user_id      = self.user_id,
-            ))
+            trace_log.record(
+                trace_log.TraceEntry(
+                    trace_id=trace_id,
+                    timestamp=datetime.now().isoformat(),
+                    user_input=user_input,
+                    model=self.model,
+                    context_len=len(context),
+                    tool_calls=tools_used,
+                    elapsed_ms=int((time.monotonic() - start_time) * 1000),
+                    response_len=len(response),
+                    user_id=self.user_id,
+                )
+            )
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
 
     def _ensure_tool_index(self) -> None:
@@ -1292,6 +1457,7 @@ class Brain:
             return
         try:
             from kai.llm.embed import embed_batch as _fast_embed_batch
+
             self._tool_index = self.tool_registry.build_category_index(_fast_embed_batch)
             if cfg.DEBUG:
                 print(f"[tool index] {len(self._tool_index)} categories indexed")
@@ -1311,6 +1477,7 @@ class Brain:
             return
         try:
             from kai.llm.embed import embed_batch as _fast_embed_batch
+
             self.memory.init_router(_fast_embed_batch)
             if cfg.DEBUG:
                 print(f"[memory router] {len(self.memory._domain_index)} domains indexed")
@@ -1330,6 +1497,7 @@ class Brain:
             return
         try:
             from kai.llm.embed import embed as _fast_embed
+
             self._handoff_router.init(_fast_embed)
             if cfg.DEBUG:
                 print("[handoff router] seeded and ready")
@@ -1355,6 +1523,7 @@ class Brain:
             except Exception:
                 if cfg.DEBUG:
                     import traceback
+
                     traceback.print_exc()
 
     def _post_turn(self, user_input: str, assistant_text: str) -> None:
@@ -1372,6 +1541,7 @@ class Brain:
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
         count = self._history.bump_turn_count()
         # Rate-limit: queue an exchange for knowledge extraction every 3rd turn.
@@ -1387,6 +1557,7 @@ class Brain:
         # for promotion on the next startup.
         try:
             from kai.core.sleep import checkpoint_session
+
             checkpoint_session(self._history.snapshot())
         except Exception:
             pass
@@ -1409,7 +1580,8 @@ class Brain:
         try:
             resp = self._chat(
                 [{"role": "user", "content": f"{LEARN_PROMPT}\n\n{exchange}"}],
-                think=False, temperature=TEMPERATURE_REASON,
+                think=False,
+                temperature=TEMPERATURE_REASON,
             )
         except Exception:
             return  # Ollama down or model unloaded — skip silently
@@ -1431,14 +1603,18 @@ class Brain:
                 saved += 1
 
         if saved and self.session_id:
-            events.emit(events.EVENT_MEMORY_WRITE, self.session_id,
-                        entries=saved, source="knowledge_extraction")
+            events.emit(
+                events.EVENT_MEMORY_WRITE,
+                self.session_id,
+                entries=saved,
+                source="knowledge_extraction",
+            )
         if cfg.DEBUG and saved:
             print(f"[learn] saved {saved} knowledge entries")
 
-
     def get_embed_fn(self):
         from kai.llm.embed import embed as _fast_embed
+
         return _fast_embed
 
     def _summarize_messages(self, msgs: list[dict]) -> str:
@@ -1448,18 +1624,18 @@ class Brain:
         formatting (and the 800-char-per-message cap) can't drift apart.
         Returns "" on any failure — callers treat that as "skip, keep history".
         """
-        raw = "\n\n".join(
-            f"[{m['role']}]: {m.get('content', '')[:800]}" for m in msgs
-        )
+        raw = "\n\n".join(f"[{m['role']}]: {m.get('content', '')[:800]}" for m in msgs)
         try:
-            resp = self._chat(_build_compress_messages(raw), think=False,
-                              temperature=TEMPERATURE_REASON)
+            resp = self._chat(
+                _build_compress_messages(raw), think=False, temperature=TEMPERATURE_REASON
+            )
             summary = resp.get("message", {}).get("content", "").strip()
             _, summary = _strip_thinking(summary)
             return summary
         except Exception:
             if cfg.DEBUG:
                 import traceback
+
                 traceback.print_exc()
             return ""
 
@@ -1515,4 +1691,5 @@ class Brain:
             except Exception:
                 if cfg.DEBUG:
                     import traceback
+
                     traceback.print_exc()

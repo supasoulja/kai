@@ -18,30 +18,33 @@ from pathlib import Path
 from urllib import request as urlreq
 from urllib.error import URLError
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-PORT = 7860
-HOST = "127.0.0.1"
-URL  = f"http://{HOST}:{PORT}"
-
-_ROOT    = Path(__file__).parent
 import kai.config as cfg
 from kai.system.platform import IS_LINUX as _IS_LINUX
 from kai.util import log
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+PORT = 7860
+HOST = "127.0.0.1"
+URL = f"http://{HOST}:{PORT}"
+
+_ROOT = Path(__file__).parent
+
 # Use PNG on Linux (no .ico support in GTK), .ico on Windows
-_ICON    = _ROOT / "kai" / "static" / ("icon-192.png" if _IS_LINUX else "kai.ico")
+_ICON = _ROOT / "kai" / "static" / ("icon-192.png" if _IS_LINUX else "kai.ico")
 # App settings now live under var/ (honors KAI_VAR_DIR) instead of the fragile
 # "kai's memory" path inside the source package.
 _SETTINGS_FILE = cfg.APP_SETTINGS_PATH
-_SETTINGS_DIR  = _SETTINGS_FILE.parent
+_SETTINGS_DIR = _SETTINGS_FILE.parent
 _OLD_SETTINGS_FILE = _ROOT / "kai" / "memory" / "kai's memory" / "app_settings.json"
 
 # ── Global state ──────────────────────────────────────────────────────────────
-_window = None          # pywebview window
-_tray   = None          # pystray Icon
+_window = None  # pywebview window
+_tray = None  # pystray Icon
 _server_ready = threading.Event()
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
+
 
 def _load_settings() -> dict:
     # One-time migration from the old in-package location.
@@ -67,11 +70,13 @@ def _save_settings(data: dict) -> None:
 
 # ── Single-instance lock ─────────────────────────────────────────────────────
 
+
 def _is_already_running() -> bool:
     """POST to the running instance's show-window endpoint."""
     try:
-        req = urlreq.Request(f"{URL}/api/show-window", method="POST",
-                             data=b"", headers={"Content-Length": "0"})
+        req = urlreq.Request(
+            f"{URL}/api/show-window", method="POST", data=b"", headers={"Content-Length": "0"}
+        )
         resp = urlreq.urlopen(req, timeout=2)
         return resp.status == 200
     except (URLError, OSError):
@@ -80,9 +85,11 @@ def _is_already_running() -> bool:
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
+
 def _start_server() -> None:
     """Start uvicorn in a background thread.  Sets _server_ready when listening."""
     import uvicorn
+
     import web
 
     # Reuse the shared setup (middleware + init)
@@ -93,15 +100,18 @@ def _start_server() -> None:
     async def _show_window():
         if _window:
             _window.show()
-            _window.restore()   # un-minimise if needed
+            _window.restore()  # un-minimise if needed
         return {"ok": True}
 
     class _SignalReady(uvicorn.Config):
         """Subclass so we can detect when the server socket is bound."""
+
         pass
 
     config = uvicorn.Config(
-        web.app, host=HOST, port=PORT,
+        web.app,
+        host=HOST,
+        port=PORT,
         log_level="warning",
     )
     server = uvicorn.Server(config)
@@ -124,9 +134,11 @@ def _wait_for_server(timeout: float = 30) -> bool:
 
 # ── System tray ───────────────────────────────────────────────────────────────
 
+
 def _create_tray_icon():
     """Generates a simple orange square placeholder icon."""
     from PIL import Image, ImageDraw
+
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle([4, 4, 60, 60], radius=12, fill=(230, 126, 34))
@@ -309,6 +321,7 @@ def _clean_quit() -> None:
     def _worker():
         try:
             from kai.core import lifecycle
+
             lifecycle.graceful_shutdown(reason="desktop quit")
         except Exception as exc:
             log.warn(f"Clean quit failed: {exc}")
@@ -324,6 +337,7 @@ def _clean_quit() -> None:
 
 
 # ── JS bridge (exposed to the webview) ───────────────────────────────────────
+
 
 class _Api:
     """Methods callable from JavaScript via pywebview.api.*"""
@@ -356,7 +370,7 @@ class _Api:
                 x = y = None
 
         webview.create_window(
-            u,                # title — shows the URL until something better
+            u,  # title — shows the URL until something better
             u,
             width=900,
             height=800,
@@ -379,6 +393,7 @@ class _Api:
 
 
 # ── Closing handler ───────────────────────────────────────────────────────────
+
 
 def _on_closing():
     """Intercept the window close button."""
@@ -403,15 +418,15 @@ def _on_closing():
 
 # ── Global hotkey ─────────────────────────────────────────────────────────────
 
+
 def _setup_hotkey():
     try:
         import keyboard
-        keyboard.add_hotkey("ctrl+shift+k", lambda: (
-            _window.show(), _window.restore()
-        ) if _window else None)
-        keyboard.add_hotkey("ctrl+shift+r", lambda: (
-            _window.load_url(URL)
-        ) if _window else None)
+
+        keyboard.add_hotkey(
+            "ctrl+shift+k", lambda: (_window.show(), _window.restore()) if _window else None
+        )
+        keyboard.add_hotkey("ctrl+shift+r", lambda: (_window.load_url(URL)) if _window else None)
     except ImportError:
         log.info("'keyboard' package not installed — global hotkey disabled.")
     except Exception as exc:
@@ -420,6 +435,7 @@ def _setup_hotkey():
 
 # ── Startup shortcut ─────────────────────────────────────────────────────────
 
+
 def _linux_autostart_path() -> Path:
     return Path.home() / ".config" / "autostart" / "kai.desktop"
 
@@ -427,7 +443,7 @@ def _linux_autostart_path() -> Path:
 def _linux_autostart_content() -> str:
     python = str(Path(sys.executable).resolve())
     script = str(Path(__file__).resolve())
-    icon   = str(_ICON.resolve())
+    icon = str(_ICON.resolve())
     return (
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -445,7 +461,11 @@ def is_startup_enabled() -> bool:
         return _linux_autostart_path().exists()
     lnk = (
         Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
         / "Kai.lnk"
     )
     return lnk.exists()
@@ -464,29 +484,34 @@ def set_startup(enabled: bool) -> None:
     # Windows: .lnk via PowerShell
     startup = (
         Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
     )
     lnk_path = startup / "Kai.lnk"
     if not enabled:
         lnk_path.unlink(missing_ok=True)
         return
 
-    target      = str(Path(sys.executable).parent / "pythonw.exe")
-    args        = f'"{Path(__file__).resolve()}"'
+    target = str(Path(sys.executable).parent / "pythonw.exe")
+    args = f'"{Path(__file__).resolve()}"'
     working_dir = str(_ROOT)
     ps_script = (
-        f'$ws = New-Object -ComObject WScript.Shell; '
+        f"$ws = New-Object -ComObject WScript.Shell; "
         f'$sc = $ws.CreateShortcut("{lnk_path}"); '
         f'$sc.TargetPath = "{target}"; '
-        f'$sc.Arguments = {args}; '
+        f"$sc.Arguments = {args}; "
         f'$sc.WorkingDirectory = "{working_dir}"; '
         f'$sc.Description = "Kai - Local AI Agent"; '
-        f'$sc.Save()'
+        f"$sc.Save()"
     )
     os.system(f'powershell -Command "{ps_script}"')
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
+
 
 def main():
     global _window

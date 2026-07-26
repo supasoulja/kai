@@ -4,11 +4,12 @@ All read-only. No configuration changes made.
 
 Platform: Cross-platform (uses native ping/traceroute with OS-specific flags).
 """
+
 import re
 import subprocess
 
-from kai.tools.registry import registry
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools.registry import registry
 
 
 def _run(args: list[str], timeout: int = 60) -> str:
@@ -16,8 +17,11 @@ def _run(args: list[str], timeout: int = 60) -> str:
     try:
         r = subprocess.run(
             args,
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
         )
         return (r.stdout or "").strip()
     except subprocess.TimeoutExpired:
@@ -40,7 +44,11 @@ def _parse_ping(output: str, host: str, count: int) -> str:
     if "could not find host" in lower or "request could not find" in lower:
         return f"Could not resolve host: {host}. DNS may not be working."
     # Linux: "Name or service not known" / "Temporary failure in name resolution"
-    if "unknown host" in lower or "name or service not known" in lower or "failure in name resolution" in lower:
+    if (
+        "unknown host" in lower
+        or "name or service not known" in lower
+        or "failure in name resolution" in lower
+    ):
         return f"Could not resolve host: {host}. DNS may not be working."
     if "destination host unreachable" in lower or "request timed out" in lower:
         timeouts = lower.count("request timed out")
@@ -53,7 +61,8 @@ def _parse_ping(output: str, host: str, count: int) -> str:
     # "Minimum = Xms, Maximum = Xms, Average = Xms"
     rtt_m = re.search(
         r"Minimum\s*=\s*(\d+)ms.*?Maximum\s*=\s*(\d+)ms.*?Average\s*=\s*(\d+)ms",
-        output, re.DOTALL | re.IGNORECASE,
+        output,
+        re.DOTALL | re.IGNORECASE,
     )
 
     # ── Try Linux format ──
@@ -71,8 +80,10 @@ def _parse_ping(output: str, host: str, count: int) -> str:
             class _G:
                 def __init__(self, mn, avg, mx):
                     self._v = (mn, avg, mx)
+
                 def group(self, i):
                     return str(int(float(self._v[i - 1])))
+
             rtt_m = _G(rtt_linux.group(1), rtt_linux.group(2), rtt_linux.group(3))
 
     if not loss_m and not rtt_m:
@@ -184,18 +195,28 @@ def full_diagnostic() -> str:
     try:
         if _IS_WINDOWS:
             r = _sp.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                 "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
-                 "Sort-Object RouteMetric | Select-Object -First 1).NextHop"],
-                capture_output=True, text=True, timeout=10,
-                encoding="utf-8", errors="replace",
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+                    "Sort-Object RouteMetric | Select-Object -First 1).NextHop",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
             )
             gateway = r.stdout.strip()
         else:
             # Linux: ip route show default
             r = _sp.run(
                 ["ip", "route", "show", "default"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             # Output: "default via 192.168.1.1 dev eth0 ..."
             m = re.search(r"via\s+([\d.]+)", r.stdout)

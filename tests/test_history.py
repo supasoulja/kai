@@ -2,6 +2,7 @@
 Wave 6 — HistoryManager extracted from the Brain god-object.
 Run with: python -m pytest tests/test_history.py -v
 """
+
 from kai.core.history import HistoryManager
 
 
@@ -65,6 +66,7 @@ def test_turn_counters():
 
 
 # ── compression choreography ─────────────────────────────────────────────────
+
 
 def _bulk(h, n, size=200):
     for i in range(n):

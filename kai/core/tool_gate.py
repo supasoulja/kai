@@ -8,6 +8,7 @@ and the gate has its own home (and test surface). brain.py imports the public
 entry points: _query_needs_tools(), _query_needs_thinking(), and the compiled
 _TOOL_SIGNALS regex (also used during tool-schema selection).
 """
+
 import re
 
 # ── Tool signal detection ─────────────────────────────────────────────────────
@@ -19,34 +20,110 @@ import re
 
 _TOOL_KEYWORDS_SINGLE = [
     # System / hardware
-    "time", "date", "clock", "weather", "cpu", "gpu", "ram", "memory", "disk",
-    "drive", "ssd", "hdd", "hardware", "storage", "monitor", "upgrade",
-    "startup", "boot", "autostart", "autorun", "space",
+    "time",
+    "date",
+    "clock",
+    "weather",
+    "cpu",
+    "gpu",
+    "ram",
+    "memory",
+    "disk",
+    "drive",
+    "ssd",
+    "hdd",
+    "hardware",
+    "storage",
+    "monitor",
+    "upgrade",
+    "startup",
+    "boot",
+    "autostart",
+    "autorun",
+    "space",
     # Processes / performance
-    "process", "processes", "running", "usage", "load", "speed", "fan", "volt",
-    "spec", "specs", "performance", "slow", "fast", "laggy", "lagging",
+    "process",
+    "processes",
+    "running",
+    "usage",
+    "load",
+    "speed",
+    "fan",
+    "volt",
+    "spec",
+    "specs",
+    "performance",
+    "slow",
+    "fast",
+    "laggy",
+    "lagging",
     # Network
-    "network", "wifi", "ethernet", "dns", "gateway", "ping", "tracert",
-    "traceroute", "latency", "jitter", "bandwidth", "connectivity",
+    "network",
+    "wifi",
+    "ethernet",
+    "dns",
+    "gateway",
+    "ping",
+    "tracert",
+    "traceroute",
+    "latency",
+    "jitter",
+    "bandwidth",
+    "connectivity",
     # PC / system
-    "pc", "computer", "machine", "check", "system",
+    "pc",
+    "computer",
+    "machine",
+    "check",
+    "system",
     # Errors / crashes
-    "crash", "crashes", "log", "logs", "error", "errors",
+    "crash",
+    "crashes",
+    "log",
+    "logs",
+    "error",
+    "errors",
     # Notes / search
-    "note", "notes", "remind", "search", "find", "web", "internet",
+    "note",
+    "notes",
+    "remind",
+    "search",
+    "find",
+    "web",
+    "internet",
     # Memory tree
-    "remember", "forget", "remembered",
+    "remember",
+    "forget",
+    "remembered",
     # Goals
-    "goal", "goals",
+    "goal",
+    "goals",
     # Skills
-    "skill", "skills", "health check", "cleanup",
+    "skill",
+    "skills",
+    "health check",
+    "cleanup",
     # Steam / games
-    "steam", "benchmark", "benchmarks", "fps",
+    "steam",
+    "benchmark",
+    "benchmarks",
+    "fps",
     # Hardware parts
-    "motherboard", "mobo", "psu", "nvme", "sata",
-    "ryzen", "threadripper", "epyc", "xeon", "geforce", "radeon", "arc",
+    "motherboard",
+    "mobo",
+    "psu",
+    "nvme",
+    "sata",
+    "ryzen",
+    "threadripper",
+    "epyc",
+    "xeon",
+    "geforce",
+    "radeon",
+    "arc",
     # Documents
-    "document", "pdf",
+    "document",
+    "pdf",
 ]
 
 _TOOL_KEYWORDS_COMPOUND = [
@@ -55,23 +132,37 @@ _TOOL_KEYWORDS_COMPOUND = [
     # Lag variants
     r"lag(?:s|ging|gy)?",
     # Updates / patches
-    r"update(?:s)?", r"patch(?:es)?",
+    r"update(?:s)?",
+    r"patch(?:es)?",
     # Frame rate
     r"frame\s*rate",
     # Event / Windows logs
-    r"event\s*log", r"windows\s*log", r"system\s*error",
+    r"event\s*log",
+    r"windows\s*log",
+    r"system\s*error",
     # IP / Wi-Fi
-    r"ip\s*address", r"wi-fi", r"internet\s*connection",
+    r"ip\s*address",
+    r"wi-fi",
+    r"internet\s*connection",
     # Windows update
     r"windows\s*update",
     # File size triggers
-    r"large\s*file", r"big\s*file", r"folder\s*size",
-    r"old\s*file", r"recent\s*file",
-    r"free\s*up", r"clean\s*up", r"cleanup",
+    r"large\s*file",
+    r"big\s*file",
+    r"folder\s*size",
+    r"old\s*file",
+    r"recent\s*file",
+    r"free\s*up",
+    r"clean\s*up",
+    r"cleanup",
     # Connection
-    r"connection\s*test", r"slow\s*internet", r"high\s*ping", r"packet\s*loss",
+    r"connection\s*test",
+    r"slow\s*internet",
+    r"high\s*ping",
+    r"packet\s*loss",
     # Hardware upgrade
-    r"should\s+i\s+(?:buy|get|upgrade)", r"worth\s+(?:it|buying|getting)",
+    r"should\s+i\s+(?:buy|get|upgrade)",
+    r"worth\s+(?:it|buying|getting)",
     r"performance\s+(?:gain|delta|improvement)",
     r"compatible|compatibility|socket|am[45]|lga\d+|ddr[45]|pcie",
     r"cpu\s+cooler|aio\s+cooler|power\s+supply",
@@ -304,8 +395,7 @@ def _query_needs_tools(query: str, history: list[dict] | None = None) -> str | N
     # meaning lives in the previous turns, so selection must borrow intent
     # from there. Short + follow-up phrasing + recent tool context = follow_up
     # — but only when the message has no standalone intent of its own.
-    if (history and len(query.split()) <= 8
-            and follow and not residual_direct):
+    if history and len(query.split()) <= 8 and follow and not residual_direct:
         for msg in history[-4:]:
             if _TOOL_SIGNALS.search(msg.get("content", "")):
                 return "follow_up"

@@ -11,6 +11,7 @@ Requirements:
 The shared memory layout is documented at:
   https://www.hwinfo.com/sdk/HWiNFO_ShM.h
 """
+
 import ctypes
 import struct
 
@@ -28,13 +29,14 @@ _kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 # Shared memory header (matches HWiNFO_SENS_SM2 v2 layout)
 _SHM_NAME = "Global\\HWiNFO_SENS_SM2"
 _HEADER_SIZE = 32  # dwSignature(4) + dwVersion(4) + dwRevision(4) + pollTime(8) +
-                    # dwOffsetOfSensorSection(4) + dwSizeOfSensorElement(4) +
-                    # dwNumSensorElements(4)
-                    # ... followed by reading section info
+# dwOffsetOfSensorSection(4) + dwSizeOfSensorElement(4) +
+# dwNumSensorElements(4)
+# ... followed by reading section info
 
 
 class HWiNFOReading:
     __slots__ = ("sensor", "label", "value", "unit")
+
     def __init__(self, sensor: str, label: str, value: float, unit: str):
         self.sensor = sensor
         self.label = label
@@ -82,7 +84,7 @@ def _read_bytes(base: int, offset: int, size: int) -> bytes:
 def _read_str(base: int, offset: int, max_len: int = 128) -> str:
     raw = _read_bytes(base, offset, max_len)
     # Null-terminated ASCII/UTF-8 string
-    end = raw.find(b'\x00')
+    end = raw.find(b"\x00")
     if end >= 0:
         raw = raw[:end]
     return raw.decode("utf-8", errors="replace").strip()
@@ -96,8 +98,8 @@ def _parse_shm(view: int) -> list[HWiNFOReading]:
     if signature != 0x53695748:  # "HWiS" in little-endian
         return []
 
-    version = struct.unpack_from("<I", hdr, 4)[0]
-    revision = struct.unpack_from("<I", hdr, 8)[0]
+    _version = struct.unpack_from("<I", hdr, 4)[0]
+    _revision = struct.unpack_from("<I", hdr, 8)[0]
     # offset 12: pollTime (8 bytes, __int64)
 
     # Sensor section (offsets shifted by 8-byte pollTime)
@@ -126,7 +128,7 @@ def _parse_shm(view: int) -> list[HWiNFOReading]:
         base = view + reading_offset + (i * reading_elem_size)
 
         # Reading type at offset 0
-        reading_type = struct.unpack("<I", _read_bytes(base, 0, 4))[0]
+        _reading_type = struct.unpack("<I", _read_bytes(base, 0, 4))[0]
         # Sensor index at offset 4 (index into sensor array)
         sensor_idx = struct.unpack("<I", _read_bytes(base, 4, 4))[0]
         # Reading ID at offset 8
@@ -166,7 +168,10 @@ def get_gpu_summary() -> str | None:
     gpu_data: dict[str, dict[str, str]] = {}
     for r in readings:
         sensor_lower = r.sensor.lower()
-        if any(k in sensor_lower for k in ("dgpu", "radeon", "geforce", "nvidia")) and "cpu" not in sensor_lower:
+        if (
+            any(k in sensor_lower for k in ("dgpu", "radeon", "geforce", "nvidia"))
+            and "cpu" not in sensor_lower
+        ):
             if r.sensor not in gpu_data:
                 gpu_data[r.sensor] = {}
             label = r.label.lower()
@@ -183,7 +188,9 @@ def get_gpu_summary() -> str | None:
         load = metrics.get("gpu utilization", metrics.get("gpu d3d usage", "n/a"))
         clock = metrics.get("gpu shader clock", metrics.get("gpu front end clock", "n/a"))
         fan = metrics.get("gpu fan", "n/a")
-        power = metrics.get("total board power (tbp)", metrics.get("total graphics power (tgp)", "n/a"))
+        power = metrics.get(
+            "total board power (tbp)", metrics.get("total graphics power (tgp)", "n/a")
+        )
         vram_used = metrics.get("gpu d3d memory dedicated", metrics.get("gpu memory usage", ""))
         vram_clock = metrics.get("gpu memory clock", "")
 
@@ -206,8 +213,15 @@ def get_cpu_temp() -> str:
     for r in readings:
         sensor_lower = r.sensor.lower()
         label_lower = r.label.lower()
-        if ("cpu" in sensor_lower and "gpu" not in sensor_lower and
-                ("tctl" in label_lower or "tdie" in label_lower or
-                 "cpu temp" in label_lower or "cpu package" in label_lower)):
+        if (
+            "cpu" in sensor_lower
+            and "gpu" not in sensor_lower
+            and (
+                "tctl" in label_lower
+                or "tdie" in label_lower
+                or "cpu temp" in label_lower
+                or "cpu package" in label_lower
+            )
+        ):
             return f"{r.value:.0f}°C"
     return "n/a"

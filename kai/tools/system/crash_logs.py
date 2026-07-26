@@ -6,16 +6,20 @@ driver verifier chatter, etc.) to surface actual problems.
 
 Platform: Windows only (uses PowerShell / Windows Event Log).
 """
-import subprocess
-import json
 
-from kai.tools.registry import registry
+import json
+import subprocess
+
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools.registry import registry
 
 # Event sources that are usually noise — skip them
 _NOISE_SOURCES = {
-    "DCOM", "DistributedCOM", "Microsoft-Windows-TPM-WMI",
-    "Microsoft-Windows-WMI", "Microsoft-Windows-Hyper-V-Hypervisor",
+    "DCOM",
+    "DistributedCOM",
+    "Microsoft-Windows-TPM-WMI",
+    "Microsoft-Windows-WMI",
+    "Microsoft-Windows-Hyper-V-Hypervisor",
     "Microsoft-Windows-Hyper-V-Worker",
 }
 
@@ -49,9 +53,9 @@ def get_crash_logs() -> str:
     lines = [f"Recent system events ({len(events)} found, past 7 days):\n"]
     for e in events[:10]:  # show top 10 after filtering
         time_str = e.get("time", "?")[:19].replace("T", " ")
-        level    = e.get("level", "?")
-        source   = e.get("source", "?")
-        msg      = e.get("message", "")[:120].replace("\n", " ").strip()
+        level = e.get("level", "?")
+        source = e.get("source", "?")
+        msg = e.get("message", "")[:120].replace("\n", " ").strip()
         lines.append(f"[{time_str}] {level.upper()} — {source}\n  {msg}")
 
     return "\n\n".join(lines)
@@ -81,8 +85,11 @@ if ($events) {{
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=15,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
         if not result.stdout.strip():
             return []
@@ -109,6 +116,7 @@ def _filter_noise(events: list[dict]) -> list[dict]:
 
 
 # ── GPU crash tool ─────────────────────────────────────────────────────────────
+
 
 @registry.tool(
     name="system.gpu_crashes",
@@ -185,8 +193,11 @@ $output | ConvertTo-Json -Depth 4 -Compress
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=20,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=20,
+            encoding="utf-8",
+            errors="replace",
         )
         raw = r.stdout.strip()
         if not raw:
@@ -201,7 +212,9 @@ $output | ConvertTo-Json -Depth 4 -Compress
         if events:
             lines.append(f"GPU/driver events (past {days} days):")
             for e in events:
-                id_label = {4101: "TDR — driver timeout", 141: "GPU hardware error"}.get(e.get("id"), f"ID {e.get('id')}")
+                id_label = {4101: "TDR — driver timeout", 141: "GPU hardware error"}.get(
+                    e.get("id"), f"ID {e.get('id')}"
+                )
                 msg = e.get("message", "")[:180].replace("\n", " ")
                 lines.append(f"  [{e.get('time')}] {id_label} ({e.get('source')})\n    {msg}")
         else:
@@ -211,7 +224,7 @@ $output | ConvertTo-Json -Depth 4 -Compress
         if isinstance(dumps, dict):
             dumps = [dumps]
         if dumps:
-            lines.append(f"\nRecent minidumps (C:\\Windows\\Minidump):")
+            lines.append("\nRecent minidumps (C:\\Windows\\Minidump):")
             for d in dumps:
                 lines.append(f"  {d.get('Date')}  {d.get('Name')}  ({d.get('SizeMB')} MB)")
         else:
@@ -226,9 +239,18 @@ $output | ConvertTo-Json -Depth 4 -Compress
 
 # Known non-game Windows processes to exclude from Event ID 1000 results
 _SYSTEM_PROCS = {
-    "svchost.exe", "explorer.exe", "taskhostw.exe", "runtimebroker.exe",
-    "searchhost.exe", "sihost.exe", "ctfmon.exe", "dwm.exe", "werfault.exe",
-    "microsoftedge.exe", "msedge.exe", "backgroundtaskhost.exe",
+    "svchost.exe",
+    "explorer.exe",
+    "taskhostw.exe",
+    "runtimebroker.exe",
+    "searchhost.exe",
+    "sihost.exe",
+    "ctfmon.exe",
+    "dwm.exe",
+    "werfault.exe",
+    "microsoftedge.exe",
+    "msedge.exe",
+    "backgroundtaskhost.exe",
 }
 
 
@@ -348,8 +370,11 @@ $results | Sort-Object date -Descending | ConvertTo-Json -Compress
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=30,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding="utf-8",
+            errors="replace",
         )
         raw = r.stdout.strip()
         if not raw:
@@ -361,14 +386,16 @@ $results | Sort-Object date -Descending | ConvertTo-Json -Compress
 
         # Filter out known Windows system processes from Event Log results
         data = [
-            d for d in data
+            d
+            for d in data
             if not (d.get("source") == "EventLog" and d.get("app", "").lower() in _SYSTEM_PROCS)
         ]
 
         # Apply optional game name filter
         if game_filter:
             data = [
-                d for d in data
+                d
+                for d in data
                 if game_filter in d.get("app", "").lower()
                 or game_filter in d.get("detail", "").lower()
             ]
@@ -379,11 +406,11 @@ $results | Sort-Object date -Descending | ConvertTo-Json -Compress
 
         lines = [f"Crash reports (past {days} days, {len(data)} found):"]
         for item in data:
-            src    = item.get("source", "?")
-            date   = item.get("date", "?")
-            app    = item.get("app", "?")
+            src = item.get("source", "?")
+            date = item.get("date", "?")
+            app = item.get("app", "?")
             module = item.get("module", "")
-            code   = item.get("code", "")
+            code = item.get("code", "")
             detail = item.get("detail", "")[:120]
 
             summary = f"  [{date}] {src} — {app}"
@@ -407,7 +434,10 @@ $results | Sort-Object date -Descending | ConvertTo-Json -Compress
 
 # ── Linux helpers ──────────────────────────────────────────────────────────────
 
-def _journalctl_errors(priority: str = "err", since: str = "24 hours ago", max_lines: int = 25) -> str:
+
+def _journalctl_errors(
+    priority: str = "err", since: str = "24 hours ago", max_lines: int = 25
+) -> str:
     """
     Pull errors from the systemd journal.
     priority: journalctl -p level — "err", "crit", "warning", etc.
@@ -416,9 +446,18 @@ def _journalctl_errors(priority: str = "err", since: str = "24 hours ago", max_l
     try:
         since_arg = ["-b"] if since == "boot" else [f"--since={since}"]
         r = subprocess.run(
-            ["journalctl", f"-p{priority}", *since_arg, "--no-pager",
-             f"-n{max_lines}", "-o", "short-iso"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "journalctl",
+                f"-p{priority}",
+                *since_arg,
+                "--no-pager",
+                f"-n{max_lines}",
+                "-o",
+                "short-iso",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         out = r.stdout.strip()
         if not out or out == "-- No entries --":
@@ -442,11 +481,17 @@ def _linux_gpu_crashes(days: int = 30) -> str:
     try:
         r = subprocess.run(
             ["dmesg", "--level=err,crit", "--notime", "-T"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         gpu_lines = [
-            line for line in r.stdout.splitlines()
-            if any(k in line.lower() for k in ("gpu", "amdgpu", "radeon", "nvidia", "drm", "reset", "hang", "timeout"))
+            line
+            for line in r.stdout.splitlines()
+            if any(
+                k in line.lower()
+                for k in ("gpu", "amdgpu", "radeon", "nvidia", "drm", "reset", "hang", "timeout")
+            )
         ]
         if gpu_lines:
             results.append("dmesg GPU errors:")
@@ -457,9 +502,21 @@ def _linux_gpu_crashes(days: int = 30) -> str:
     # Journal GPU errors
     try:
         r = subprocess.run(
-            ["journalctl", "-b", "--no-pager", "-n50", "-o", "short-iso",
-             "-p", "err", "--grep", "amdgpu|radeon|nvidia|drm|gpu"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "journalctl",
+                "-b",
+                "--no-pager",
+                "-n50",
+                "-o",
+                "short-iso",
+                "-p",
+                "err",
+                "--grep",
+                "amdgpu|radeon|nvidia|drm|gpu",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         out = r.stdout.strip()
         if out and out != "-- No entries --":
@@ -475,7 +532,9 @@ def _linux_gpu_crashes(days: int = 30) -> str:
 
 def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
     """Check ~/.steam logs and journal for game crashes on Linux."""
-    import os, glob as _glob
+    import glob as _glob
+    import os
+
     results = []
 
     # Steam crash logs
@@ -490,7 +549,11 @@ def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
                     if not game_name or game_name.lower() in content.lower():
                         results.append(f"Steam log: {fname}")
                         # Show last few crash lines
-                        crash_lines = [line for line in content.splitlines() if "crash" in line.lower() or "exception" in line.lower()]
+                        crash_lines = [
+                            line
+                            for line in content.splitlines()
+                            if "crash" in line.lower() or "exception" in line.lower()
+                        ]
                         results.extend(crash_lines[-5:])
             except Exception:
                 pass
@@ -502,15 +565,27 @@ def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
         if dumps:
             results.append(f"\nRecent crash dumps ({crash_dir}):")
             for d in dumps:
-                mtime = subprocess.run(["date", "-r", d, "+%Y-%m-%d %H:%M"], capture_output=True, text=True).stdout.strip()
+                mtime = subprocess.run(
+                    ["date", "-r", d, "+%Y-%m-%d %H:%M"], capture_output=True, text=True
+                ).stdout.strip()
                 results.append(f"  {mtime}  {os.path.basename(d)}")
 
     # Journal: segfaults and killed processes
     try:
         r = subprocess.run(
-            ["journalctl", f"--since={days} days ago", "--no-pager", "-n30",
-             "-o", "short-iso", "--grep", "segfault|killed process|core dumped|Out of memory"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "journalctl",
+                f"--since={days} days ago",
+                "--no-pager",
+                "-n30",
+                "-o",
+                "short-iso",
+                "--grep",
+                "segfault|killed process|core dumped|Out of memory",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         out = r.stdout.strip()
         if out and out != "-- No entries --":

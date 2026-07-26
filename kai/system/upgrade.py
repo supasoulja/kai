@@ -9,10 +9,11 @@ Kai never sees her own source code. She sees:
 
 This gives her self-awareness without self-modification ability.
 """
+
 import json
 
 from kai.config import CHANGELOG_PATH
-from kai.memory import semantic, episodic
+from kai.memory import episodic, semantic
 
 # Semantic key where the last-known version is stored
 _VERSION_KEY = "kai_version"

@@ -9,6 +9,7 @@ Run once after pulling qwen3-embedding:4b:
 
 Handles both c:/newB (kai.db) and c:/newB-roof (roof.db) if they exist.
 """
+
 import sqlite3
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ except ImportError as exc:
     )
 
 
-NEW_DIM   = 2560
+NEW_DIM = 2560
 NEW_MODEL = "qwen3-embedding:4b"
 
 DB_PATHS = [
@@ -59,9 +60,7 @@ def migrate(db_path: Path) -> None:
     print(f"  created episodic_vec float[{NEW_DIM}]")
 
     # Fetch all text entries to re-embed
-    rows = conn.execute(
-        "SELECT rowid, id, content FROM episodic_entries"
-    ).fetchall()
+    rows = conn.execute("SELECT rowid, id, content FROM episodic_entries").fetchall()
 
     if not rows:
         print("  no entries to embed — done")
@@ -75,7 +74,7 @@ def migrate(db_path: Path) -> None:
             vec = embed(content)
             conn.execute(
                 "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
-                (rowid, sqlite_vec.serialize_float32(vec))
+                (rowid, sqlite_vec.serialize_float32(vec)),
             )
             ok += 1
             if ok % 10 == 0:

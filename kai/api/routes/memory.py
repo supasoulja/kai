@@ -3,6 +3,7 @@
 Read/edit surface for the dashboard's memory panel. Search and goals hit the DB
 directly (read-only projections for the UI); fact edits go through MemoryManager.
 """
+
 import json
 
 from fastapi import APIRouter, HTTPException, Request
@@ -20,6 +21,7 @@ async def briefing_latest(request: Request):
     """Return the most recent pending daily briefing for the dashboard."""
     uid = uid_for(request)
     from kai.memory.briefing import get_pending
+
     content = get_pending(user_id=uid)
     return {"content": content}
 
@@ -31,6 +33,7 @@ async def capabilities_new(request: Request):
     bubble can't describe a capability that doesn't exist."""
     uid = uid_for(request)
     from kai.memory.capabilities import new_capabilities
+
     return {"groups": new_capabilities(uid)}
 
 
@@ -39,6 +42,7 @@ async def capabilities_ack(request: Request):
     """Mark the current toolset as seen — dismisses the awareness bubble."""
     uid = uid_for(request)
     from kai.memory.capabilities import acknowledge
+
     acknowledge(uid)
     return {"ok": True}
 
@@ -56,14 +60,16 @@ async def goals_active(request: Request):
     results = []
     for gid, title, steps_json, current_step, last_active in rows:
         steps = json.loads(steps_json) if steps_json else []
-        results.append({
-            "id": gid,
-            "title": title,
-            "current_step": current_step,
-            "total_steps": len(steps),
-            "next_step": steps[current_step] if steps and current_step < len(steps) else None,
-            "last_active": last_active,
-        })
+        results.append(
+            {
+                "id": gid,
+                "title": title,
+                "current_step": current_step,
+                "total_steps": len(steps),
+                "next_step": steps[current_step] if steps and current_step < len(steps) else None,
+                "last_active": last_active,
+            }
+        )
     return results
 
 
@@ -80,18 +86,20 @@ async def goals_all(request: Request):
     results = []
     for gid, title, desc, steps_json, current_step, status, notes, created_at, last_active in rows:
         steps = json.loads(steps_json) if steps_json else []
-        results.append({
-            "id": gid,
-            "title": title,
-            "description": desc,
-            "steps": steps,
-            "current_step": current_step,
-            "total_steps": len(steps),
-            "status": status,
-            "notes": notes,
-            "created_at": created_at,
-            "last_active": last_active,
-        })
+        results.append(
+            {
+                "id": gid,
+                "title": title,
+                "description": desc,
+                "steps": steps,
+                "current_step": current_step,
+                "total_steps": len(steps),
+                "status": status,
+                "notes": notes,
+                "created_at": created_at,
+                "last_active": last_active,
+            }
+        )
     return results
 
 
@@ -119,7 +127,9 @@ async def memory_search(q: str, request: Request):
         "WHERE user_id = ? AND LOWER(content) LIKE ? ORDER BY timestamp DESC LIMIT 20",
         (uid, f"%{q}%"),
     ).fetchall()
-    episodes = [{"id": r[0], "content": r[1], "timestamp": r[2], "entry_type": r[3]} for r in ep_rows]
+    episodes = [
+        {"id": r[0], "content": r[1], "timestamp": r[2], "entry_type": r[3]} for r in ep_rows
+    ]
 
     return {"facts": facts, "episodes": episodes}
 
@@ -130,9 +140,9 @@ async def get_memory_facts(request: Request):
     facts = memory.list_facts()
     return [
         {
-            "key":        f.key,
-            "value":      f.value,
-            "source":     f.source,
+            "key": f.key,
+            "value": f.value,
+            "source": f.source,
             "updated_at": f.updated_at.strftime("%b %d, %Y"),
         }
         for f in facts
@@ -161,12 +171,13 @@ async def get_memory_episodic(request: Request):
     """Return episodic summaries (compressed conversation memories)."""
     uid = uid_for(request)
     from kai.memory import episodic as _episodic
+
     entries = _episodic.recent(limit=50, user_id=uid)
     return [
         {
-            "id":         e.id,
-            "content":    e.content,
-            "timestamp":  e.timestamp.strftime("%b %d %H:%M"),
+            "id": e.id,
+            "content": e.content,
+            "timestamp": e.timestamp.strftime("%b %d %H:%M"),
             "entry_type": e.entry_type,
         }
         for e in entries

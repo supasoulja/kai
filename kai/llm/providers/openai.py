@@ -16,6 +16,7 @@ It normalizes both directions so Brain never knows it isn't talking to Ollama:
 Tool *schemas* need no translation — Ollama already uses OpenAI's
 {"type":"function","function":{…}} format.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,16 +31,16 @@ _DEFAULT_MODEL = "gpt-4o-mini"
 
 
 class OpenAIClient(BaseHTTPProvider):
-    def __init__(self, api_key: str, base_url: str = _DEFAULT_BASE,
-                 default_model: str = _DEFAULT_MODEL):
+    def __init__(
+        self, api_key: str, base_url: str = _DEFAULT_BASE, default_model: str = _DEFAULT_MODEL
+    ):
         self.api_key = api_key or ""
         self.base_url = (base_url or _DEFAULT_BASE).rstrip("/")
         self.default_model = default_model or _DEFAULT_MODEL
 
     # ── HTTP seams (transport in BaseHTTPProvider; only auth headers differ) ─
     def _headers(self) -> dict:
-        return {"Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"}
+        return {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
 
     # ── Message normalization ──────────────────────────────────────────────
     @staticmethod
@@ -64,16 +65,20 @@ class OpenAIClient(BaseHTTPProvider):
                     args = fn.get("arguments", {})
                     if isinstance(args, (dict, list)):
                         args = json.dumps(args)
-                    tcs.append({"id": tcid, "type": "function",
-                                "function": {"name": fn.get("name", ""),
-                                             "arguments": args or "{}"}})
+                    tcs.append(
+                        {
+                            "id": tcid,
+                            "type": "function",
+                            "function": {"name": fn.get("name", ""), "arguments": args or "{}"},
+                        }
+                    )
                     pending_ids.append(tcid)
-                out.append({"role": "assistant", "content": m.get("content") or "",
-                            "tool_calls": tcs})
+                out.append(
+                    {"role": "assistant", "content": m.get("content") or "", "tool_calls": tcs}
+                )
             elif role == "tool":
                 tcid = pending_ids.pop(0) if pending_ids else "call_0"
-                out.append({"role": "tool", "tool_call_id": tcid,
-                            "content": m.get("content", "")})
+                out.append({"role": "tool", "tool_call_id": tcid, "content": m.get("content", "")})
             else:
                 out.append({"role": role, "content": m.get("content", "")})
         return out
@@ -98,8 +103,12 @@ class OpenAIClient(BaseHTTPProvider):
                         args = {}
                 else:
                     args = raw or {}
-                conv.append({"id": tc.get("id"),
-                             "function": {"name": fn.get("name", ""), "arguments": args}})
+                conv.append(
+                    {
+                        "id": tc.get("id"),
+                        "function": {"name": fn.get("name", ""), "arguments": args},
+                    }
+                )
             out["tool_calls"] = conv
         return out
 
@@ -115,26 +124,38 @@ class OpenAIClient(BaseHTTPProvider):
         return p
 
     # ── Public surface (matches LLMClient / OllamaClient) ───────────────────
-    def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             model: str = "", think: bool = False,
-             temperature: float = TEMPERATURE_TOOL, keep_alive: str = "10m") -> dict:
-        data = self._post_json("/chat/completions",
-                               self._payload(messages, tools, model, temperature, False))
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str = "",
+        think: bool = False,
+        temperature: float = TEMPERATURE_TOOL,
+        keep_alive: str = "10m",
+    ) -> dict:
+        data = self._post_json(
+            "/chat/completions", self._payload(messages, tools, model, temperature, False)
+        )
         choices = data.get("choices") or [{}]
         return {"message": self._to_ollama_message(choices[0].get("message", {}))}
 
-    def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                    model: str = "", think: bool = False,
-                    temperature: float = TEMPERATURE_FINAL
-                    ) -> Generator[tuple[str, bool, dict], None, None]:
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str = "",
+        think: bool = False,
+        temperature: float = TEMPERATURE_FINAL,
+    ) -> Generator[tuple[str, bool, dict], None, None]:
         content_parts: list[str] = []
         tool_acc: dict[int, dict] = {}
-        for line in self._post_stream("/chat/completions",
-                                      self._payload(messages, tools, model, temperature, True)):
+        for line in self._post_stream(
+            "/chat/completions", self._payload(messages, tools, model, temperature, True)
+        ):
             line = line.strip()
             if not line or not line.startswith("data:"):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len("data:") :].strip()
             if data == "[DONE]":
                 break
             try:
@@ -152,8 +173,7 @@ class OpenAIClient(BaseHTTPProvider):
             if reasoning:
                 yield "", False, {"think_token": reasoning}
             for tc in delta.get("tool_calls") or []:
-                slot = tool_acc.setdefault(tc.get("index", 0),
-                                           {"id": None, "name": "", "args": ""})
+                slot = tool_acc.setdefault(tc.get("index", 0), {"id": None, "name": "", "args": ""})
                 if tc.get("id"):
                     slot["id"] = tc["id"]
                 fn = tc.get("function", {})
@@ -170,8 +190,7 @@ class OpenAIClient(BaseHTTPProvider):
                     args = json.loads(s["args"]) if s["args"].strip() else {}
                 except json.JSONDecodeError:
                     args = {}
-                conv.append({"id": s["id"],
-                             "function": {"name": s["name"], "arguments": args}})
+                conv.append({"id": s["id"], "function": {"name": s["name"], "arguments": args}})
             final["tool_calls"] = conv
         yield "", True, final
 
@@ -191,11 +210,17 @@ class OpenAIClient(BaseHTTPProvider):
             return False
 
 
-def _build(api_key: str | None = None, base_url: str | None = None,
-           default_model: str | None = None, **_ignored) -> OpenAIClient:
-    return OpenAIClient(api_key=api_key or "",
-                        base_url=base_url or _DEFAULT_BASE,
-                        default_model=default_model or _DEFAULT_MODEL)
+def _build(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    default_model: str | None = None,
+    **_ignored,
+) -> OpenAIClient:
+    return OpenAIClient(
+        api_key=api_key or "",
+        base_url=base_url or _DEFAULT_BASE,
+        default_model=default_model or _DEFAULT_MODEL,
+    )
 
 
 register_provider("openai", _build)
