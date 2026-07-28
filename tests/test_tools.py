@@ -132,7 +132,6 @@ def test_risk_tiers_are_consistent():
     # self.apply_persona_update is destructive: self-modification must be gated so
     # Kai can never rewrite her own persona without explicit user approval.
     for t in (
-        "lxc.delete",
         "system.kill_process",
         "docs.delete",
         "system.repair_files",
@@ -141,12 +140,12 @@ def test_risk_tiers_are_consistent():
         assert registry.risk_for(t) == "destructive"
         assert t in confirm
     # Read-only tools stay safe → they auto-run, never gated.
-    for t in ("weather.current", "system.temps", "lxc.list", "search.web"):
+    for t in ("weather.current", "system.temps", "search.web"):
         assert registry.risk_for(t) == "safe"
         assert t not in confirm
     # Reversible writes are 'caution', not gated.
-    assert registry.risk_for("lxc.create") == "caution"
-    assert "lxc.create" not in confirm
+    assert registry.risk_for("files.write") == "caution"
+    assert "files.write" not in confirm
 
 
 def test_brain_confirm_gate_matches_registry():

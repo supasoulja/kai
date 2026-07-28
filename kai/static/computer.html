@@ -1533,18 +1533,12 @@ let nhWinId        = null;   // active Network Hub window id
 let nhSelectedId   = null;   // selected instance name
 let nhRefreshTimer = null;
 
+// The lxc subsystem and its /api/containers endpoints were removed and are being
+// rebuilt. This stub keeps the Network Hub shell alive (and off a dead endpoint)
+// so the rebuilt container layer can reconnect by restoring the fetch below.
 async function fetchContainers() {
-  try {
-    const res = await fetch('/api/containers');
-    if (!res.ok) return;
-    const data = await res.json();
-    containerClientAvailable = !!data.available;
-    // Rebuild from scratch so deleted instances disappear.
-    for (const k of Object.keys(containerRegistry)) delete containerRegistry[k];
-    for (const c of (data.instances || [])) {
-      containerRegistry[c.name] = c;
-    }
-  } catch (_) {}
+  for (const k of Object.keys(containerRegistry)) delete containerRegistry[k];
+  containerClientAvailable = false;
 }
 
 function renderNhSidebar(winId) {
@@ -1568,7 +1562,7 @@ function renderNhSidebar(winId) {
   } else {
     html = containerClientAvailable
       ? `<div class="nh-no-nodes">No instances yet.<br><br>Ask Kai to "make a container".</div>`
-      : `<div class="nh-no-nodes">No LXD/Incus installed.<br><br>Install one to manage containers and VMs from here.</div>`;
+      : `<div class="nh-no-nodes">Container support is being rebuilt.<br><br>The lxc layer was removed; this panel reconnects when it lands.</div>`;
   }
 
   sidebar.innerHTML = html;

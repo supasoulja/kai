@@ -670,20 +670,16 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "research.add_to_library",
         ],
     },
+    # Placeholder: the lxc subsystem was removed and is being rebuilt. The category
+    # and its description stay so crew routing (Cargo) keeps working; re-add tool
+    # names here as the new container layer lands.
     "containers": {
         "description": (
             "Manage LXD/Incus system containers and virtual machines on this Linux box: "
             "list containers, see their status and IP, create a new container or VM, "
             "start, stop, and delete them. Spin up a VM, make a container, tear it down."
         ),
-        "tools": [
-            "lxc.list",
-            "lxc.info",
-            "lxc.create",
-            "lxc.start",
-            "lxc.stop",
-            "lxc.delete",
-        ],
+        "tools": [],
     },
     "media_understanding": {
         "description": (
@@ -780,12 +776,6 @@ TOOL_LABELS: dict[str, str] = {
     "study.get_book_url": "Getting book link",
     "study.ask_library": "Asking the study library",
     "vision.describe": "Looking at the image",
-    "lxc.list": "Listing containers",
-    "lxc.info": "Checking container status",
-    "lxc.create": "Creating container",
-    "lxc.start": "Starting container",
-    "lxc.stop": "Stopping container",
-    "lxc.delete": "Deleting container",
 }
 
 
@@ -808,7 +798,6 @@ _TOOL_RISK: dict[str, str] = {
     "system.repair_files": "destructive",
     "system.disable_startup_program": "destructive",
     "system.kill_process": "destructive",  # ends a running process
-    "lxc.delete": "destructive",  # tears down an instance + storage
     "docs.delete": "destructive",  # removes an indexed document
     "self.apply_persona_update": "destructive",  # rewrites Kai's OWN identity —
     # self-modification must never apply silently; gate it behind explicit user OK.
@@ -817,9 +806,6 @@ _TOOL_RISK: dict[str, str] = {
     "files.write": "caution",
     "files.edit": "caution",
     "files.append": "caution",
-    "lxc.create": "caution",
-    "lxc.start": "caution",
-    "lxc.stop": "caution",
     "workspace.git_clone": "caution",
     "workspace.git_pull": "caution",
     "research.add_to_library": "caution",  # writes a doc to the RAG library (reversible via docs.delete)

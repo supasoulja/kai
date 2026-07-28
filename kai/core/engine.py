@@ -83,17 +83,8 @@ _NARRATED_VERB_RE = re.compile(
 )
 
 _NARRATED_INTENTS: list[tuple[re.Pattern, str, str]] = [
-    # "creating a container named Kytest3", "spinning up a VM called web1"
-    (
-        re.compile(
-            r"\b(?:creat\w*|launch\w*|spin\w*\s*up|mak\w*)\b[^.?!]*?"
-            r"\b(?:container|ct|vm|instance)\b[^.?!]*?"
-            r"\b(?:named|called)\s+[`'\"]?([A-Za-z0-9][\w.-]{0,62})",
-            re.IGNORECASE,
-        ),
-        "lxc.create",
-        "name",
-    ),
+    # NOTE: the "creating a container named X" → lxc.create intent was removed with
+    # the lxc subsystem. Restore it alongside the rebuilt container layer.
     # "searching the web for the latest gemma release", "let me look that up — for X"
     (
         re.compile(

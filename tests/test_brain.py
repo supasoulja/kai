@@ -282,7 +282,6 @@ def test_fast_path_matches_exact_commands_only():
     # Exact commands → (tool, args). No-arg tools carry {}.
     assert _match_fast_path("what time is it?") == ("time.now", {})
     assert _match_fast_path("what's the date") == ("time.now", {})
-    assert _match_fast_path("list containers") == ("lxc.list", {})
     assert _match_fast_path("check the weather") == ("weather.current", {})
     assert _match_fast_path("show my temps") == ("system.temps", {})
     assert _match_fast_path("what's my disk usage") == ("files.disk_usage", {})
@@ -434,21 +433,29 @@ def test_narrated_recovery_guards():
     assert _try_recover_tool_call("pc.deep_scan found nothing last week.", known) is None
 
 
-def test_narrated_intent_extracts_container_name():
-    """Natural-language container creation fires lxc.create WITH the name — the
-    session bug where 'creating a container named Kytest3 now' promised an action
-    that never ran (recovery alone fires empty args; name is required)."""
+def test_narrated_intent_extracts_arg():
+    """A narrated action fires its tool WITH the extracted arg — the session bug
+    where a promised action never ran (recovery alone fires empty args, so the arg
+    is what makes the call useful).
+
+    Originally covered lxc.create ("creating a container named Kytest3"); that
+    intent went with the lxc subsystem, so this exercises the same mechanism via
+    the surviving search.web intent."""
     from kai.core.engine import _match_narrated_intent, _try_recover_tool_call
 
-    known = {"lxc.create", "files.read"}
-    rec = _try_recover_tool_call("I'm creating an LXC container named Kytest3 now.", known)
-    assert rec == {"function": {"name": "lxc.create", "arguments": {"name": "Kytest3"}}}
-    # "called" phrasing + VM wording, with trailing punctuation trimmed
-    assert _match_narrated_intent("Spinning up a VM called web1.", known) == {
-        "function": {"name": "lxc.create", "arguments": {"name": "web1"}}
+    known = {"search.web", "files.read"}
+    rec = _try_recover_tool_call("I'm searching the web for the latest gemma release.", known)
+    assert rec == {
+        "function": {"name": "search.web", "arguments": {"query": "the latest gemma release"}}
     }
+    # "google" phrasing, with trailing punctuation trimmed
+    assert _match_narrated_intent("Let me google for ROCm 6.2 support.", known) == {
+        "function": {"name": "search.web", "arguments": {"query": "ROCm 6.2 support"}}
+    }
+    # The pattern wants "look up" adjacent — "look that up" is deliberately not a match
+    assert _match_narrated_intent("Let me look that up for ROCm 6.2 support.", known) is None
     # Intent is skipped when its target tool isn't registered (can't route it)
-    assert _match_narrated_intent("Creating a container named foo", {"files.read"}) is None
+    assert _match_narrated_intent("Searching the web for foo", {"files.read"}) is None
 
 
 # ── Follow-up tool selection ─────────────────────────────────────────────────────

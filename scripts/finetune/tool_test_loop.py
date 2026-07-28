@@ -114,8 +114,6 @@ READ_ONLY: frozenset[str] = frozenset(
         "research.fetch_url",
         "workspace.git_list_allowed",
         # containers (reads)
-        "lxc.list",
-        "lxc.info",
     }
 )
 

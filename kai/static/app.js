@@ -302,53 +302,17 @@ async function loadDashboard() {
 }
 
 // ── Containers / VMs (local LXD/Incus) ────────────────────────────────────────
+// The lxc subsystem and its /api/containers endpoints were removed and are being
+// rebuilt. These stubs keep the dashboard card in place (and off dead endpoints)
+// so the rebuilt container layer can reconnect by restoring the fetches.
 async function loadContainers() {
   const el = $('dash-containers');
   if (!el) return;
-  try {
-    const data = await fetch('/api/containers').then(r => r.json());
-    if (!data.available) {
-      el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No container manager installed (LXD/Incus).</div>';
-      return;
-    }
-    const instances = data.instances || [];
-    if (!instances.length) {
-      el.innerHTML = '<div style="font-size:12px;color:var(--muted)">No containers yet.</div>';
-      return;
-    }
-    el.innerHTML = instances.map(ci => {
-      const running = (ci.status || '').toLowerCase() === 'running';
-      const dot = running ? 'online' : 'offline';
-      const name = _esc(ci.name);
-      const ip = ci.ipv4 ? `<span class="dash-ct-ip">${_esc(ci.ipv4)}</span>` : '';
-      const toggle = running
-        ? `<button class="dash-ct-btn" title="Stop" data-ct-action="stop" data-ct-name="${name}"><span class="material-symbols-outlined" style="font-size:16px">stop_circle</span></button>`
-        : `<button class="dash-ct-btn" title="Start" data-ct-action="start" data-ct-name="${name}"><span class="material-symbols-outlined" style="font-size:16px">play_circle</span></button>`;
-      const del = `<button class="dash-ct-btn danger" title="Delete" data-ct-action="delete" data-ct-name="${name}"><span class="material-symbols-outlined" style="font-size:16px">delete</span></button>`;
-      return `<div class="dash-ct-row">
-        <span class="dash-dot ${dot}"></span>
-        <span class="dash-ct-name" title="${name}">${name}</span>
-        ${ip}
-        <span class="dash-ct-actions">${toggle}${del}</span>
-      </div>`;
-    }).join('');
-  } catch {
-    el.innerHTML = '<div style="font-size:12px;color:var(--muted)">Failed to load containers.</div>';
-  }
+  el.innerHTML = '<div style="font-size:12px;color:var(--muted)">Container support is being rebuilt.</div>';
 }
 
 async function _containerAction(name, action, btn) {
-  if (action === 'delete' && !confirm(`Delete container "${name}"? This cannot be undone.`)) return;
-  if (btn) btn.disabled = true;
-  try {
-    await fetch('/api/containers/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, action }),
-    });
-  } catch { /* ignore — the re-poll below shows ground truth */ }
-  // start/stop/delete take a moment to settle; re-poll for the real state.
-  setTimeout(loadContainers, 700);
+  // No-op until the container layer is rebuilt.
 }
 
 // ── Developer mode: live system stats on the dashboard ────────────────────────

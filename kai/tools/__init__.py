@@ -44,7 +44,7 @@ def _discover() -> None:
         mod = importlib.import_module(mod_name)
         # Expose the module under its leaf name on the package, matching the old
         # explicit `from kai.tools.<sub> import <leaf>` list — callers do
-        # `from kai.tools import lxc`, `... import memory_tools`, etc.
+        # `from kai.tools import sandbox`, `... import memory_tools`, etc.
         setattr(pkg, leaf, mod)
 
 

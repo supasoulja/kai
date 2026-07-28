@@ -397,25 +397,29 @@ def test_run_crew_dedup_guard_breaks_on_repeat_dispatch():
 
 def test_run_crew_covers_all_matched_domains_when_otto_finishes_early():
     # Otto tries to FINISH before dispatching anyone, but triage matched two
-    # domains (Dewey + Cargo). Coverage must force-dispatch BOTH before the loop
-    # ends — the "disk space AND containers → disk only" bug.
+    # domains. Coverage must force-dispatch BOTH before the loop ends — the
+    # "disk space AND temps → disk only" compound-request bug.
+    #
+    # Originally paired Dewey with Cargo; Cargo owns only the `containers`
+    # category, which is toolless while the lxc layer is rebuilt, so a toolless
+    # specialist can't be dispatched. Gus keeps the same two-domain shape.
     brain = _specialist_brain(
         [
             {"message": {"content": "FINISH: nothing to do"}},  # Otto — premature
             {"message": {"content": "disk is 82% full"}},  # Dewey (forced by coverage)
             {"message": {"content": "FINISH: got disk"}},  # Otto — still premature
-            {"message": {"content": "no containers running"}},  # Cargo (forced by coverage)
+            {"message": {"content": "cpu is at 61C"}},  # Gus (forced by coverage)
             {"message": {"content": "FINISH: done"}},  # Otto — all covered → stop
         ]
     )
     findings = _drain(
         brain._crew.run_crew(
-            "check my disk space and what containers are running",
-            expected=("Dewey", "Cargo"),
+            "check my disk space and my cpu temperature",
+            expected=("Dewey", "Gus"),
         )
     )
     assert "[Dewey]" in findings and "disk is 82% full" in findings
-    assert "[Cargo]" in findings and "no containers running" in findings
+    assert "[Gus]" in findings and "cpu is at 61C" in findings
 
 
 def test_run_crew_no_coverage_when_expected_empty():
