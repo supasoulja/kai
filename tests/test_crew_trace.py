@@ -62,15 +62,15 @@ def test_coverage_dispatch_is_recorded_to_the_db(monkeypatch):
             {"message": {"content": "FINISH: nothing to do"}},  # Otto — premature
             {"message": {"content": "disk is 82% full"}},  # Dewey (forced by coverage)
             {"message": {"content": "FINISH: got disk"}},  # Otto — still premature
-            {"message": {"content": "no containers running"}},  # Cargo (forced by coverage)
+            {"message": {"content": "cpu is at 61C"}},  # Gus (forced by coverage)
             {"message": {"content": "FINISH: done"}},  # Otto — all covered → stop
         ]
     )
     trace_id = "test-cov-" + os.urandom(4).hex()
     _drain(
         brain._crew.run_crew(
-            "check my disk space and what containers are running",
-            expected=("Dewey", "Cargo"),
+            "check my disk space and my cpu temperature",
+            expected=("Dewey", "Gus"),
             trace_id=trace_id,
         )
     )
@@ -80,7 +80,7 @@ def test_coverage_dispatch_is_recorded_to_the_db(monkeypatch):
 
     # Both skipped domains were force-dispatched and recorded.
     cov = [s for s in steps if s["kind"] == "coverage_dispatch"]
-    assert {s["specialist"] for s in cov} == {"Dewey", "Cargo"}
+    assert {s["specialist"] for s in cov} == {"Dewey", "Gus"}
 
     # Each dispatch is tagged with why it ran (coverage, not Otto's choice).
     dispatches = [s for s in steps if s["kind"] == "dispatch"]
@@ -93,8 +93,8 @@ def test_coverage_dispatch_is_recorded_to_the_db(monkeypatch):
     finish = [s for s in steps if s["kind"] == "finish"]
     assert len(finish) == 1
     f = finish[0]
-    assert f["expected"] == ["Dewey", "Cargo"]
-    assert f["dispatched"] == ["Cargo", "Dewey"]  # sorted
+    assert f["expected"] == ["Dewey", "Gus"]
+    assert f["dispatched"] == ["Dewey", "Gus"]  # sorted
     assert f["uncovered"] == []  # nothing left uncovered
     assert f["coverage_dispatches"] == 2
 
@@ -109,10 +109,10 @@ def test_record_and_read_roundtrip():
         session_id="s1",
         profile="Profile.BOSS",
         lane="boss",
-        expected=["Dewey", "Cargo"],
+        expected=["Dewey", "Gus"],
         scores=[["disk_analysis", 0.714], ["system_health", 0.638]],
     )
     steps = crew_trace.for_turn(tid)
     assert len(steps) == 1
-    assert steps[0]["expected"] == ["Dewey", "Cargo"]
+    assert steps[0]["expected"] == ["Dewey", "Gus"]
     assert steps[0]["scores"][0] == ["disk_analysis", 0.714]

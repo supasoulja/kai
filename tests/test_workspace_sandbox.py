@@ -79,9 +79,8 @@ def test_edit_cannot_touch_source_tree(workspace):
 
 
 # ── Failure contract: an action that did NOT happen must raise (success=False) ──
-# Regression lock alongside test_lxc.py — a failed write/edit/git must never come
-# back as a success-wrapped "Failed to…" string, or the model reports work it
-# never did (the fabrication class the lxc fix closed).
+# Regression lock — a failed write/edit/git must never come back as a
+# success-wrapped "Failed to…" string, or the model reports work it never did.
 
 
 def test_edit_missing_file_raises(workspace):

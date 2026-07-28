@@ -11,7 +11,6 @@ Single source of truth for the crew's system prompts — **one file per agent**,
 | **Dewey** | Files & code — files, disk analysis, git | [dewey.md](dewey.md) |
 | **Scout** | Eyes & web — search, pages, study library, image/audio | [scout.md](scout.md) |
 | **Remy** | Memory & self — notes, tree, recall, goals, docs, own code | [remy.md](remy.md) |
-| **Cargo** | Infrastructure — containers/VMs | [cargo.md](cargo.md) |
 | **Envoy** | Outside world — MCP servers (Phase 5, dormant) | [envoy.md](envoy.md) |
 
 ## Design constraints (locked — see plan doc)
@@ -47,7 +46,7 @@ Rules:
   never escalate or give up with zero tool calls.
 - Call the fewest tools that answer the subtask. Stop as soon as it is answered.
 - If the subtask needs something outside your tools, STOP and reply exactly:
-      needs: <one of: machine | files | web | memory | infra | external>
+      needs: <one of: machine | files | web | memory | external>
       for: <the residual subtask for the next worker>   (optional)
   Report any work you DID finish first; then the needs line. Do not attempt the rest yourself.
 - If a tool fails and you cannot recover with your tools, reply: blocked: <short reason>.
@@ -63,7 +62,6 @@ Your tools:
 - **Dewey** — `files & code — reading, writing, editing and organising files, disk-usage analysis, and git repositories`
 - **Scout** — `outside-view — web search, fetching/reading specific pages, the study library (papers & books), and understanding images & audio`
 - **Remy** — `memory & self — notes, the long-term memory tree, past-conversation recall, goals, uploaded documents, and Kai's own source/persona`
-- **Cargo** — `infrastructure — LXD/Incus containers & VMs on this box`
 - **Envoy** — `external-tools — capabilities exposed by connected MCP servers (these reach outside this machine)`
 
 ## Kai's voice (synthesis layer) — unchanged

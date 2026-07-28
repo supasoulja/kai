@@ -302,7 +302,7 @@ def test_fast_path_matches_exact_commands_only():
     # A time phrase is NOT a place → local weather ({}), not a bogus location
     assert _match_fast_path("what's the weather for tomorrow") == ("weather.current", {})
     # A real joiner still falls through, even for weather
-    assert _match_fast_path("weather in Austin and list containers") is None
+    assert _match_fast_path("weather in Austin and my disk usage") is None
     # Anything ambiguous, compound, or detailed falls through to the LLM
     assert _match_fast_path("tell me the current time please") is None
     assert _match_fast_path("what time is it and what's the weather") is None
@@ -437,10 +437,7 @@ def test_narrated_intent_extracts_arg():
     """A narrated action fires its tool WITH the extracted arg — the session bug
     where a promised action never ran (recovery alone fires empty args, so the arg
     is what makes the call useful).
-
-    Originally covered lxc.create ("creating a container named Kytest3"); that
-    intent went with the lxc subsystem, so this exercises the same mechanism via
-    the surviving search.web intent."""
+    """
     from kai.core.engine import _match_narrated_intent, _try_recover_tool_call
 
     known = {"search.web", "files.read"}

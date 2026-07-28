@@ -44,7 +44,7 @@ SINGLE_DOMAIN: list[tuple[str, str]] = [
 # Genuinely multi-domain requests that MUST spread to >=2 specialists (BOSS lane),
 # with the named pair among the matched set (the coverage set Otto must cover).
 COMPOUND: list[tuple[str, set[str]]] = [
-    ("check my disk space and what containers are running", {"Dewey", "Cargo"}),
+    ("check my disk space and my cpu temperature", {"Dewey", "Gus"}),
     ("show cpu usage and search the web for a fix", {"Gus", "Scout"}),
 ]
 

@@ -39,7 +39,7 @@ Edit `kai/persona/persona.md` to change their behavior. No code changes needed.
 ## Features
 
 - **Multi-model routing** — fast CPU embedding classifies every user turn and routes to chat, reasoning (thinking mode), tool use, or researcher. Seeds from built-in patterns and grows dynamically from usage.
-- **80+ tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, container control, self-inspection, and more
+- **75+ tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, self-inspection, and more
 - **Filesystem tree memory** — hierarchical key-value nodes at paths like `user/preferences/gaming/fps`. Version C scoring (recency × confidence × similarity × importance). Hardcoded prefixes always surface first. Three state stores modulate every score.
 - **Cerebellum validation** — pre/post execution checks on every tool call. Intent drift, scope, loop detection, and output coherence. CPU-only ONNX, ~5ms per check.
 - **Intuition flags** — five detectors override scoring when the equation misses something. Surfaced in a `[FLAGS]` block the chat model can reason about.
@@ -520,7 +520,7 @@ newB2_kai/
 │   │   ├── knowledge/          <- rag, study, notes
 │   │   ├── memory/             <- memory_tools
 │   │   ├── media/              <- audio_tools, vision
-│   │   ├── compute/            <- lxc, sandbox
+│   │   ├── compute/            <- sandbox
 │   │   └── agent/              <- goals
 │   ├── api/                    <- FastAPI routers (voice, study, models, deps)
 │   ├── skills/                 <- skill definitions

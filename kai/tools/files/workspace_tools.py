@@ -78,7 +78,7 @@ def workspace_write(filename: str, content: str) -> str:
     except Exception as e:
         # A failed write must surface as success=False (raise), never a
         # success-wrapped "Failed to…" string — otherwise the model reports the
-        # file as saved when it wasn't. See the lxc fabrication fix.
+        # file as saved when it wasn't.
         raise RuntimeError(f"Failed to write '{path}': {e}") from e
 
 
@@ -159,7 +159,7 @@ def workspace_edit(filename: str, old_text: str, new_text: str, replace_all: boo
     if path is None:
         return f"Rejected: '{filename}' resolves outside the workspace."
     # Below, every outcome where the edit did NOT happen raises → success=False,
-    # so the model can't report "done" for an edit it never made (the lxc lesson).
+    # so the model can't report "done" for an edit it never made.
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     try:
@@ -258,7 +258,7 @@ def workspace_git_clone(url: str, folder_name: str = "") -> str:
             "Git clone timed out (120s). The repo may be very large or the connection slow."
         ) from e
     except FileNotFoundError:
-        # Git missing is a relayable pre-condition (like lxc's "no client"), not a
+        # Git missing is a relayable pre-condition, not a
         # failed clone — return it as guidance the model passes on, not an error.
         return "Git is not installed or not in PATH. Install from https://git-scm.com/"
     except Exception as e:

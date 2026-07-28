@@ -73,7 +73,7 @@ def test_specialist_resolves_per_domain():
         "file_operations": "Dewey",
         "search_and_info": "Scout",
         "notes_and_memory": "Remy",
-        "containers": "Cargo",
+        "system_health": "Gus",
     }
     for cat, expected in cases.items():
         # score must clear CATEGORY_FLOOR (0.60) to count as a matched domain
@@ -139,12 +139,12 @@ def test_boss_exposes_matched_coverage_set():
         needs_think=False,
         category_scores=[
             ("disk_analysis", 0.69),
-            ("containers", 0.66),
+            ("web_content", 0.66),
             ("startup_and_updates", 0.61),
         ],
     )
     assert r.profile is Profile.BOSS
-    assert r.matched == ("Dewey", "Cargo")  # top-2 distinct owners, in score order
+    assert r.matched == ("Dewey", "Scout")  # top-2 distinct owners, in score order
 
 
 # ── BACKGROUND: long-running beats lane ───────────────────────────────────────────
@@ -264,7 +264,7 @@ def test_result_contract_blocked_flag():
 
 
 def test_needs_tokens_map_to_all_six_targets():
-    assert set(NEEDS_TO_SPECIALIST.values()) == {"Gus", "Dewey", "Scout", "Remy", "Cargo", "Envoy"}
+    assert set(NEEDS_TO_SPECIALIST.values()) == {"Gus", "Dewey", "Scout", "Remy", "Envoy"}
 
 
 # ── Specialist executor (Brain._run_specialist) — mocked model ────────────────────
@@ -400,9 +400,6 @@ def test_run_crew_covers_all_matched_domains_when_otto_finishes_early():
     # domains. Coverage must force-dispatch BOTH before the loop ends — the
     # "disk space AND temps → disk only" compound-request bug.
     #
-    # Originally paired Dewey with Cargo; Cargo owns only the `containers`
-    # category, which is toolless while the lxc layer is rebuilt, so a toolless
-    # specialist can't be dispatched. Gus keeps the same two-domain shape.
     brain = _specialist_brain(
         [
             {"message": {"content": "FINISH: nothing to do"}},  # Otto — premature

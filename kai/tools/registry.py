@@ -670,17 +670,6 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "research.add_to_library",
         ],
     },
-    # Placeholder: the lxc subsystem was removed and is being rebuilt. The category
-    # and its description stay so crew routing (Cargo) keeps working; re-add tool
-    # names here as the new container layer lands.
-    "containers": {
-        "description": (
-            "Manage LXD/Incus system containers and virtual machines on this Linux box: "
-            "list containers, see their status and IP, create a new container or VM, "
-            "start, stop, and delete them. Spin up a VM, make a container, tear it down."
-        ),
-        "tools": [],
-    },
     "media_understanding": {
         "description": (
             "Understand images and audio: describe what's in a picture or screenshot, "

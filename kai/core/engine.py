@@ -83,8 +83,6 @@ _NARRATED_VERB_RE = re.compile(
 )
 
 _NARRATED_INTENTS: list[tuple[re.Pattern, str, str]] = [
-    # NOTE: the "creating a container named X" → lxc.create intent was removed with
-    # the lxc subsystem. Restore it alongside the rebuilt container layer.
     # "searching the web for the latest gemma release", "let me look that up — for X"
     (
         re.compile(
@@ -122,7 +120,7 @@ def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
 
     Three recovery strategies:
       1. Broken JSON — the model emitted {"name": "...", "arguments": {...}} as text
-      2. Narrated intent — natural phrasing ("creating a container named X"),
+      2. Narrated intent — natural phrasing ("searching the web for X"),
          matched against a deterministic map that also extracts the argument
       3. Narrated call — the model wrote "Running `pc.deep_scan` now" instead of
          calling it (tool named verbatim, fired with empty args)

@@ -1308,14 +1308,6 @@
     .dash-dot.offline { background: var(--tertiary); }
     .dash-dot.unknown { background: var(--muted); }
     .dash-container-list { display: flex; flex-direction: column; gap: 6px; }
-    .dash-ct-row { display: flex; align-items: center; gap: 8px; }
-    .dash-ct-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dash-ct-ip { font-family: 'Space Grotesk'; font-size: 11px; color: var(--muted); }
-    .dash-ct-actions { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
-    .dash-ct-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; align-items: center; transition: color .15s; }
-    .dash-ct-btn:hover { color: var(--accent); }
-    .dash-ct-btn.danger:hover { color: #f87171; }
-    .dash-ct-btn:disabled { opacity: .4; cursor: default; }
     .dash-stat-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--outline-v); }
     .dash-stat-row:last-child { border-bottom: none; }
     .dash-stat-key { font-size: 12px; color: var(--muted); }
@@ -1526,20 +1518,6 @@
 
           <!-- Left: System + Stats -->
           <div class="dash-col">
-
-            <!-- Containers / VMs -->
-            <div class="dash-section">
-              <div class="dash-section-head">
-                <span class="material-symbols-outlined" style="font-size:15px">deployed_code</span>
-                Containers
-                <button id="dash-containers-refresh" class="dash-refresh-btn" title="Refresh containers">
-                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
-                </button>
-              </div>
-              <div id="dash-containers" class="dash-container-list">
-                <div style="font-size:12px;color:var(--muted)">Loading…</div>
-              </div>
-            </div>
 
             <!-- Developer: live system stats (hidden unless dev mode is on) -->
             <div id="dash-dev-section" class="dash-section" style="margin-top:12px;display:none">

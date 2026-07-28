@@ -292,7 +292,6 @@ async function loadDashboard() {
   } catch { /* ignore */ }
 
   // Local containers / VMs
-  loadContainers();
 
   // Developer system stats (only when dev mode is on)
   if (_devMode) loadDevStats();
@@ -301,19 +300,6 @@ async function loadDashboard() {
   loadSessions();
 }
 
-// ── Containers / VMs (local LXD/Incus) ────────────────────────────────────────
-// The lxc subsystem and its /api/containers endpoints were removed and are being
-// rebuilt. These stubs keep the dashboard card in place (and off dead endpoints)
-// so the rebuilt container layer can reconnect by restoring the fetches.
-async function loadContainers() {
-  const el = $('dash-containers');
-  if (!el) return;
-  el.innerHTML = '<div style="font-size:12px;color:var(--muted)">Container support is being rebuilt.</div>';
-}
-
-async function _containerAction(name, action, btn) {
-  // No-op until the container layer is rebuilt.
-}
 
 // ── Developer mode: live system stats on the dashboard ────────────────────────
 // Toggle lives in Settings; the panel lives on the Dashboard. Stats reuse the
@@ -2687,20 +2673,6 @@ if (goalsBannerLink) {
 const dashOpenMemory = $('dash-open-memory');
 if (dashOpenMemory) {
   dashOpenMemory.addEventListener('click', () => switchTab('memory'));
-}
-
-// Container panel: refresh button + delegated start/stop/delete actions
-const dashContainersRefresh = $('dash-containers-refresh');
-if (dashContainersRefresh) {
-  dashContainersRefresh.addEventListener('click', loadContainers);
-}
-const dashContainersEl = $('dash-containers');
-if (dashContainersEl) {
-  dashContainersEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-ct-action]');
-    if (!btn) return;
-    _containerAction(btn.dataset.ctName, btn.dataset.ctAction, btn);
-  });
 }
 
 // Developer mode: settings toggle + dashboard stats refresh

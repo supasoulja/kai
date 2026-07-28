@@ -3,9 +3,6 @@
 Dashboard-facing and requires a logged-in user. Returns a JSONResponse 401 (not a
 raised HTTPException) to match its caller, which checks the status code rather
 than catching an exception.
-
-The /api/containers endpoints were removed with the lxc subsystem; the container
-layer is being rebuilt from scratch.
 """
 
 from fastapi import APIRouter, Request

@@ -31,14 +31,13 @@ from pathlib import Path
 from kai.config import ROOT_DIR
 
 # ── The crew → category map (from plan Part A.2) ─────────────────────────────────
-# Each of the 17 tool categories in kai/tools/registry.py is owned by exactly one
+# Each of the 15 tool categories in kai/tools/registry.py is owned by exactly one
 # specialist. Otto (boss) and Envoy (MCP, none yet) own no categories here.
 CREW_CATEGORIES: dict[str, list[str]] = {
     "Gus": ["system_health", "system_control", "startup_and_updates", "network"],
     "Dewey": ["file_operations", "disk_analysis", "workspace_and_code"],
     "Scout": ["search_and_info", "web_content", "study_library", "media_understanding"],
     "Remy": ["notes_and_memory", "goals_and_tasks", "self_inspection", "docs_rag"],
-    "Cargo": ["containers"],
 }
 
 # Reverse lookup: category → specialist. Built once at import.
@@ -56,7 +55,7 @@ LONG_RUNNING_TOOLS: frozenset[str] = frozenset(
 
 # All worker specialists (Otto is the boss, not a worker). Envoy is MCP-only and
 # dormant until a server is connected (its slice is empty), but its prompt exists.
-SPECIALISTS: tuple[str, ...] = ("Gus", "Dewey", "Scout", "Remy", "Cargo", "Envoy")
+SPECIALISTS: tuple[str, ...] = ("Gus", "Dewey", "Scout", "Remy", "Envoy")
 
 # The finalized lean prompts (one file per agent). These are runtime assets, not
 # documentation — they live inside the package so a fresh clone has them. (They
@@ -64,16 +63,15 @@ SPECIALISTS: tuple[str, ...] = ("Gus", "Dewey", "Scout", "Remy", "Cargo", "Envoy
 # with no crew prompts at all.)
 CREW_PROMPTS_DIR: Path = ROOT_DIR / "kai" / "persona" / "crew_prompts"
 
-# needs:<domain> → specialist, the six fixed escalation tokens (plan Part A.2).
+# needs:<domain> → specialist, the five fixed escalation tokens (plan Part A.2).
 NEEDS_TO_SPECIALIST: dict[str, str] = {
     "machine": "Gus",
     "files": "Dewey",
     "web": "Scout",
     "memory": "Remy",
-    "infra": "Cargo",
     "external": "Envoy",
 }
-_NEEDS_RE = re.compile(r"^\s*needs:\s*(machine|files|web|memory|infra|external)\b", re.I)
+_NEEDS_RE = re.compile(r"^\s*needs:\s*(machine|files|web|memory|external)\b", re.I)
 _BLOCKED_RE = re.compile(r"^\s*blocked:\s*(.+)", re.I | re.S)
 
 # Otto's dispatch loop bound — caps latency + GPU swaps (plan Part A.2).

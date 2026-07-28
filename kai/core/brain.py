@@ -93,8 +93,6 @@ _FAST_PATHS: list[tuple[re.Pattern, str]] = [
         ),
         "time.now",
     ),
-    # NOTE: the "list containers" fast-path mapped to lxc.list, which no longer
-    # exists. Restore it alongside the rebuilt container layer.
     (
         re.compile(
             r"^\s*(?:check|get|show|what(?:'?s| is)?)\s*(?:the\s+|my\s+)?weather\b[^?.!]*[?.!]*\s*$",
