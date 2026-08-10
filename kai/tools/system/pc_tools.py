@@ -14,6 +14,7 @@ import threading
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 from kai.tools._shell import run_powershell
 from kai.tools.registry import registry
+from kai.tools.system.crash_logs import _journalctl
 
 
 def _run(cmd: list[str], timeout: int = 10) -> str:
@@ -168,11 +169,13 @@ def get_network_info() -> str:
 @registry.tool(
     name="pc.windows_updates",
     description=(
-        "Check for pending Windows updates and show recently installed updates. "
-        "After retrieving: if there are 0 pending updates, confirm the system is up to date. "
+        "Check for pending operating-system updates and show recently installed ones. "
+        "Reads Windows Update on Windows and the system package manager "
+        "(apt / dnf / pacman) on Linux — report whichever the result actually came from. "
+        "After retrieving: if nothing is pending, confirm the system is up to date. "
         "If updates are pending, recommend installing them — flag security or cumulative "
         "updates as higher priority. "
-        "If the count is large (10+), note that running Windows Update would be a good idea."
+        "If the count is large (10+), note that the system is overdue for an update run."
     ),
 )
 def get_windows_updates() -> str:
@@ -322,29 +325,12 @@ def _linux_event_logs(hours: int = 24, level: str = "Error") -> str:
         "all": "info",
     }
     jlevel = level_map.get(level.strip().lower(), "err")
-    try:
-        r = subprocess.run(
-            [
-                "journalctl",
-                f"-p{jlevel}",
-                f"--since={hours} hours ago",
-                "--no-pager",
-                "-n25",
-                "-o",
-                "short-iso",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        out = r.stdout.strip()
-        if not out or out == "-- No entries --":
-            return f"No {level} events in the last {hours} hours."
-        return out
-    except FileNotFoundError:
-        return "journalctl not available — not a systemd system."
-    except Exception as exc:
-        return f"journalctl error: {exc}"
+    lines, err = _journalctl(priority=jlevel, since=f"{hours} hours ago")
+    if err:
+        return err
+    if not lines:
+        return f"No {level} events in the last {hours} hours."
+    return "\n".join(lines)
 
 
 def _linux_startup_programs() -> str:

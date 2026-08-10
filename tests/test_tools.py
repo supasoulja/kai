@@ -630,6 +630,165 @@ def test_ingest_text_rejects_empty():
         D.ingest_text("   ", source_name="x")
 
 
+# ── journalctl: one reader, four callers ─────────────────────────────────────
+
+
+def _fake_journal(stdout: str = "", exc: Exception | None = None):
+    """Stand in for subprocess.run inside crash_logs._journalctl.
+    Returns (side_effect, captured_argv_list)."""
+    from types import SimpleNamespace
+
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if exc:
+            raise exc
+        return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
+
+    return run, calls
+
+
+def test_journalctl_passes_grep_and_boot_flags():
+    from kai.tools.system import crash_logs as C
+
+    run, calls = _fake_journal("2026-08-10 kernel: amdgpu ring timeout")
+    with patch.object(C.subprocess, "run", side_effect=run):
+        lines, err = C._journalctl(priority="err", since="boot", max_lines=50, grep="amdgpu|drm")
+
+    assert err is None
+    assert lines == ["2026-08-10 kernel: amdgpu ring timeout"]
+    argv = calls[0]
+    assert "-b" in argv and "--since=boot" not in argv
+    assert argv[argv.index("--grep") + 1] == "amdgpu|drm"
+    assert "-n50" in argv and "-perr" in argv
+
+
+def test_journalctl_omits_grep_when_not_requested():
+    from kai.tools.system import crash_logs as C
+
+    run, calls = _fake_journal("")
+    with patch.object(C.subprocess, "run", side_effect=run):
+        C._journalctl(since="7 days ago")
+    assert "--grep" not in calls[0]
+    assert "--since=7 days ago" in calls[0]
+
+
+def test_journalctl_no_entries_is_empty_not_an_error():
+    from kai.tools.system import crash_logs as C
+
+    run, _calls = _fake_journal("-- No entries --")
+    with patch.object(C.subprocess, "run", side_effect=run):
+        assert C._journalctl() == ([], None)
+
+
+def test_journalctl_filters_kernel_noise():
+    from kai.tools.system import crash_logs as C
+
+    run, _calls = _fake_journal("real failure\nkernel: microcode: updated\npcie_aspm chatter")
+    with patch.object(C.subprocess, "run", side_effect=run):
+        lines, err = C._journalctl()
+    assert lines == ["real failure"] and err is None
+
+
+def test_journalctl_drops_boot_separators():
+    """`--grep` emits one '-- Boot <id> --' marker per boot in range. They are
+    separators, not entries — surfacing them reports crashes that never
+    happened (this box returned 13 of them and zero real matches)."""
+    from kai.tools.system import crash_logs as C
+
+    run, _calls = _fake_journal(
+        "-- Boot 80a60585444c4692b2b2ae2442c16aea --\n"
+        "-- Boot 3df4dbb657b54665855308c4159e800a --\n"
+        "2026-08-10 kernel: game.exe[9]: segfault at 0"
+    )
+    with patch.object(C.subprocess, "run", side_effect=run):
+        lines, err = C._journalctl(grep="segfault")
+    assert err is None
+    assert lines == ["2026-08-10 kernel: game.exe[9]: segfault at 0"]
+
+
+def test_game_crashes_reports_a_failed_journal_scan():
+    """All three sources empty AND the journal scan failed is not the same as
+    'no crashes' — the tool must not launder the failure into a clean bill."""
+    from kai.tools.system import crash_logs as C
+
+    with patch.object(C, "_journalctl", return_value=([], "journalctl error: timed out")):
+        out = C._linux_game_crashes(days=7)
+    assert "Journal search failed" in out
+
+
+def test_journalctl_failure_never_reads_as_a_clean_system():
+    """A journal that could not be read must not be reported as 'no crashes' —
+    that is the fabricated-tool-result failure mode."""
+    from kai.tools.system import crash_logs as C
+
+    run, _calls = _fake_journal(exc=FileNotFoundError())
+    with patch.object(C, "_IS_WINDOWS", False), patch.object(C.subprocess, "run", side_effect=run):
+        out = C.get_crash_logs()
+    assert "journalctl not found" in out
+    assert "No significant errors" not in out
+
+
+def test_linux_event_logs_routes_through_the_shared_reader():
+    """pc.event_logs hand-rolled its own journalctl call with a different -n
+    limit and no noise filter; it now shares crash_logs._journalctl so both
+    tools read the journal the same way."""
+    from kai.tools.system import crash_logs as C
+    from kai.tools.system import pc_tools as P
+
+    run, calls = _fake_journal("2026-08-10 something failed")
+    with patch.object(C.subprocess, "run", side_effect=run):
+        out = P._linux_event_logs(hours=6, level="Warning")
+    assert "something failed" in out
+    assert "-pwarning" in calls[0]
+    assert "--since=6 hours ago" in calls[0]
+
+
+# ── PowerShell adapters: one failure convention ──────────────────────────────
+
+
+def test_ps_adapters_report_no_output_as_none():
+    """temps / pc_tools / file_tools share one contract: None means no usable
+    output, so a call site can move between those modules unchanged."""
+    from kai.tools._shell import ShellResult
+    from kai.tools.files import file_tools as F
+    from kai.tools.system import pc_tools as P
+    from kai.tools.system import temps as T
+
+    dead = ShellResult("", "boom", False, False)
+    for mod in (T, P, F):
+        with patch.object(mod, "run_powershell", return_value=dead):
+            assert mod._ps("whatever") is None, f"{mod.__name__}._ps should return None"
+
+
+def test_file_tools_ps_keeps_timeout_distinguishable_from_empty():
+    """A timeout must not collapse into 'no output' — files.* tells the user to
+    narrow the scan, which is only honest if the timeout is still visible."""
+    from kai.tools._shell import TIMEOUT_SENTINEL, ShellResult
+    from kai.tools.files import file_tools as F
+
+    with patch.object(F, "run_powershell", return_value=ShellResult("", "Timed out", True, False)):
+        assert F._ps("slow") == TIMEOUT_SENTINEL
+
+
+def test_ps_adapter_reports_a_timeout_as_an_error():
+    """system_ops tools decide failure by looking for 'error' in stderr. A
+    timed-out run must satisfy that check, or a restore point that never
+    happened reads back to the user as 'Safe to proceed.'"""
+    from kai.tools._shell import ShellResult
+    from kai.tools.system import system_ops as S
+
+    timed_out = ShellResult("", "Timed out", True, False)
+    with patch.object(S, "run_powershell", return_value=timed_out):
+        stdout, stderr = S._ps("whatever", timeout=1)
+        assert stdout == "" and "error" in stderr.lower()
+        with patch.object(S, "_IS_WINDOWS", True):
+            out = S.create_restore_point("test point")
+    assert "Could not create restore point" in out
+    assert "Safe to proceed" not in out
+
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
 
