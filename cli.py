@@ -9,6 +9,7 @@ Usage:
 import argparse
 import os
 import sys
+from collections.abc import Callable
 
 import kai.config as cfg
 from kai.core import bootstrap
@@ -69,32 +70,262 @@ def startup_report(memory: MemoryManager, model: str) -> str:
 
 # ── CLI commands ───────────────────────────────────────────────────────────────
 
-HELP_TEXT = """
-Commands:
-  :memory       show all memory (facts, rules, episodes)
-  :facts        show semantic facts only
-  :forget <key> delete a semantic fact
-  :rules        show procedural rules
-  :history      show last 10 episodic entries
-  :sleep        show Kai's last welcome-back note
-  :trace        show last 10 turn traces (timing, tools used)
-  :flow [id]    replay a turn step by step (model calls, thinking, tools)
-  :flowlive     toggle live flow — print every internal step as it happens
-  :tools        list registered tools
-  :vector       show vector table stats (episodic + RAG embeddings)
-  :mode <name>  set generation mode: thinking | normal | creative | crazy
-  :toollevel <name>  which model runs tool calls: light | balanced | deep | off
-  :temp <0-2>   set temperature for this session (overrides the mode)
-  :model <name> switch to a user-added model (see :models)
-  :models       list all configured models
-  :debug        toggle debug mode
-  :help         show this
-  :quit / exit  exit
-"""
-
-
 # :flowlive state — the currently-subscribed live printer (None = off)
 _flow_live_tap = None
+
+
+def _cmd_memory(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    _show_memory(memory)
+
+
+def _cmd_facts(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    facts = memory.list_facts()
+    if facts:
+        for f in facts:
+            print(f"  {f.key} = {f.value}  [{f.source}]")
+    else:
+        print("  No facts stored yet.")
+
+
+def _cmd_forget(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    if arg:
+        memory.delete_fact(arg.strip())
+        print(f"  Deleted: {arg.strip()}")
+    else:
+        print("  Usage: :forget <key>")
+
+
+def _cmd_rules(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    rules = memory.list_rules()
+    for r in rules:
+        print(f"  {r.key} = {r.value}")
+
+
+def _cmd_history(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    episodes = memory.recent_episodes(limit=10)
+    for ep in episodes:
+        print(f"\n  [{ep.timestamp.strftime('%b %d %H:%M')}] {ep.content[:120]}...")
+
+
+def _cmd_sleep(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    from kai.config import MEMORY_DIR
+    from kai.core.sleep import load_welcome_back
+
+    wb = load_welcome_back()
+    if wb:
+        print(f"\n  [Pending welcome-back note]\n  {wb}\n")
+    else:
+        log_file = MEMORY_DIR / "sleep_log.txt"
+        if log_file.exists():
+            lines = log_file.read_text(encoding="utf-8").strip().split("\n---")
+            last = lines[-1].strip() if lines else ""
+            if last:
+                print(f"\n  [Last sleep note]\n  {last}\n")
+            else:
+                print("  No sleep notes yet.")
+        else:
+            print("  No sleep notes yet. Kai hasn't gone to sleep.")
+
+
+def _cmd_trace(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    entries = trace_log.recent(limit=10)
+    if not entries:
+        print("  No trace entries yet.")
+        return
+    for e in entries:
+        tools = ", ".join(e.tool_calls) if e.tool_calls else "none"
+        print(
+            f"  [{e.trace_id}] {e.timestamp[:19]}  {e.elapsed_ms}ms  "
+            f"model={e.model.split(':')[0]}  tools=[{tools}]  "
+            f"ctx={e.context_len}ch  resp={e.response_len}ch"
+        )
+        if cfg.DEBUG:
+            print(f"    q: {e.user_input[:80]}")
+
+
+def _cmd_flow(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    from kai.core import flow as _flow
+
+    tid = arg.strip()
+    if not tid:
+        turns = _flow.recent_turns(limit=5)
+        if not turns:
+            print("  No flow recorded yet (is FLOW_TRACE on in config.py?).")
+        else:
+            tid = turns[0]["trace_id"]
+            print("  Recent turns (showing the newest — :flow <id> for older):")
+            from datetime import datetime as _dt
+
+            for t in turns:
+                when = _dt.fromtimestamp(t["ts"]).strftime("%H:%M:%S")
+                print(f"    {t['trace_id']}  {when}  {t['steps']:3d} steps  {t['input']!r}")
+            print()
+    if tid:
+        steps = _flow.get_flow(tid)
+        if not steps:
+            print(f"  No flow recorded for {tid!r}.")
+        for s in steps:
+            kind = s.pop("kind", "?")
+            s.pop("ts", None)
+            detail = "  ".join(
+                f"{k}={str(v)[:160]!r}" for k, v in s.items() if v not in (None, "", "none")
+            )
+            print(f"  [{kind}] {detail}")
+
+
+def _cmd_flowlive(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    global _flow_live_tap
+    from kai.core import flow as _flow
+
+    if _flow_live_tap is None:
+
+        def _tap(tid, kind, data):
+            detail = "  ".join(
+                f"{k}={str(v)[:100]!r}" for k, v in data.items() if v not in (None, "", "none")
+            )
+            print(f"\n  ⚡[{kind}] {detail}")
+
+        _flow_live_tap = _tap
+        _flow.subscribe(_tap)
+        print("  Live flow ON — every internal step prints as it happens. :flowlive to stop.")
+    else:
+        _flow.unsubscribe(_flow_live_tap)
+        _flow_live_tap = None
+        print("  Live flow OFF.")
+
+
+def _cmd_tools(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    if brain.tool_registry:
+        tools = brain.tool_registry.list_tools()
+        print(f"  {len(tools)} tools registered:")
+        for t in tools:
+            print(f"    {t}")
+    else:
+        print("  No tool registry loaded.")
+
+
+def _cmd_vector(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    _show_vector_stats()
+
+
+def _cmd_mode(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    key = arg.strip().lower()
+    if key not in cfg.GEN_PRESETS:
+        print(f"  Usage: :mode <{' | '.join(cfg.GEN_PRESETS)}>")
+        return
+    r = brain.apply_preset(key)
+    try:
+        memory.set_fact("gen_preset", key, source="user_setting")
+    except Exception:
+        pass
+    print(f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})")
+
+
+def _cmd_toollevel(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    key = arg.strip().lower()
+    if key not in cfg.TOOL_MODEL_LEVELS:
+        print(f"  Usage: :toollevel <{' | '.join(cfg.TOOL_MODEL_LEVELS)}>")
+        return
+    r = brain.apply_tool_level(key)
+    try:
+        memory.set_fact("tool_level", key, source="user_setting")
+    except Exception:
+        pass
+    note = ""
+    if r["model"] and not r["available"]:
+        note = (
+            f"  (not installed — ollama pull {r['model']}; falling back to main model + thinking)"
+        )
+    print(f"  Tool level: {r['label']}{note}")
+
+
+def _cmd_temp(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    try:
+        t = brain.set_temperature(float(arg.strip()))
+        print(f"  Temperature: {t:.2f} (this session)")
+    except ValueError:
+        print(f"  Usage: :temp <{cfg.TEMP_MIN}-{cfg.TEMP_MAX}>")
+
+
+def _cmd_model(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    from kai.llm import models as _models
+
+    entry = _models.get_model(arg.strip())
+    if entry:
+        brain.model = entry["ollama_id"]
+        brain._think = entry.get("think", False)
+        think_str = "ON" if brain._think else "OFF"
+        print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
+    else:
+        print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
+
+
+def _cmd_models(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    from kai.llm import models as _models
+
+    all_models = _models.list_models()
+    active_id = brain.model
+    print("  Configured models:")
+    for m in all_models:
+        marker = " *" if m["ollama_id"] == active_id else "  "
+        think = " (think)" if m["think"] else ""
+        tag = " [built-in]" if m.get("builtin") else ""
+        print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
+    print("\n  Switch with :model <name>")
+
+
+def _cmd_debug(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    cfg.DEBUG = not cfg.DEBUG
+    print(f"  Debug mode: {'ON' if cfg.DEBUG else 'OFF'}")
+
+
+def _cmd_help(brain: Brain, memory: MemoryManager, arg: str) -> None:
+    print(HELP_TEXT)
+
+
+# name -> (handler, argument syntax for :help, one-line description).
+# Order is :help order. Adding a command here is the only step required.
+COMMANDS: dict[str, tuple[Callable[..., None], str, str]] = {
+    ":memory": (_cmd_memory, "", "show all memory (facts, rules, episodes)"),
+    ":facts": (_cmd_facts, "", "show semantic facts only"),
+    ":forget": (_cmd_forget, "<key>", "delete a semantic fact"),
+    ":rules": (_cmd_rules, "", "show procedural rules"),
+    ":history": (_cmd_history, "", "show last 10 episodic entries"),
+    ":sleep": (_cmd_sleep, "", "show Kai's last welcome-back note"),
+    ":trace": (_cmd_trace, "", "show last 10 turn traces (timing, tools used)"),
+    ":flow": (_cmd_flow, "[id]", "replay a turn step by step (model calls, thinking, tools)"),
+    ":flowlive": (
+        _cmd_flowlive,
+        "",
+        "toggle live flow — print every internal step as it happens",
+    ),
+    ":tools": (_cmd_tools, "", "list registered tools"),
+    ":vector": (_cmd_vector, "", "show vector table stats (episodic + RAG embeddings)"),
+    ":mode": (_cmd_mode, "<name>", "set generation mode: thinking | normal | creative | crazy"),
+    ":toollevel": (
+        _cmd_toollevel,
+        "<name>",
+        "which model runs tool calls: light | balanced | deep | off",
+    ),
+    ":temp": (_cmd_temp, "<0-2>", "set temperature for this session (overrides the mode)"),
+    ":model": (_cmd_model, "<name>", "switch to a user-added model (see :models)"),
+    ":models": (_cmd_models, "", "list all configured models"),
+    ":debug": (_cmd_debug, "", "toggle debug mode"),
+    ":help": (_cmd_help, "", "show this"),
+}
+
+
+def _build_help() -> str:
+    lines = ["", "Commands:"]
+    for name, (_, syntax, desc) in COMMANDS.items():
+        label = f"{name} {syntax}" if syntax else name
+        lines.append(f"  {label}{' ' * max(14 - len(label), 1)}{desc}")
+    # :quit is caught by the REPL loop before dispatch, so it has no table entry.
+    lines.append("  :quit / exit  exit")
+    return "\n".join(lines) + "\n"
+
+
+HELP_TEXT = _build_help()
 
 
 def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
@@ -103,206 +334,11 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
     Returns True if handled, False if it should be passed to the brain.
     """
     parts = cmd.strip().split(None, 1)
-    command = parts[0].lower()
-    arg = parts[1] if len(parts) > 1 else ""
-
-    if command == ":memory":
-        _show_memory(memory)
-
-    elif command == ":facts":
-        facts = memory.list_facts()
-        if facts:
-            for f in facts:
-                print(f"  {f.key} = {f.value}  [{f.source}]")
-        else:
-            print("  No facts stored yet.")
-
-    elif command == ":forget":
-        if arg:
-            memory.delete_fact(arg.strip())
-            print(f"  Deleted: {arg.strip()}")
-        else:
-            print("  Usage: :forget <key>")
-
-    elif command == ":rules":
-        rules = memory.list_rules()
-        for r in rules:
-            print(f"  {r.key} = {r.value}")
-
-    elif command == ":history":
-        episodes = memory.recent_episodes(limit=10)
-        for ep in episodes:
-            print(f"\n  [{ep.timestamp.strftime('%b %d %H:%M')}] {ep.content[:120]}...")
-
-    elif command == ":models":
-        from kai.llm import models as _models
-
-        all_models = _models.list_models()
-        active_id = brain.model
-        print("  Configured models:")
-        for m in all_models:
-            marker = " *" if m["ollama_id"] == active_id else "  "
-            think = " (think)" if m["think"] else ""
-            tag = " [built-in]" if m.get("builtin") else ""
-            print(f"  {marker} {m['name']:12s}  {m['ollama_id']}{think}{tag}")
-        print("\n  Switch with :model <name>")
-
-    elif command == ":mode":
-        key = arg.strip().lower()
-        if key in cfg.GEN_PRESETS:
-            r = brain.apply_preset(key)
-            try:
-                memory.set_fact("gen_preset", key, source="user_setting")
-            except Exception:
-                pass
-            print(
-                f"  Mode: {r['label']}  (thinking {'ON' if r['think'] else 'OFF'}, temp {r['temp']:.2f})"
-            )
-        else:
-            print(f"  Usage: :mode <{' | '.join(cfg.GEN_PRESETS)}>")
-
-    elif command == ":temp":
-        try:
-            t = brain.set_temperature(float(arg.strip()))
-            print(f"  Temperature: {t:.2f} (this session)")
-        except ValueError:
-            print(f"  Usage: :temp <{cfg.TEMP_MIN}-{cfg.TEMP_MAX}>")
-
-    elif command == ":toollevel":
-        key = arg.strip().lower()
-        if key in cfg.TOOL_MODEL_LEVELS:
-            r = brain.apply_tool_level(key)
-            try:
-                memory.set_fact("tool_level", key, source="user_setting")
-            except Exception:
-                pass
-            note = ""
-            if r["model"] and not r["available"]:
-                note = (
-                    f"  (not installed — ollama pull {r['model']}; "
-                    "falling back to main model + thinking)"
-                )
-            print(f"  Tool level: {r['label']}{note}")
-        else:
-            print(f"  Usage: :toollevel <{' | '.join(cfg.TOOL_MODEL_LEVELS)}>")
-
-    elif command == ":model":
-        from kai.llm import models as _models
-
-        entry = _models.get_model(arg.strip())
-        if entry:
-            brain.model = entry["ollama_id"]
-            brain._think = entry.get("think", False)
-            think_str = "ON" if brain._think else "OFF"
-            print(f"  Switched to: {entry['ollama_id']} (thinking {think_str})")
-        else:
-            print(f"  Unknown model '{arg.strip()}'. Use :models to see available options.")
-
-    elif command == ":flow":
-        from kai.core import flow as _flow
-
-        tid = arg.strip()
-        if not tid:
-            turns = _flow.recent_turns(limit=5)
-            if not turns:
-                print("  No flow recorded yet (is FLOW_TRACE on in config.py?).")
-            else:
-                tid = turns[0]["trace_id"]
-                print("  Recent turns (showing the newest — :flow <id> for older):")
-                from datetime import datetime as _dt
-
-                for t in turns:
-                    when = _dt.fromtimestamp(t["ts"]).strftime("%H:%M:%S")
-                    print(f"    {t['trace_id']}  {when}  {t['steps']:3d} steps  {t['input']!r}")
-                print()
-        if tid:
-            steps = _flow.get_flow(tid)
-            if not steps:
-                print(f"  No flow recorded for {tid!r}.")
-            for s in steps:
-                kind = s.pop("kind", "?")
-                s.pop("ts", None)
-                detail = "  ".join(
-                    f"{k}={str(v)[:160]!r}" for k, v in s.items() if v not in (None, "", "none")
-                )
-                print(f"  [{kind}] {detail}")
-
-    elif command == ":flowlive":
-        global _flow_live_tap
-        from kai.core import flow as _flow
-
-        if _flow_live_tap is None:
-
-            def _tap(tid, kind, data):
-                detail = "  ".join(
-                    f"{k}={str(v)[:100]!r}" for k, v in data.items() if v not in (None, "", "none")
-                )
-                print(f"\n  ⚡[{kind}] {detail}")
-
-            _flow_live_tap = _tap
-            _flow.subscribe(_tap)
-            print("  Live flow ON — every internal step prints as it happens. :flowlive to stop.")
-        else:
-            _flow.unsubscribe(_flow_live_tap)
-            _flow_live_tap = None
-            print("  Live flow OFF.")
-
-    elif command == ":trace":
-        entries = trace_log.recent(limit=10)
-        if not entries:
-            print("  No trace entries yet.")
-        else:
-            for e in entries:
-                tools = ", ".join(e.tool_calls) if e.tool_calls else "none"
-                print(
-                    f"  [{e.trace_id}] {e.timestamp[:19]}  {e.elapsed_ms}ms  "
-                    f"model={e.model.split(':')[0]}  tools=[{tools}]  "
-                    f"ctx={e.context_len}ch  resp={e.response_len}ch"
-                )
-                if cfg.DEBUG:
-                    print(f"    q: {e.user_input[:80]}")
-
-    elif command == ":tools":
-        if brain.tool_registry:
-            tools = brain.tool_registry.list_tools()
-            print(f"  {len(tools)} tools registered:")
-            for t in tools:
-                print(f"    {t}")
-        else:
-            print("  No tool registry loaded.")
-
-    elif command == ":vector":
-        _show_vector_stats()
-
-    elif command == ":sleep":
-        from kai.config import MEMORY_DIR
-        from kai.core.sleep import load_welcome_back
-
-        wb = load_welcome_back()
-        if wb:
-            print(f"\n  [Pending welcome-back note]\n  {wb}\n")
-        else:
-            log_file = MEMORY_DIR / "sleep_log.txt"
-            if log_file.exists():
-                lines = log_file.read_text(encoding="utf-8").strip().split("\n---")
-                last = lines[-1].strip() if lines else ""
-                if last:
-                    print(f"\n  [Last sleep note]\n  {last}\n")
-                else:
-                    print("  No sleep notes yet.")
-            else:
-                print("  No sleep notes yet. Kai hasn't gone to sleep.")
-
-    elif command == ":debug":
-        cfg.DEBUG = not cfg.DEBUG
-        print(f"  Debug mode: {'ON' if cfg.DEBUG else 'OFF'}")
-
-    elif command == ":help":
-        print(HELP_TEXT)
-
-    else:
+    entry = COMMANDS.get(parts[0].lower()) if parts else None
+    if entry is None:
         return False  # unknown command — pass to brain
-
+    handler, _syntax, _desc = entry
+    handler(brain, memory, parts[1] if len(parts) > 1 else "")
     return True
 
 
