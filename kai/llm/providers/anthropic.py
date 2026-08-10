@@ -171,8 +171,8 @@ class AnthropicClient(BaseHTTPProvider):
         tools: list[dict] | None = None,
         model: str = "",
         think: bool = False,
-        temperature: float = 0.0,
-        keep_alive: str = "10m",
+        temperature: float = 0.0,  # never sent: 400s on Opus 4.7/4.8 (signature matches LLMClient)
+        keep_alive: str = "10m",  # never sent: Ollama model-residency knob, no cloud equivalent
     ) -> dict:
         data = self._post_json("/v1/messages", self._build(messages, tools, model, think, False))
         return {"message": self._to_ollama_message(data)}
@@ -183,7 +183,7 @@ class AnthropicClient(BaseHTTPProvider):
         tools: list[dict] | None = None,
         model: str = "",
         think: bool = False,
-        temperature: float = 0.0,
+        temperature: float = 0.0,  # never sent: 400s on Opus 4.7/4.8 (signature matches LLMClient)
     ) -> Generator[tuple[str, bool, dict], None, None]:
         text_parts: list[str] = []
         tool_acc: dict[int, dict] = {}

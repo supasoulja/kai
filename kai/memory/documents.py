@@ -90,7 +90,7 @@ def _chunk(text: str) -> list[str]:
 
 def ingest(
     filepath: Path,
-    embed_fn: EmbedFn,
+    embed_fn: EmbedFn | None = None,  # unused — see ingest_text
     original_name: str | None = None,
     user_id: int = 0,
 ) -> dict:
@@ -119,7 +119,7 @@ def ingest(
 def ingest_text(
     text: str,
     source_name: str,
-    embed_fn: EmbedFn | None = None,
+    embed_fn: EmbedFn | None = None,  # unused — see docstring
     user_id: int = 0,
     file_type: str = "text",
 ) -> dict:
@@ -130,6 +130,11 @@ def ingest_text(
 
     source_name is the display name (a filename or a URL). Returns the same
     metadata dict as ingest().
+
+    embed_fn is accepted but ignored: chunks are always embedded with the fast
+    384-dim model because rag_chunks_vec is created at FAST_EMBED_DIM, so the
+    embedder is not the caller's to choose. Kept only so existing call sites
+    keep working; drop the parameter once they stop passing it.
     """
     if not text.strip():
         raise ValueError("Document appears to be empty or unreadable.")
