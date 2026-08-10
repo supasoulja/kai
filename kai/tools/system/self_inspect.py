@@ -61,7 +61,8 @@ def _build_tree(root: Path, prefix: str = "", max_depth: int = 4, depth: int = 0
         "what a tool or module actually does. "
         "With no file specified: returns the project file tree. "
         "With a file path: returns the file contents with line numbers. "
-        "Paths are relative to the project root (e.g. 'kai/brain.py', 'kai/tools/search.py'). "
+        "Paths are relative to the project root (e.g. 'kai/core/brain.py', "
+        "'kai/tools/web/search.py'). "
         "You can also pass a directory path to see just that subtree."
     ),
     parameters={
@@ -69,7 +70,7 @@ def _build_tree(root: Path, prefix: str = "", max_depth: int = 4, depth: int = 0
             "type": "string",
             "description": (
                 "Relative path to a file or directory. "
-                "Examples: 'kai/brain.py', 'kai/tools/', 'web.py', 'kai/config.py'. "
+                "Examples: 'kai/core/brain.py', 'kai/tools/', 'web.py', 'kai/config.py'. "
                 "Leave empty to see the full project tree."
             ),
             "required": False,
@@ -154,7 +155,7 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
         },
         "file": {
             "type": "string",
-            "description": "Optional: filter commits that touched a specific file (e.g. 'kai/brain.py').",
+            "description": "Optional: filter commits that touched a specific file (e.g. 'kai/core/brain.py').",
             "required": False,
         },
     },

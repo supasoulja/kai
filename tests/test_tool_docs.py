@@ -5,7 +5,10 @@ Tree DB is isolated per-test via monkeypatch on mtree._TREE_DIR (same convention
 tests/test_tools.py) so nothing touches the real kai/memory/tree/{0,2}.db files.
 """
 
+import re
+
 import kai.tools  # noqa: F401 — triggers every @registry.tool registration
+from kai.config import ROOT_DIR
 from kai.memory import tool_docs
 from kai.memory import tree as mtree
 from kai.tools.registry import registry
@@ -186,3 +189,21 @@ def test_audit_metadata_still_clean():
     audit = registry.audit_metadata()
     assert audit["missing_label"] == []
     assert audit["uncategorized"] == []
+
+
+def test_self_inspect_example_paths_exist():
+    """The example paths in self.inspect / self.recent_changes are live prompt content —
+    a moved module turns them into a wrong first guess for the model."""
+    quoted = re.compile(r"'([\w./-]+)'")
+    checked = 0
+    for name in ("self.inspect", "self.recent_changes"):
+        fn = registry.schema_for([name])[0]["function"]
+        texts = [fn["description"]]
+        texts += [p["description"] for p in fn["parameters"]["properties"].values()]
+        for text in texts:
+            for literal in quoted.findall(text):
+                if "/" not in literal and not literal.endswith(".py"):
+                    continue
+                assert (ROOT_DIR / literal).exists(), f"{name}: '{literal}' does not exist"
+                checked += 1
+    assert checked >= 6, "path examples vanished from the descriptions — guard is dead"
