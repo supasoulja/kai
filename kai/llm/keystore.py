@@ -16,24 +16,20 @@ Guarantees:
     not user content) — mirroring how session_tokens are handled.
 
 The table is created lazily (like flow_log), so importing this module never
-forces schema work.
+forces schema work — see "Schema ownership" in kai/store/db.py.
 """
 
 import base64
 import hashlib
 from datetime import datetime
 
-from kai.store.db import get_conn
+from kai.store.db import ensure_schema, get_conn
 from kai.system import device
 
-_schema_ready = False
 _cipher_cache = None
 
 
-def _ensure_schema(conn) -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
+def _create_table(conn) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS provider_keys (
@@ -48,7 +44,10 @@ def _ensure_schema(conn) -> None:
         """
     )
     conn.commit()
-    _schema_ready = True
+
+
+def _ensure_schema(conn) -> None:
+    ensure_schema(conn, "provider_keys", _create_table)
 
 
 def _cipher():

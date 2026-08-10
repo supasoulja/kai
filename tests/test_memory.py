@@ -207,6 +207,37 @@ def test_tree_connection_is_cached_and_reused(tmp_path, monkeypatch):
     assert mtree._conn("77") is not c1
 
 
+def test_two_modules_sharing_one_file_each_get_their_schema(tmp_path, monkeypatch):
+    """Pointing TREE_DIR and STATE_DIR at the same directory lands both modules on
+    the same .db file for a user (tests/test_brain.py does exactly this). Each
+    still needs its own CREATE TABLE — a connection cache keyed only by path would
+    hand the second module the first one's connection and skip its init."""
+    from kai.memory import state as mstate
+    from kai.memory import tree as mtree
+
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    monkeypatch.setattr(mstate, "_STATE_DIR", tmp_path)
+
+    mtree.seed_skeleton("0")
+    assert mtree._conn("0") is mstate._conn("0")  # one file, one connection
+
+    mstate.save_kai_state("0", mstate.KaiState(self_confidence=0.9))
+    assert mstate.load_kai_state("0").self_confidence == 0.9
+
+
+def test_module_owned_table_survives_a_db_path_swap(tmp_path, monkeypatch):
+    """A module that owns its own table (crew_log here) must create it again when
+    cfg.DB_PATH moves. Tracking that with a module-global bool skipped creation on
+    the new file, and crew_trace swallows its write errors — so the rows silently
+    vanished. Same failure mode as the old cross-test 'no such table' runs."""
+    from kai.core import crew_trace
+
+    for name in ("first.db", "second.db"):
+        monkeypatch.setattr(cfg, "DB_PATH", tmp_path / name)
+        crew_trace.record("swap", "triage", note=name)
+        assert [r["note"] for r in crew_trace.for_turn("swap")] == [name]
+
+
 # ── Archive atomicity (episodic.archive_and_clear_turns) ─────────────────────────
 
 
