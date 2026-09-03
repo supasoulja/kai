@@ -116,13 +116,18 @@ class CrewRunner:
         # BACKGROUND has no fire-and-forget infra yet (Phase 6) → run synchronously
         # as a single specialist, same as FAST.
         if decision.profile is Profile.BOSS or not decision.specialist:
-            tools_used.append("crew")
+            # run_crew appends each dispatched specialist's name into tools_used
+            # itself, rather than one literal "crew" entry — so a multi-specialist
+            # turn's tools_used set reaches 2+ and crosses _FACT_EXTRACT_THRESHOLD
+            # in Brain._ground_evidence (F4). The names aren't known until the
+            # dispatch loop runs, so they can't be appended before this call.
             findings = yield from self.run_crew(
                 user_input,
                 query_emb=query_emb,
                 trace_id=trace_id,
                 on_status=on_status,
                 expected=decision.matched,
+                tools_used=tools_used,
             )
         else:
             tools_used.append(decision.specialist)
@@ -141,6 +146,7 @@ class CrewRunner:
                     query_emb=query_emb,
                     trace_id=trace_id,
                     on_status=on_status,
+                    tools_used=tools_used,
                 )
                 findings = "\n\n".join(p for p in (findings, boss) if p)
 
@@ -265,6 +271,7 @@ class CrewRunner:
         trace_id: str = "",
         on_status: Callable[[str], None] | None = None,
         expected: tuple[str, ...] = (),
+        tools_used: list[str] | None = None,
     ) -> Generator[tuple[str, bool, dict], None, str]:
         """BOSS lane: Otto orchestrates specialists sequentially, accumulating a
         scratchpad. Returns the combined findings string (the evidence Kai's voice
@@ -279,6 +286,11 @@ class CrewRunner:
         disk only). When Otto tries to finish with a domain uncovered, we
         force-dispatch it. The crew runs gemma now — whether the guard is still
         load-bearing has not been re-measured.
+
+        `tools_used`, when passed, gets each dispatched specialist's name appended
+        as it runs (F4): the caller's tools_used must count real specialists, not
+        one literal "crew" entry, or two-phase grounding in Brain._ground_evidence
+        never fires on a multi-specialist turn.
         """
         otto_prompt = crew.load_specialist_prompt("Otto")
         scratchpad: list[str] = []
@@ -337,6 +349,8 @@ class CrewRunner:
                 break
             tried.add(sig)
             dispatched.add(specialist)
+            if tools_used is not None:
+                tools_used.append(specialist)
             crew_trace.record(
                 trace_id,
                 "dispatch",

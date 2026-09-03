@@ -488,8 +488,52 @@ def test_crew_turn_boss_orchestrates():
     )
     decision = crew.TriageResult(profile=crew.Profile.BOSS, specialist=None, think=True, tools=True)
     messages, tools_used, _ = _crew_turn(brain, decision)
-    assert "crew" in tools_used
+    # F4: tools_used records the specialist run_crew actually dispatched (Gus),
+    # not a literal "crew" placeholder — see
+    # test_boss_turn_two_specialists_crosses_fact_extract_threshold for the
+    # multi-specialist case that fix enables.
+    assert "Gus" in tools_used
     assert any(m["role"] == "tool" and "[Gus]" in m.get("content", "") for m in messages)
+
+
+def test_boss_turn_two_specialists_crosses_fact_extract_threshold():
+    """F4: a BOSS turn dispatching two distinct specialists records both names in
+    tools_used (not one literal "crew" entry), so the turn clears
+    Brain._FACT_EXTRACT_THRESHOLD and _ground_evidence takes the two-phase branch
+    instead of the light path that truncates findings at 500 chars. Fails before
+    the crew_runner fix (tools_used == ["crew"], a set of size 1)."""
+    from kai.core import crew
+    from kai.core.brain import _FACT_EXTRACT_THRESHOLD
+
+    brain = _specialist_brain(
+        [
+            {"message": {"content": "DISPATCH Dewey: check disk space"}},
+            {"message": {"content": "disk is 82% full"}},
+            {"message": {"content": "DISPATCH Gus: check cpu temperature"}},
+            {"message": {"content": "cpu is 50C"}},
+            {"message": {"content": "FINISH: done"}},
+            {"message": {"content": "- Disk is 82% full\n- CPU is 50C"}},
+        ]
+    )
+    decision = crew.TriageResult(
+        profile=crew.Profile.BOSS,
+        specialist=None,
+        think=True,
+        tools=True,
+        matched=("Dewey", "Gus"),
+    )
+    messages, tools_used, _ = _crew_turn(brain, decision, "check disk and cpu temp")
+
+    assert set(tools_used) == {"Dewey", "Gus"}
+    assert len(set(tools_used)) >= _FACT_EXTRACT_THRESHOLD
+
+    # Prove it flips the branch in Brain._ground_evidence: the two-phase path
+    # issues a "summarize the factual findings" system prompt; the light path
+    # never does.
+    brain._ground_evidence(messages, tools_used, None, trace_id="t")
+    assert any(
+        m["role"] == "system" and "Summarize the factual findings" in m["content"] for m in messages
+    )
 
 
 # ── 3e: semantic axes (HandoffRouter.axis_match) wired into triage ────────────────
@@ -527,7 +571,12 @@ def test_semantic_tool_axis_opens_tools_on_keyword_miss():
             on_status=None,
         )
     )
-    assert "crew" in tools_used  # semantic tool axis opened the tools branch
+    # No category cleared the floor and expected == () (no coverage set), so Otto's
+    # immediate FINISH dispatches nobody and tools_used is legitimately empty —
+    # F4 made it reflect real dispatches instead of a blanket "crew" placeholder.
+    # The signal that the tools branch opened is that Otto's model ran at all:
+    # CHAT/REASON never reach ollama.chat.
+    assert brain.ollama.chat.called
 
 
 def test_semantic_think_axis_sets_reason():
