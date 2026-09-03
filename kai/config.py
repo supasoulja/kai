@@ -76,7 +76,11 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 # So 4x the window costs ~250 MB. num_ctx is an allocation ceiling, not content:
 # raising it does not slow prefill for a given prompt.
 # Keep MAX_CONTEXT_CHARS below in step with this — see the note there.
-CONTEXT_WINDOW = 32768  # tokens; passed as num_ctx to Ollama
+#
+# 131072 is the largest size in the table that leaves real headroom: 12.1 GB of
+# 16 GB, ~4 GB clear for the compositor and the CPU-side embed/STT/TTS work.
+# 262144 (14.3 GB) is the one to leave alone.
+CONTEXT_WINDOW = 131072  # tokens; passed as num_ctx to Ollama
 
 # ── Generation ─────────────────────────────────────────────────────────────────
 # Tiered temperatures — each task type gets the minimum randomness it needs.
