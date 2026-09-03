@@ -144,3 +144,71 @@ def test_registry_marks_workspace_failure_unsuccessful(workspace, monkeypatch):
     assert res["success"] is False
     hard, _ = TurnEngine._classify_tool_result(res)
     assert hard is True
+
+
+# ── sandbox: the propose → approve gate ───────────────────────────────────────
+# sandbox.approve is the call that actually moves or deletes a file anywhere on
+# disk. The proposal step only *asks* the model to check with the user, which is
+# an instruction in a prompt, not a gate — so the gate has to live on approve.
+
+
+def test_sandbox_approve_is_confirm_gated():
+    """approve executes the move/delete, so it must pass the destructive confirm
+    gate. Without it the model can propose and approve inside one turn and the
+    user never sees the proposal the flow is built around."""
+    import kai.tools  # noqa: F401 — registers every tool
+    from kai.core.engine import _CONFIRM_TOOLS
+    from kai.tools.registry import confirm_tool_names, registry
+
+    assert registry.risk_for("sandbox.approve") == "destructive"
+    assert "sandbox.approve" in confirm_tool_names()
+    assert "sandbox.approve" in _CONFIRM_TOOLS  # the gate the engine actually reads
+
+
+def test_approve_revalidates_protected_destination(tmp_path, monkeypatch):
+    """Protection is re-checked where the write happens, not only where it was
+    proposed. A proposal lives 5 minutes; approve is the call that touches disk."""
+    from kai.tools.compute import sandbox as sb
+
+    monkeypatch.setattr(cfg, "WORKSPACE_DIR", tmp_path / "KaiFiles")
+    src = tmp_path / "payload.txt"
+    src.write_text("data")
+    protected_dest = tmp_path / "windows" / "payload.txt"  # 'windows' is protected
+
+    proposal = sb._create_proposal("move", str(src), str(protected_dest))
+    out = sb.approve_proposal(proposal["proposal_id"])
+
+    assert out.startswith("BLOCKED")
+    assert src.exists() and not protected_dest.exists()
+
+
+def test_approve_revalidates_protected_source(tmp_path, monkeypatch):
+    from kai.tools.compute import sandbox as sb
+
+    monkeypatch.setattr(cfg, "WORKSPACE_DIR", tmp_path / "KaiFiles")
+    src = tmp_path / "system32" / "thing.txt"
+    src.parent.mkdir()
+    src.write_text("data")
+
+    proposal = sb._create_proposal("delete", str(src))
+    out = sb.approve_proposal(proposal["proposal_id"])
+
+    assert out.startswith("BLOCKED")
+    assert src.exists()
+
+
+def test_approve_still_runs_an_unprotected_move(tmp_path, monkeypatch):
+    """The re-validation must not block ordinary work — the guard is a filter,
+    not a wall."""
+    from kai.tools.compute import sandbox as sb
+
+    monkeypatch.setattr(cfg, "WORKSPACE_DIR", tmp_path / "KaiFiles")
+    src = tmp_path / "notes.txt"
+    src.write_text("data")
+    dest = tmp_path / "archive" / "notes.txt"
+
+    proposal = sb._create_proposal("move", str(src), str(dest))
+    out = sb.approve_proposal(proposal["proposal_id"])
+
+    assert out.startswith("Moved")
+    assert dest.read_text() == "data" and not src.exists()

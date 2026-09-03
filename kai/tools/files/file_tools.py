@@ -87,12 +87,22 @@ def _default_home() -> str:
     return str(Path.home())
 
 
+def _platform_root() -> str:
+    r"""Whole-machine scan root for this OS — 'C:\' on Windows, '/' elsewhere.
+
+    Platform knowledge lives in the tool, not the caller, so a recipe can say
+    `files.disk_usage top_n=8` with no OS branch.
+    """
+    return "C:\\" if _IS_WINDOWS else "/"
+
+
 @registry.tool(
     name="files.disk_usage",
     description=(
         "Show how much disk space each top-level folder uses. "
         "Good for finding what's eating up space on a drive or directory. "
-        f"Use the path the user mentions (e.g. {_PATH_EXAMPLES}). "
+        "Omitting path scans the whole machine, which is what 'what's using my disk' means — "
+        f"only pass path when the user names a specific place (e.g. {_PATH_EXAMPLES}). "
         f"If the user says 'everywhere', 'all drives', or 'my whole PC', {_ALL_DRIVES_HINT}. "
         "After retrieving: flag the top 2-3 largest folders and whether they're expected "
         "(e.g. 'Games at 400 GB is normal if you have a lot installed') or worth investigating."
@@ -100,7 +110,7 @@ def _default_home() -> str:
     parameters={
         "path": {
             "type": "string",
-            "description": f"Directory to analyze top-level subfolders of — {_ROOT_PARAM_HINT} (default: user home folder)",
+            "description": f"Directory to analyze top-level subfolders of — {_ROOT_PARAM_HINT}. Omit it to scan the whole machine (the default).",
         },
         "top_n": {
             "type": "integer",
@@ -110,103 +120,86 @@ def _default_home() -> str:
 )
 def get_disk_usage(path: str = "", top_n: int = 12) -> str:
     top_n = max(1, min(int(top_n), 100))
-    path = _safe_path(path) or _default_home()
+    path = _safe_path(path) or _safe_path(_platform_root())
 
-    # On filesystem roots, scan folders one at a time to avoid timeouts
-    if _is_fs_root(path):
-        if _IS_WINDOWS:
-            return _disk_usage_chunked_win(path, top_n)
-        else:
-            return _disk_usage_linux(path, top_n)
-
-    if _IS_WINDOWS:
-        cmd = (
-            f"Get-ChildItem -Path '{path}' -Directory -Force -ErrorAction SilentlyContinue | "
-            f"ForEach-Object {{ "
-            f"  $sz = (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | "
-            f"    Measure-Object -Property Length -Sum).Sum; "
-            f"  if ($null -eq $sz) {{ $sz = 0 }}; "
-            f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round($sz/1MB,0)}} "
-            f"}} | Sort-Object SizeMB -Descending | Select-Object -First {int(top_n)} | ConvertTo-Json"
-        )
-        out = _ps(cmd, timeout=120)
-        if out == _TIMEOUT_SENTINEL:
-            return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
-        if not out:
-            return f"Could not analyze '{path}'. Check the path exists and is accessible."
-        try:
-            data = json.loads(out)
-            if isinstance(data, dict):
-                data = [data]
-            lines = [f"Folder sizes in {path}:"]
-            for item in data:
-                mb = item.get("SizeMB") or 0
-                name = item.get("Path", "?")
-                size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
-                lines.append(f"  {size_str:>10}  {name}")
-            return "\n".join(lines)
-        except Exception:
-            return out[:2000]
-    else:
+    if not _IS_WINDOWS:
         return _disk_usage_linux(path, top_n)
+
+    # A drive root has no du equivalent, so it is scanned folder by folder.
+    if _is_fs_root(path):
+        return _disk_usage_chunked_win(path, top_n)
+
+    cmd = (
+        f"Get-ChildItem -Path '{path}' -Directory -Force -ErrorAction SilentlyContinue | "
+        f"ForEach-Object {{ "
+        f"  $sz = (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | "
+        f"    Measure-Object -Property Length -Sum).Sum; "
+        f"  if ($null -eq $sz) {{ $sz = 0 }}; "
+        f"  [PSCustomObject]@{{Path=$_.FullName; SizeMB=[math]::Round($sz/1MB,0)}} "
+        f"}} | Sort-Object SizeMB -Descending | Select-Object -First {int(top_n)} | ConvertTo-Json"
+    )
+    out = _ps(cmd, timeout=120)
+    if out == _TIMEOUT_SENTINEL:
+        return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
+    if not out:
+        return f"Could not analyze '{path}'. Check the path exists and is accessible."
+    try:
+        data = json.loads(out)
+        if isinstance(data, dict):
+            data = [data]
+        lines = [f"Folder sizes in {path}:"]
+        for item in data:
+            mb = item.get("SizeMB") or 0
+            name = item.get("Path", "?")
+            size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
+            lines.append(f"  {size_str:>10}  {name}")
+        return "\n".join(lines)
+    except Exception:
+        return out[:2000]
 
 
 # ── Linux disk usage helpers ──────────────────────────────────────────
 
-_SKIP_DIRS_LINUX = {
-    "proc",
-    "sys",
-    "dev",
-    "run",
-    "snap",
-    "lost+found",
-    "mnt",
-    "media",
-}
-
 
 def _disk_usage_linux(path: str, top_n: int = 12) -> str:
-    """Scan folder sizes using du on Linux."""
+    """Folder sizes from one `du -x -d1` pass.
+
+    One du process, not one per child. A chunked scan gives every folder its own
+    timeout, so the biggest folder is the one most likely to be dropped — on this
+    box a root scan silently lost /home (63 GB) that way while reporting a tidy
+    result. `-x` stays on one filesystem, which is what excludes /proc, /sys,
+    /dev and mounted volumes: the kernel's own boundary rather than a hand-kept
+    list of directory names.
+    """
     p = Path(path)
     if not p.exists():
         return f"Could not analyze '{path}'. Path does not exist."
 
-    # du -s --block-size=1M on each top-level dir
-    try:
-        entries = sorted(p.iterdir())
-    except PermissionError:
-        return f"Permission denied: {path}"
+    raw = _run_args(["du", "-x", "-d1", "--block-size=1M", str(p)], timeout=120)
+    if raw == _TIMEOUT_SENTINEL:
+        return f"Scan of '{path}' timed out (120s). Try a more specific subfolder."
+    if not raw:
+        return f"Could not analyze '{path}'. Check the path exists and is readable."
 
+    own = {str(p), str(p.resolve())}  # du reports the scanned dir's own total too
     results: list[tuple[str, int]] = []
-    skipped: list[str] = []
-
-    for entry in entries:
-        if not entry.is_dir():
+    for line in raw.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2 or parts[1] in own:
             continue
-        name_lower = entry.name.lower()
-        if name_lower in _SKIP_DIRS_LINUX or name_lower.startswith("."):
-            skipped.append(str(entry))
-            continue
-        out = _run_args(["du", "-s", "--block-size=1M", str(entry)], timeout=15)
-        if out == _TIMEOUT_SENTINEL:
-            skipped.append(f"{entry} (scan timed out)")
-            continue
-        if out:
-            try:
-                mb = int(out.split()[0])
-                results.append((str(entry), mb))
-            except (ValueError, IndexError):
-                pass
+        try:
+            results.append((parts[1], int(parts[0])))
+        except ValueError:
+            pass
 
     results.sort(key=lambda x: x[1], reverse=True)
-    results = results[:top_n]
 
     lines = [f"Folder sizes in {path}:"]
-    for folder, mb in results:
+    for folder, mb in results[:top_n]:
         size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
         lines.append(f"  {size_str:>10}  {folder}")
-    if skipped:
-        lines.append(f"\nSkipped {len(skipped)} system/hidden folder(s)")
+    if not results:
+        lines.append("  (no subfolders)")
     return "\n".join(lines)
 
 
@@ -269,7 +262,8 @@ def _disk_usage_chunked_win(drive: str, top_n: int = 12) -> str:
         size_str = f"{mb / 1024:.2f} GB" if mb >= 1024 else f"{mb} MB"
         lines.append(f"  {size_str:>10}  {folder}")
     if skipped:
-        lines.append(f"\nSkipped {len(skipped)} system/slow folder(s)")
+        lines.append("\nNot counted:")
+        lines += [f"  {s}" for s in skipped]
     return "\n".join(lines)
 
 

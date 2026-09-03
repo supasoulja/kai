@@ -629,6 +629,127 @@ def test_ingest_text_rejects_empty():
         D.ingest_text("   ", source_name="x")
 
 
+# ── files.disk_usage ─────────────────────────────────────────────────────────
+
+
+def test_disk_usage_defaults_to_platform_root(monkeypatch):
+    """Omitting `path` scans the whole machine, not the home folder.
+
+    Platform knowledge belongs in the tool, so a recipe can say
+    `files.disk_usage top_n=8` with no OS conditional (CLAUDE.md, core principle).
+    """
+    from kai.tools.files import file_tools as ft
+
+    seen = {}
+
+    def _capture(path, top_n=12):
+        seen["path"] = path
+        return "ok"
+
+    monkeypatch.setattr(ft, "_disk_usage_linux", _capture)
+    monkeypatch.setattr(ft, "_disk_usage_chunked_win", _capture)
+
+    ft.get_disk_usage()
+    assert ft._is_fs_root(seen["path"])
+    assert seen["path"] == ft._safe_path(ft._platform_root())
+
+
+def test_disk_usage_counts_hidden_folders(tmp_path):
+    """Dot-folders are counted, not skipped.
+
+    They are not system folders: on a real home directory .local and .cache are
+    routinely the two biggest things in it, and skipping them made the tool
+    answer "what is using my space" while omitting most of the answer.
+    """
+    from kai.tools.files.file_tools import _IS_WINDOWS, get_disk_usage
+
+    if _IS_WINDOWS:
+        pytest.skip("du-based scan is the Linux path")
+
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "blob").write_bytes(b"x" * 3_000_000)
+    (tmp_path / "visible").mkdir()
+    (tmp_path / "visible" / "f").write_bytes(b"x" * 1024)
+
+    out = get_disk_usage(path=str(tmp_path), top_n=5)
+    assert ".cache" in out
+    # ...and it sorts above the small visible folder, so it heads the report.
+    assert out.index(".cache") < out.index("visible")
+
+
+def test_disk_usage_excludes_the_scanned_directory_itself(tmp_path):
+    """`du -d1` reports the scanned directory's own total alongside its children.
+    That line is a subtotal, not a subfolder — listing it would double-count."""
+    from kai.tools.files.file_tools import _IS_WINDOWS, get_disk_usage
+
+    if _IS_WINDOWS:
+        pytest.skip("du-based scan is the Linux path")
+
+    (tmp_path / "child").mkdir()
+    (tmp_path / "child" / "f").write_bytes(b"x" * 1024)
+
+    out = get_disk_usage(path=str(tmp_path), top_n=5)
+    body = out.split("\n")[1:]  # drop the "Folder sizes in <path>:" header
+    assert not any(line.strip().endswith(str(tmp_path)) for line in body)
+
+
+# ── Tool aliasing ────────────────────────────────────────────────────────────
+
+
+def test_alias_routes_a_retired_name_to_a_live_tool():
+    """learn_alias is the registry's only aliasing mechanism, and it is unexercised
+    in production (`_aliases` is empty). Verify it actually resolves rather than
+    assuming it does: a retired tool name reaches the live tool by name similarity,
+    and executing under the old name runs the new function."""
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="probe.find",
+        description="Find files.",
+        parameters={
+            "path": {"type": "string", "description": "Where."},
+            "sort": {"type": "string", "description": "largest | oldest."},
+        },
+    )
+    def probe_find(path: str = "", sort: str = "largest") -> str:
+        return f"{path}|{sort}"
+
+    assert reg.learn_alias("probe.find_large", args={"path": "/tmp"}) == "probe.find"
+    assert reg.execute("probe.find_large", {"path": "/tmp"}) == "/tmp|largest"
+
+
+def test_alias_cannot_bind_arguments():
+    """The limit that shapes what a tool merge can and cannot do here.
+
+    An alias maps name→name and passes the caller's args through untouched — it
+    cannot supply the argument that carried the retired tool's identity. So
+    folding `files.find_old` into `files.find(sort="oldest")` would route the old
+    name to the new tool and then silently run it as "largest". Merges in this
+    domain therefore need a registry-level alias that can bind defaults; without
+    one, an old name either fails or answers the wrong question.
+    """
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="probe.find",
+        description="Find files.",
+        parameters={
+            "path": {"type": "string", "description": "Where."},
+            "sort": {"type": "string", "description": "largest | oldest."},
+        },
+    )
+    def probe_find(path: str = "", sort: str = "largest") -> str:
+        return f"{path}|{sort}"
+
+    # Routed, but with the default sort — not the "oldest" the old name meant.
+    reg.learn_alias("probe.find_old", args={"path": "/tmp"})
+    assert reg.execute("probe.find_old", {"path": "/tmp"}) == "/tmp|largest"
+
+    # An argument the target has no parameter for is refused outright, so a
+    # retired signature (files.recent took `count`) does not resolve at all.
+    assert reg.learn_alias("probe.find_recent", args={"count": 5}) is None
+
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
 

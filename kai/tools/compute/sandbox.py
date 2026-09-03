@@ -403,6 +403,7 @@ def propose_rename(source: str, new_name: str) -> str:
             "required": True,
         },
     },
+    risk="destructive",
 )
 def approve_proposal(proposal_id: str) -> str:
     _clean_expired()
@@ -417,8 +418,12 @@ def approve_proposal(proposal_id: str) -> str:
     source = Path(p["source"])
     dest = Path(p["dest"]) if p["dest"] else None
 
-    # Re-validate protection (in case something changed)
-    reason = _is_protected(source)
+    # Re-validate protection at the point of writing, not just at propose time —
+    # the proposal is 5 minutes stale by the time it gets here, and this is the
+    # call that actually touches the disk.
+    reason = _is_protected(source) or _is_read_only_root(source)
+    if not reason and dest is not None:
+        reason = _is_protected(dest) or _is_read_only_root(dest)
     if reason:
         _log_op(op, str(source), p["dest"], f"blocked: {reason}")
         return f"BLOCKED: {reason}"
