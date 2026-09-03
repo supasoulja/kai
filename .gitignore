@@ -66,3 +66,6 @@ KaiFiles/
 
 # Node / Tailwind build
 node_modules/
+
+# ── Agent brief (personal context, not for public repo) ───────────────────────
+CLAUDE.md
