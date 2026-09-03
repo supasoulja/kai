@@ -32,18 +32,12 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 #
 # CHAT_MODEL      — conversation, tool calling, summarisation, knowledge
 #                   extraction, vision (multimodal), deep reasoning (native
-#                   thinking). gemma4:26b (MoE, ~4B active params, ~14 GB
-#                   weights) — fast like a small model, reasons like a big one.
-#                   REASONING_MODEL and SUMMARY_MODEL alias it: one model, not
-#                   three, swapped in for whichever role the turn needs.
+#                   thinking). One model covers all of it.
 #
 # MEMORY_MODEL    — the memory loop's semantic reads (contradiction,
 #                   pattern_break, emotional_incongruence — see
-#                   kai/memory/intuition.py). Swap-loaded between turns the
-#                   same way REASONING_MODEL was, never held alongside
-#                   CHAT_MODEL. Aliased to the same gemma4:26b: no second set
-#                   of weights to keep resident, and its thinking capability
-#                   carries over to judgment calls that need it.
+#                   kai/memory/intuition.py). Aliased to CHAT_MODEL: no second
+#                   set of weights to keep resident.
 #
 # EMBED_MODEL     — dedicated embedding model for episodic vector search
 #                   qwen3-embedding:4b: ~2.5 GB, 2560-dim vectors, MTEB top-tier
@@ -54,12 +48,10 @@ MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 # HQ_EMBED        — heavy Ollama model run at shutdown to re-embed into
 #                   high-quality shadow tables (no VRAM contention at shutdown).
 
-# gemma4:12b (8.4 GB) — fits 100% on the 16 GB card with room for the
-# 8K KV cache. The 18 GB gemma4:26b overflowed VRAM and spilled ~22% of layers
-# onto the CPU (slow). Bump back up only on a ≥24 GB GPU.
+# gemma4:12b (8.4 GB) — fits 100% on the 16 GB card with room for a
+# large KV cache. The 17 GB gemma4:26b overflowed VRAM and spilled ~22% of
+# layers onto the CPU (slow). Bump back up only on a ≥24 GB GPU.
 CHAT_MODEL = "gemma4:12b"
-REASONING_MODEL = CHAT_MODEL  # unified — gemma4:12b handles both roles natively
-SUMMARY_MODEL = CHAT_MODEL  # unified — see CHAT_MODEL note above
 MEMORY_MODEL = CHAT_MODEL  # swap-loaded for the memory loop's semantic reads
 # EMBED_MODEL is an alias for HQ_EMBED_MODEL — defined just below it (single source of truth)
 
@@ -76,17 +68,23 @@ EMBED_MODEL = HQ_EMBED_MODEL  # shutdown re-embed alias — see note above
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 # ── Context window ─────────────────────────────────────────────────────────────
-# The gemma4 family supports 128K context. 8192 keeps KV-cache small and response
-# latency low — raise to 32768 or higher if you need to feed large documents.
-CONTEXT_WINDOW = 8192  # tokens; passed as num_ctx to Ollama
+# gemma4:12b advertises 262144. Sliding-window attention makes its KV cache
+# unusually cheap — measured on the 16 GB card, every size below stayed
+# 100% on GPU:
+#     8192 → 10.5 GB    32768 → 10.8 GB    65536 → 11.3 GB
+#   131072 → 12.1 GB   262144 → 14.3 GB  (no headroom left for the compositor)
+# So 4x the window costs ~250 MB. num_ctx is an allocation ceiling, not content:
+# raising it does not slow prefill for a given prompt.
+# Keep MAX_CONTEXT_CHARS below in step with this — see the note there.
+CONTEXT_WINDOW = 32768  # tokens; passed as num_ctx to Ollama
 
 # ── Generation ─────────────────────────────────────────────────────────────────
 # Tiered temperatures — each task type gets the minimum randomness it needs.
 # Lower = more deterministic = less hallucination.  Higher = more personality.
 #
-#   TOOL   (0.0)  — tool selection: greedy decoding, zero creativity needed
-#   REASON (0.1)  — factual extraction, compression, knowledge learning
-#   FINAL  (0.35) — user-facing answer: preserves Kai's voice and personality
+#   TOOL   (0.1)   — tool selection: near-greedy, slight slack for reliability
+#   REASON (0.10)  — factual extraction, compression, knowledge learning
+#   FINAL  (0.399) — user-facing answer: preserves Kai's voice and personality
 #
 # Research: 0.1-0.3 for tool-calling agents; 0.8 (Ollama default) causes
 # hallucination drift on small models.
@@ -110,30 +108,33 @@ DEFAULT_PRESET = "normal"
 TEMP_MIN, TEMP_MAX = 0.0, 2.0  # slider range + validation bounds
 
 # ── Tool-model levels ──────────────────────────────────────────────────────────
-# Tool-call rounds run on a dedicated function-calling model (IBM Granite) so
-# the chat model can stay focused on conversation. Bigger granite = better at
-# inferring the right tool from vague phrasing ("something's off with my pc");
-# smaller = faster, fine when requests are specific ("check my temps").
-# "off" keeps rounds on CHAT_MODEL (no second model loaded, no thinking tax). The
-# chat model occasionally narrates a call instead of emitting it; the pre-LLM
-# intent fast-paths + narrated-intent recovery catch that, so it stays reliable
-# without a dedicated tool model. The granite levels remain opt-in for anyone who
-# wants a separate function-calling model (at the cost of a second resident model).
+# Which model runs tool-call rounds. Bigger = better at inferring the right tool
+# from vague phrasing ("something's off with my pc"); smaller = faster, fine when
+# requests are specific ("check my temps"). "off" keeps rounds on CHAT_MODEL.
+#
+# Re-pointed from IBM Granite to gemma (2026-08-07) — granite is no longer used
+# anywhere in the runtime. Measured resident VRAM at num_ctx=32768, all 100% GPU:
+#     gemma4:e4b   3.3 GB   (8B; 9.6 GB on disk — nested model, loads a slice)
+#     gemma4:12b   8.4 GB   (11.9B — also CHAT_MODEL)
+# e4b + 12b together = 11.7 GB, so "light" genuinely fits alongside the chat model
+# on a 16 GB card. "balanced" IS CHAT_MODEL: same weights, nothing extra loaded.
 TOOL_MODEL_LEVELS: dict[str, dict] = {
     "light": {
-        "label": "Light (3B)",
-        "model": "granite4.1:3b",
+        "label": "Light (8B)",
+        "model": "gemma4:e4b",
         "blurb": "fast — best when you ask specifically",
     },
     "balanced": {
-        "label": "Balanced (8B)",
-        "model": "granite4.1:8b",
-        "blurb": "middle ground for mixed phrasing",
+        "label": "Balanced (12B)",
+        "model": CHAT_MODEL,
+        "blurb": "the chat model — no second model loaded",
     },
+    # gemma4:31b is 19 GB and will spill to CPU on a 16 GB card (unmeasured here —
+    # the 17 GB gemma4:26b spilled ~22% of layers and was unusably slow). ≥24 GB only.
     "deep": {
-        "label": "Deep (30B)",
-        "model": "granite4.1:30b",
-        "blurb": "best at inferring vague requests (17 GB download)",
+        "label": "Deep (31B)",
+        "model": "gemma4:31b",
+        "blurb": "best at inferring vague requests — needs ≥24 GB VRAM",
     },
     "off": {
         "label": "Main model",
@@ -142,9 +143,10 @@ TOOL_MODEL_LEVELS: dict[str, dict] = {
     },
 }
 # Default to the single-model path: tool rounds on the chat model. This keeps only
-# one model resident (no concurrent granite runner pegging a second CPU core) and
-# skips the per-round thinking tax. See brain._run_tool_rounds (rounds_think=False)
-# and the fast-path / narrated-recovery nets that keep tool-calling reliable.
+# one model resident and skips the per-round thinking tax. See brain._run_tool_rounds
+# (rounds_think=False) and the fast-path / narrated-recovery nets that keep
+# tool-calling reliable. The chat model occasionally narrates a call instead of
+# emitting it; those nets catch that.
 DEFAULT_TOOL_LEVEL = "off"
 
 # Safety net: hard cap on a single reasoning trace (chars). If the model loops,
@@ -160,16 +162,25 @@ LEARN_FROM_CONVERSATION = True  # model extracts knowledge after each turn (back
 # regex guesses and facts that have decayed over time stay out of recall until
 # either re-confirmed or pruned. Set to 0 to recall everything.
 RECALL_CONFIDENCE_MIN = 0.5
-# Context budget — the identity block (persona + voice + rules) + procedural + semantic
-# already uses ~5000-6000 chars.  Episodic entries need ~200-400 chars each.
-# 8192 context window ≈ 32k chars.  10k chars ≈ 3000 tokens — leaves plenty
-# of headroom for the conversation history.
-MAX_CONTEXT_CHARS = 15000  # max characters for the full context block
-# Raised 10k→15k (2026-06-24): persona.md is now injected near-verbatim as the
-# identity block (~12k chars / ~3k tokens) instead of a lossy hardcoded extract,
-# so the budget must leave room for [SEMANTIC]/[PROCEDURAL]/[EPISODIC] on top.
-# 15k chars ≈ 3.75k tokens of the 8192 window — leaves ~4.4k for history+response.
-# Lower it (and condense persona.md) if you want leaner turns.
+# Context budget, in characters, for the whole rendered context block.
+#
+# MUST stay well under CONTEXT_WINDOW * 4 (≈4 chars/token), with room left for
+# tool schemas, conversation history, and the reply. At 32768 tokens the window
+# holds ~131k chars; 60k for context leaves ~17k tokens for everything else.
+#
+# Measured composition (user with real history, 2026-08-07):
+#   identity (persona.md, near-verbatim)  11,654 chars   ~2,913 tok
+#   tool_index (all tool names)            4,010 chars   ~1,002 tok
+#   directory + facts + procedural           ~400 chars
+#   episodic (EPISODIC_TOP_K=5)            ~1,100 chars
+#   → ~17-19k chars rendered
+#
+# The trimmer below (context.build) can only evict episodic and RAG. When this
+# budget was 15000, the static blocks alone (15,664) already exceeded it, so
+# every retrieved memory was silently dropped on every turn and the block still
+# came in over budget. context.build now refuses to trim in that case and logs
+# instead — but keep this comfortably above the static floor regardless.
+MAX_CONTEXT_CHARS = 60000
 
 # ── History compression ─────────────────────────────────────────────────────────
 # Compression fires when _session_history exceeds HISTORY_CHAR_LIMIT total chars.
@@ -179,8 +190,17 @@ HISTORY_CHAR_LIMIT = 12000  # compress when active history exceeds this
 HISTORY_COMPRESS_KEEP = 4  # keep last N user/assistant exchanges verbatim
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
+# Tools appended to EVERY gated schema, regardless of what the category gate picks.
+#
+# The gate ranks by topic, which cannot see intent. "I work as a welder" is topically
+# about work, so the top-2 categories came back self_inspection + workspace_and_code and
+# the offered tools were git clone/pull and self.inspect — no memory tool at all, so
+# Kai could not file the fact and narrated success instead (measured 2026-08-07).
+# A statement worth remembering has no topical signature; it needs the write tool
+# present unconditionally. Cost: ~310 tokens of the 32768 window.
+ALWAYS_AVAILABLE_TOOLS: list[str] = ["tree.save", "tree.find"]
+
 SEARCH_MAX_RESULTS = 5
-NOTES_SEARCH_TOP_K = 5
 # Web reads come in two modes. SEARCH mode (fetch_url / browser.read_page) returns
 # a tight excerpt so the orchestrator model isn't fed a whole page — saves inference.
 # LIBRARY mode (research.add_to_library) reads the full document on the way into the
@@ -197,8 +217,9 @@ TTS_VOICE = "af_heart"  # Kokoro voice (af_heart, af_bella, af_alloy, bf_emma, a
 TTS_SPEED = 1.0  # speech speed multiplier
 
 # ── Knowledge / Handoff routing ────────────────────────────────────────────────
-KNOWLEDGE_TOP_K = 5  # max knowledge entries injected per query
-KNOWLEDGE_THRESHOLD = 0.4  # cosine distance cutoff for knowledge search
+# Knowledge search top_k/threshold are NOT configurable here — kai/memory/knowledge.py
+# takes them as call arguments (top_k=5, threshold=0.6). Two settings used to sit
+# here advertising 0.4; nothing read them. Wire them through if you want the knob.
 HANDOFF_THRESHOLD = 0.55  # cosine distance cutoff for handoff routing (lower = stricter)
 # Semantic tool gate — lets the handoff router's verdict ("tool"/"researcher")
 # open the tool gate when the keyword regex in brain.py misses. Keyword hits

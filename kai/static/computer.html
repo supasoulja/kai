@@ -617,7 +617,8 @@ const $ = id => document.getElementById(id);
 // ── Config ───────────────────────────────────────────────────────────────────
 const SESSION_ID = new URLSearchParams(window.location.search).get('session') || '';
 const BOOT_MODE  = new URLSearchParams(window.location.search).get('boot') || 'cold';
-const WS_URL     = `ws://${location.host}/ws/activity/${encodeURIComponent(SESSION_ID)}`;
+const WS_PROTO   = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL     = `${WS_PROTO}//${location.host}/ws/activity/${encodeURIComponent(SESSION_ID)}`;
 const EVENTS_URL = `/api/events/${encodeURIComponent(SESSION_ID)}`;
 
 // ── State ────────────────────────────────────────────────────────────────────

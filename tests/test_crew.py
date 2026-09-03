@@ -562,10 +562,12 @@ def test_semantic_think_axis_sets_reason():
 
 
 def test_specialist_uses_default_crew_model():
+    from kai.llm import roles
+
     brain = _specialist_brain([{"message": {"content": "ok done"}}])
     _drain(brain._crew.run_specialist("Gus", "check something"))
-    # default crew model = ROLE_MODELS["crew"] (granite4.1:8b), and it's installed
-    assert brain.ollama.chat.call_args.kwargs.get("model") == "granite4.1:8b"
+    # default crew model = ROLE_MODELS["crew"], and it's installed
+    assert brain.ollama.chat.call_args.kwargs.get("model") == roles.ROLE_MODELS["crew"]
 
 
 def test_specialist_honors_per_agent_override(monkeypatch):

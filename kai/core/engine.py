@@ -429,8 +429,8 @@ class TurnEngine:
         override isn't installed.
 
         Rounds run on the chat model by default (one resident model, no thinking
-        tax) or on an opt-in granite tool model. Neither thinks: granite emits
-        structured calls natively, and the chat model's occasional "narrate
+        tax) or on an opt-in secondary tool model. Neither thinks: a dedicated tool
+        model emits structured calls natively, and the chat model's occasional "narrate
         instead of call" slip is caught by the pre-LLM fast-paths and the
         narrated-intent recovery net (_match_narrated_intent /
         _try_recover_tool_call) — so we keep tool-calling reliable without paying
@@ -468,7 +468,7 @@ class TurnEngine:
             if self._cancel.is_set():
                 break  # user hit Stop — don't fire any more tool calls
 
-            # Granite tool model stays local; the "off" level runs rounds on the
+            # A secondary tool model stays local; "off" runs rounds on the
             # active chat brain (possibly cloud) via _chat, with fail→local.
             if tool_model is None:
                 resp = self._chat(
@@ -478,7 +478,7 @@ class TurnEngine:
                     temperature=cfg.TEMPERATURE_TOOL,
                 )
             else:
-                # Opt-in granite tool model is secondary — unload it right after
+                # The opt-in tool model is secondary — unload it right after
                 # so it never holds a second runner beside the warm chat model.
                 resp = self.ollama.chat(
                     messages,

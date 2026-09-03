@@ -327,6 +327,19 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             timestamp   TEXT NOT NULL
         );
 
+        -- Pending knowledge-extraction queue (per-user). Durable replacement for
+        -- the old in-memory deque: exchanges are enqueued after a turn and drained
+        -- when the foreground is idle (and on Brain startup), so short sessions and
+        -- hard kills never lose learning. See kai/memory/pending.py.
+        CREATE TABLE IF NOT EXISTS pending_learn (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id        INTEGER NOT NULL DEFAULT 0,
+            session_id     TEXT,
+            user_text      TEXT NOT NULL,
+            assistant_text TEXT NOT NULL,
+            ts             REAL NOT NULL
+        );
+
         -- Sessions (per-user)
         CREATE TABLE IF NOT EXISTS sessions (
             id            TEXT PRIMARY KEY,

@@ -14,7 +14,6 @@ import re
 import threading
 import time
 import uuid
-from collections import deque
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -35,6 +34,7 @@ from kai.core.engine import TurnEngine
 from kai.core.history import HistoryManager
 from kai.core.tool_gate import _TOOL_SIGNALS, _query_needs_thinking, _query_needs_tools
 from kai.llm.ollama import OllamaClient
+from kai.memory import pending
 from kai.memory.manager import MemoryManager
 from kai.memory.privacy import learning_enabled
 from kai.store import sessions
@@ -226,12 +226,22 @@ COMPRESS_PROMPT = (
 )
 
 LEARN_PROMPT = (
-    "Review this conversation exchange. Extract any NEW KNOWLEDGE you learned — "
-    "corrections, cultural references, facts, personal details, inside jokes, or anything "
-    "worth remembering for future conversations.\n"
-    "Each fact on its own line, concise and specific.\n"
+    "Review this conversation exchange. Extract any NEW, LASTING fact worth "
+    "remembering about the user for future conversations — identity, profession, "
+    "hardware, health, preferences, relationships, or knowledge they shared.\n"
+    "Output ONE fact per line in the form:  CATEGORY | fact\n"
+    "CATEGORY must be exactly one of: identity, profession, hardware, health, "
+    "preference, relationship, knowledge.\n"
+    "Keep each fact concise and specific. Skip greetings, small talk, and anything "
+    "transient (moods, the current task).\n"
     "If nothing new was learned, respond with exactly: NONE"
 )
+
+
+def _trivial_exchange(user_text: str, assistant_text: str) -> bool:
+    """Too short to carry anything worth remembering — skip the extraction LLM call."""
+    return len(user_text.strip()) < 15 and len(assistant_text.strip()) < 50
+
 
 # Always-present grounding calibration — appended to every turn's context so
 # the rule sits at the decision boundary where the model generates. Defined
@@ -316,18 +326,15 @@ class Brain:
         self._handoff_router = HandoffRouter()
         self._crew = CrewRunner(self)  # agent-crew execution layer
         self._pending_confirm: dict | None = None  # tool call awaiting user confirmation
+        self._surfaced_paths: list[str] = []  # tree nodes shown this turn — reinforced post-turn
         self._tool_level: str = cfg.DEFAULT_TOOL_LEVEL  # which model runs tool rounds
         self._tool_model: str | None = None  # resolved lazily, availability-checked
         self._tool_model_resolved: bool = False
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
-        # Exchanges queued for knowledge extraction, drained only when no turn is
-        # in flight (see _drain_pending_learning) so learning never queues a
-        # generation behind the user. Bounded — old chatter is the cheapest to drop.
-        self._pending_learn: deque[tuple[str, str]] = deque(maxlen=12)
 
         # Active chat brain — defaults to local Ollama + CHAT_MODEL. set_active_brain()
         # can point the chat role at a connected cloud brain; _chat/_chat_stream wrap
-        # the call with a fail→local fallback. Tool-round granite always stays local.
+        # the call with a fail→local fallback. The tool-round model always stays local.
         self._chat_client = self.ollama
         self._chat_model = self.model
 
@@ -348,6 +355,12 @@ class Brain:
 
         # Re-apply a persisted cloud brain selection (best-effort; no-op if local).
         self._restore_active_brain()
+
+        # Best-effort: drain any extraction rows a prior (possibly hard-killed)
+        # session left queued for this user. Runs on the bg pool, foreground-gated,
+        # so it never blocks construction or a live turn. The per-turn drain also
+        # catches these on the user's next message.
+        self._bg_pool.submit(self._drain_pending_learning)
 
     # ── Per-user tool enablement (Settings → Tools on/off) ───────────────────
     def _load_disabled_tools(self) -> set[str]:
@@ -441,7 +454,7 @@ class Brain:
 
         A cloud entry resolves its client + API key via the registry/keystore;
         a missing key raises LLMKeyMissing (the caller decides what to do).
-        Tool-round granite is unaffected — only the chat role moves.
+        The tool-round model is unaffected — only the chat role moves.
         """
         provider = entry.get("provider", "ollama")
         model_id = entry.get("ollama_id") or self.model
@@ -1021,6 +1034,7 @@ class Brain:
         would just burn context tokens. Failures are silent: the turn must
         never depend on the memory loop working.
         """
+        self._surfaced_paths = []  # reset each turn; reinforced in _post_turn
         try:
             from kai.memory import tree as _mtree
 
@@ -1032,7 +1046,8 @@ class Brain:
             from kai.memory import loop as _memloop
 
             q = _np.asarray(query_emb, dtype=_np.float32) if query_emb else None
-            block, flags = _memloop.gather_context(uid, q)
+            block, flags, surfaced = _memloop.gather_context(uid, q)
+            self._surfaced_paths = surfaced  # nodes used this turn — reinforce post-turn
             flow_rec.record(trace_id, "memory_tree", block=block, flags=len(flags))
             return block
         except Exception:
@@ -1057,6 +1072,7 @@ class Brain:
         """
         if not self.tool_registry:
             return None
+        excluded = self._disabled_tools or None  # tools the user turned off
         gate = _query_needs_tools(user_input, history)
         # Optional semantic gate: the handoff router classified this turn from
         # its embedding — when it says tool/researcher, open the gate even if
@@ -1066,7 +1082,12 @@ class Brain:
                 print(f"[tool gate] keyword miss, semantic hit ({handoff_mode})")
             gate = "direct"
         if not gate:
-            return None
+            # A durable fact stated in passing ("I work as a welder") is not a
+            # request, so it never trips the keyword gate and the turn used to get
+            # no tools at all — the model could not file it and narrated success
+            # instead (measured 2026-08-07). Keep the memory-write tools available
+            # even on a no-tool turn; nothing else survives a closed gate.
+            return self._add_always_available([], excluded) or None
 
         # Follow-up turns ("yes", "run that again") carry no meaning of their
         # own — selecting categories from their embedding picks arbitrary
@@ -1094,7 +1115,6 @@ class Brain:
                 except Exception:
                     pass
 
-        excluded = self._disabled_tools or None  # tools the user turned off
         if self._tool_index and selection_emb:
             try:
                 tools_schema = self.tool_registry.select_tools_by_category(
@@ -1105,10 +1125,31 @@ class Brain:
         else:
             tools_schema = self.tool_registry.get_schema(exclude=excluded)
 
+        tools_schema = self._add_always_available(tools_schema, excluded)
+
         # Inject skill schemas so the model can call skills as tools (skill.name)
         if tools_schema and self.skill_registry:
             tools_schema = list(tools_schema) + self._skill_schemas()
         return tools_schema
+
+    def _add_always_available(self, schema: list[dict], excluded: set[str] | None) -> list[dict]:
+        """Append cfg.ALWAYS_AVAILABLE_TOOLS the category gate didn't already pick.
+
+        The gate ranks by topic and so cannot see "this is worth remembering" — a
+        durable fact stated in passing routes to whatever its subject matter is, and
+        the memory tools are never offered. Honors the user's disabled-tool list.
+        """
+        wanted = [t for t in cfg.ALWAYS_AVAILABLE_TOOLS if not (excluded and t in excluded)]
+        if not wanted:
+            return schema
+        present = {t.get("function", {}).get("name") for t in schema}
+        missing = [t for t in wanted if t not in present]
+        if not missing:
+            return schema
+        try:
+            return list(schema) + self.tool_registry.schema_for(missing)
+        except Exception:
+            return schema
 
     def _ground_evidence(
         self,
@@ -1503,21 +1544,31 @@ class Brain:
     # ── Conversational learning ──────────────────────────────────────────────
 
     def _drain_pending_learning(self) -> None:
-        """Run queued knowledge extraction, but only while no user turn is in
-        flight — so a learning LLM call never queues a generation behind the
-        user's next request. Items not drained now wait for the next idle moment.
+        """Process the durable extraction queue, but only while no user turn is in
+        flight — so a learning LLM call never queues a generation behind the user's
+        next request. Rows survive process exit (kai.memory.pending), so anything
+        left queued by a killed or short session re-drains here next time we're idle.
         """
-        if not self._pending_learn or foreground_busy():
+        if foreground_busy():
             return
-        while self._pending_learn and not foreground_busy():
-            user_text, assistant_text = self._pending_learn.popleft()
-            try:
-                self._extract_knowledge(user_text, assistant_text)
-            except Exception:
-                if cfg.DEBUG:
-                    import traceback
+        while not foreground_busy():
+            batch = pending.peek(self.user_id, limit=5)
+            if not batch:
+                break
+            for row_id, user_text, assistant_text in batch:
+                if foreground_busy():
+                    return
+                try:
+                    self._extract_knowledge(user_text, assistant_text)
+                except Exception:
+                    if cfg.DEBUG:
+                        import traceback
 
-                    traceback.print_exc()
+                        traceback.print_exc()
+                # Delete after the attempt (success or handled failure) so a poison
+                # row can't wedge the queue — durability is about surviving restarts,
+                # not retrying a broken exchange forever.
+                pending.delete(row_id)
 
     def _post_turn(self, user_input: str, assistant_text: str) -> None:
         """
@@ -1525,6 +1576,17 @@ class Brain:
         extract knowledge. Runs in the background pool — never blocks the user.
         """
         self.memory.commit_turn(user_input, assistant_text)
+        # Reinforce the tree nodes that were surfaced into this turn's context —
+        # frequency feeds the scorer's boost and offsets decay. Bounded by
+        # scorer._FREQ_CAP. Runs here (background) so it stays off the hot path;
+        # cleared so a later turn that renders no tree block can't re-bump stale paths.
+        if self._surfaced_paths:
+            from kai.memory import loop as _memloop
+
+            uid = str(self.user_id)
+            for path in self._surfaced_paths:
+                _memloop.record_node_used(uid, path)
+            self._surfaced_paths = []
         # Compress between turns instead of at turn start, so the user never
         # waits on the summarization LLM call. Worst case the next turn runs
         # with slightly-too-long history — the same window the old in-turn
@@ -1536,13 +1598,14 @@ class Brain:
                 import traceback
 
                 traceback.print_exc()
-        count = self._history.bump_turn_count()
-        # Rate-limit: queue an exchange for knowledge extraction every 3rd turn.
-        # Extraction is a full LLM call, so we DEFER it: it runs only when no user
-        # turn is in flight (see _drain_pending_learning), so it never queues a
-        # generation behind the user's next request. Same cadence, idle timing.
-        if learning_enabled(self.user_id) and count % 3 == 0:
-            self._pending_learn.append((user_input, assistant_text))
+        # Keep the monotonic turn counter (read elsewhere, e.g. greeting logic).
+        self._history.bump_turn_count()
+        # Queue this exchange for knowledge extraction. DURABLE: the queue lives in
+        # SQLite (kai.memory.pending), so a short session or a hard kill can't drop
+        # it. Every non-trivial turn is eligible — the drain runs the actual LLM call
+        # only when no user turn is in flight, so it never queues behind the user.
+        if learning_enabled(self.user_id) and not _trivial_exchange(user_input, assistant_text):
+            pending.enqueue(self.user_id, user_input, assistant_text, self.session_id)
         self._drain_pending_learning()
 
         # Crash-survival: refresh the recall checkpoint each turn (cheap file
@@ -1557,16 +1620,18 @@ class Brain:
 
     def _extract_knowledge(self, user_text: str, assistant_text: str) -> None:
         """
-        Ask the model what it learned from this exchange.
-        Saves each extracted fact as an episodic entry (entry_type='learned')
-        with an embedding — permanently searchable by cosine similarity.
+        Ask the model what it learned from this exchange, then file each fact as a
+        node in the SCORED memory tree (kai/memory/tree.py) — the substrate the
+        self-improving loop (loop.gather_context → scorer) actually reads. The model
+        tags each fact with a category; extractor.save_fact_to_tree owns the path,
+        scores, decay, and near-duplicate reinforcement.
 
         Pre-filtered: skips trivial exchanges (greetings, one-word responses)
         to avoid unnecessary Ollama calls that would queue and delay the next turn.
         """
-        # Pre-filter: skip short/trivial exchanges
-        user_stripped = user_text.strip()
-        if len(user_stripped) < 15 and len(assistant_text.strip()) < 50:
+        # Pre-filter: skip short/trivial exchanges (belt-and-suspenders — the
+        # enqueue path filters too, but drained rows may predate that).
+        if _trivial_exchange(user_text, assistant_text):
             return
 
         exchange = f"User: {user_text}\nKai: {assistant_text}"
@@ -1585,14 +1650,22 @@ class Brain:
         if not result or result.upper() == "NONE":
             return
 
+        from kai.memory.extractor import save_fact_to_tree
+
+        embed_fn = self.get_embed_fn()
         saved = 0
         for line in result.splitlines():
-            line = line.strip().lstrip("-•* 0123456789.)")
-            if line and len(line) > 10:
-                self.memory.add_episode(
-                    content=line,
-                    entry_type="learned",
-                )
+            line = line.strip().lstrip("-•* 0123456789.)").strip()
+            if not line or len(line) <= 10:
+                continue
+            # Expect "CATEGORY | fact"; tolerate a bare line by defaulting the category.
+            category, sep, fact = line.partition("|")
+            if not sep:
+                category, fact = "knowledge", line
+            action, _path = save_fact_to_tree(
+                self.user_id, category.strip(), fact.strip(), embed_fn=embed_fn
+            )
+            if action in ("created", "reinforced"):
                 saved += 1
 
         if saved and self.session_id:
@@ -1603,7 +1676,7 @@ class Brain:
                 source="knowledge_extraction",
             )
         if cfg.DEBUG and saved:
-            print(f"[learn] saved {saved} knowledge entries")
+            print(f"[learn] saved/reinforced {saved} tree facts")
 
     def get_embed_fn(self):
         from kai.llm.embed import embed as _fast_embed

@@ -18,6 +18,7 @@ shared its database. That produced ~25 order-dependent "no such table" failures.
 """
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -37,6 +38,27 @@ def pytest_configure(config):
         tmp = tempfile.NamedTemporaryFile(suffix="_conftest.db", delete=False)
         tmp.close()
         cfg.DB_PATH = Path(tmp.name)
+
+    # The tree/state/knowledge dirs default to the real var/ too — and since
+    # _post_turn now WRITES to the tree (extraction + reinforcement) on top of the
+    # regex mirror commit_turn already did, an un-isolated Brain test would mutate
+    # real memory. Redirect them to a session sandbox. Modules capture these at
+    # import, so set cfg (for later imports) AND any already-imported module ref.
+    if not getattr(cfg, "_TEST_VAR_SANDBOXED", False):
+        sandbox = Path(tempfile.mkdtemp(prefix="kai_test_var_"))
+        cfg.TREE_DIR = sandbox / "tree"
+        cfg.STATE_DIR = sandbox / "state"
+        cfg.KNOWLEDGE_DIR = sandbox / "knowledge"
+        for d in (cfg.TREE_DIR, cfg.STATE_DIR, cfg.KNOWLEDGE_DIR):
+            d.mkdir(parents=True, exist_ok=True)
+        for modname, attr, val in (
+            ("kai.memory.tree", "_TREE_DIR", cfg.TREE_DIR),
+            ("kai.memory.state", "_STATE_DIR", cfg.STATE_DIR),
+        ):
+            mod = sys.modules.get(modname)
+            if mod is not None:
+                setattr(mod, attr, val)
+        cfg._TEST_VAR_SANDBOXED = True
 
 
 def pytest_runtest_setup(item):

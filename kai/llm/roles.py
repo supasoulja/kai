@@ -26,7 +26,11 @@ _ROLES_PATH = cfg.MEMORY_DIR / "roles.json"
 # specialists); voice = Kai's user-facing answer; memory = the semantic-read loop.
 ROLE_MODELS: dict[str, str] = {
     "voice": cfg.CHAT_MODEL,
-    "crew": cfg.TOOL_MODEL_LEVELS.get("balanced", {}).get("model") or cfg.CHAT_MODEL,
+    # Stated outright, not derived from TOOL_MODEL_LEVELS["balanced"]. That
+    # derivation meant editing a Settings dropdown silently repointed every crew
+    # specialist — which is how the whole crew ended up defaulting to granite
+    # long after granite left the runtime. Override per-role in roles.json.
+    "crew": cfg.CHAT_MODEL,
     "memory": cfg.MEMORY_MODEL,
     "embed_fast": cfg.FAST_EMBED_MODEL,
     "embed_hq": cfg.HQ_EMBED_MODEL,

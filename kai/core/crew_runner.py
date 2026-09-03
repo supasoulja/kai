@@ -273,10 +273,12 @@ class CrewRunner:
         sibling next, preserving partial work.
 
         `expected` is triage's coverage set — the matched domains for this turn.
-        Otto is not allowed to FINISH while any of them is still undispatched:
-        granite likes to stop after the first specialist, silently dropping the
-        rest of a compound request ("disk space AND containers" → disk only). When
-        Otto tries to finish with a domain uncovered, we force-dispatch it.
+        Otto is not allowed to FINISH while any of them is still undispatched.
+        Measured on granite: it stopped after the first specialist, silently
+        dropping the rest of a compound request ("disk space AND containers" →
+        disk only). When Otto tries to finish with a domain uncovered, we
+        force-dispatch it. The crew runs gemma now — whether the guard is still
+        load-bearing has not been re-measured.
         """
         otto_prompt = crew.load_specialist_prompt("Otto")
         scratchpad: list[str] = []

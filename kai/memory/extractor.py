@@ -8,8 +8,13 @@ Two extraction modes:
                                         returned as dict, NOT saved to DB — session cache only
 """
 
+import hashlib
 import re
+from collections.abc import Callable
 
+import numpy as np
+
+from kai.llm.vecmath import cosine as _cosine
 from kai.memory import semantic
 from kai.memory import tree as _tree
 
@@ -242,6 +247,140 @@ def _mirror_to_tree(saved: list[tuple[str, str]], user_id: int, source: str) -> 
                 source=source,
             ),
         )
+
+
+# ── Conversational fact → scored tree ───────────────────────────────────────────
+# The write half of the memory loop: turn a fact the model pulled out of a live
+# conversation into a scored tree node, so kai/memory/loop.py + scorer.py actually
+# have something to rank. Categories keep the small extraction model reliable —
+# it does a fixed N-way classify; the code owns the path, scores, and decay.
+
+_DEDUP_THRESHOLD = 0.90  # cosine ≥ this = same fact restated → reinforce, don't duplicate
+
+# category -> (path_prefix, importance, specificity, domain, decays)
+_CATEGORY_MAP: dict[str, tuple[str, float, float, str, bool]] = {
+    "identity": ("user/identity", 0.6, 0.8, "identity", True),
+    "profession": ("user/identity/profession", 0.8, 0.7, "work", True),
+    "hardware": ("user/identity/hardware", 0.6, 0.9, "hardware", False),
+    "health": ("user/health", 0.9, 0.8, "health", False),
+    "preference": ("user/preferences", 0.5, 0.6, "preferences", True),
+    "relationship": ("user/relationship", 0.6, 0.6, "relationship", True),
+    "knowledge": ("user/knowledge", 0.5, 0.6, "knowledge", True),
+}
+
+
+def _slug(text: str, max_words: int = 6, max_len: int = 40) -> str:
+    """A readable leaf name from a fact — first few words, lowercased."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return "_".join(words[:max_words])[:max_len].strip("_") or "fact"
+
+
+def _short_hash(text: str) -> str:
+    return hashlib.md5(text.encode("utf-8")).hexdigest()[:4]
+
+
+def _embed(text: str) -> np.ndarray | None:
+    try:
+        from kai.llm.embed import embed as _fast_embed
+
+        return np.asarray(_fast_embed(text), dtype=np.float32)
+    except Exception:
+        return None
+
+
+def write_tree_fact(
+    user_id,
+    path: str,
+    fact: str,
+    *,
+    source: str,
+    importance: float,
+    specificity: float = 0.5,
+    confidence: float = 0.75,
+    domain: str = "",
+    decays: bool = True,
+    dedup_scope: str | None = None,
+    embed_fn: Callable[[str], list[float]] | None = None,
+) -> tuple[str, str]:
+    """Embed `fact`, then either reinforce a near-duplicate already in the tree
+    (when dedup_scope is given) or upsert a new node at `path`.
+
+    Returns (action, path) where action is "reinforced" or "created". Shared by
+    save_fact_to_tree (conversational learning) and the tree.save tool.
+    """
+    uid = str(user_id)
+    emb = None
+    try:
+        emb = np.asarray(embed_fn(fact), dtype=np.float32) if embed_fn else _embed(fact)
+    except Exception:
+        emb = None
+
+    if dedup_scope and emb is not None:
+        best_path, best_sim = None, 0.0
+        for n in _tree.subtree(uid, dedup_scope):
+            if n.embedding is None or n.source == "seed":
+                continue
+            sim = _cosine(emb, n.embedding)
+            if sim > best_sim:
+                best_path, best_sim = n.path, sim
+        if best_path and best_sim >= _DEDUP_THRESHOLD:
+            _tree.increment_frequency(uid, best_path)  # restated fact = stronger fact
+            return ("reinforced", best_path)
+
+    _tree.write(
+        uid,
+        _tree.Node(
+            path=path,
+            value=fact,
+            confidence=confidence,
+            importance=importance,
+            specificity=specificity,
+            source=source,
+            domain=domain,
+            decays=decays,
+            embedding=emb,
+        ),
+    )
+    return ("created", path)
+
+
+def save_fact_to_tree(
+    user_id,
+    category: str,
+    fact: str,
+    embed_fn: Callable[[str], list[float]] | None = None,
+) -> tuple[str, str]:
+    """File a conversationally-learned fact under its category. Code owns the
+    path/scores; the model only supplied the category. Near-duplicates within the
+    category reinforce the existing node instead of piling up. Returns (action, path)
+    with action in {"created", "reinforced", "skipped"}."""
+    fact = (fact or "").strip()
+    if len(fact) < 5:
+        return ("skipped", "")
+    uid = str(user_id)
+    if uid not in _TREE_SEEDED:
+        _tree.seed_skeleton(uid)
+        _TREE_SEEDED.add(uid)
+    prefix, importance, specificity, domain, decays = _CATEGORY_MAP.get(
+        (category or "").strip().lower(), _CATEGORY_MAP["knowledge"]
+    )
+    path = f"{prefix}/{_slug(fact)}"
+    existing = _tree.read(uid, path)
+    if existing is not None and existing.value != fact:
+        path = f"{path}_{_short_hash(fact)}"  # distinct fact, same slug — keep both
+    return write_tree_fact(
+        uid,
+        path,
+        fact,
+        source="inferred",
+        importance=importance,
+        specificity=specificity,
+        confidence=0.75,
+        domain=domain,
+        decays=decays,
+        dedup_scope=prefix,
+        embed_fn=embed_fn,
+    )
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

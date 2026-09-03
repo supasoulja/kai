@@ -352,26 +352,12 @@ def tree_save(path: str = "", fact: str = "") -> str:
         return "Need the fact to file."
     if not _re.fullmatch(r"[a-z0-9_\-/]+", path):
         return "Invalid path — lowercase letters, digits, '-', '_' and '/' only."
-    # Embed so tree.find can recall this semantically later. Failure is fine —
-    # the fact still saves, it's just invisible to vector search until re-embedded.
-    emb = None
-    try:
-        from kai.llm.embed import embed as _fast_embed
+    # Shared write path (embeds so tree.find can recall it; failure is non-fatal —
+    # the fact still saves, just invisible to vector search until re-embedded).
+    # source="stated" — the user explicitly asked to remember this (slow decay).
+    from kai.memory.extractor import write_tree_fact
 
-        emb = _np.asarray(_fast_embed(fact), dtype=_np.float32)
-    except Exception:
-        pass
-    _tree.write(
-        uid,
-        _tree.Node(
-            path=path,
-            value=fact,
-            confidence=0.9,
-            importance=0.6,
-            source="stated",
-            embedding=emb,
-        ),
-    )
+    write_tree_fact(uid, path, fact, source="stated", importance=0.6, confidence=0.9)
     return f'Saved to {path}: "{fact}"'
 
 

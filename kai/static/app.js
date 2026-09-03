@@ -236,7 +236,15 @@ if (computerBtn) {
   computerBtn.addEventListener('click', () => {
     const session = _activeSession || '';
     const boot = session ? 'warm' : 'cold';
-    window.open(`/computer?session=${encodeURIComponent(session)}&boot=${boot}`, 'kai-computer');
+    // The GTK webview never handles window.open (no 'create' signal), so the
+    // desktop app has to spawn the window through the bridge. open_link only
+    // accepts http(s), hence location.origin rather than a bare path.
+    const url = `${location.origin}/computer?session=${encodeURIComponent(session)}&boot=${boot}`;
+    if (window.pywebview && pywebview.api && pywebview.api.open_link) {
+      pywebview.api.open_link(url);
+    } else {
+      window.open(url, 'kai-computer');
+    }
   });
 }
 

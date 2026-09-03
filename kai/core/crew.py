@@ -234,7 +234,8 @@ def triage(
 
     # ≥2 specialists → Otto orchestrates. Pass the top-2 distinct domains as the
     # coverage set so run_crew won't let Otto FINISH before every one is dispatched
-    # (granite likes to stop after the first, dropping the rest of a compound ask).
+    # (measured on granite, which stopped after the first and dropped the rest of a
+    # compound ask; the crew runs gemma now and this has not been re-measured).
     # BOSS always reasons (the leaf table fixes think=on for orchestration).
     return TriageResult(
         profile=Profile.BOSS,

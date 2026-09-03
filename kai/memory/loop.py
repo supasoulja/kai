@@ -1,5 +1,5 @@
 """
-kai/memory/loop.py — The memory model loop. Prototype.
+kai/memory/loop.py — The memory model loop.
 
 Ties tree + scorer + state + intuition into the one thing the chat model
 actually needs each turn: a rendered context block that already knows who
@@ -7,10 +7,11 @@ it's talking to. This is the retrieval half of the parallel architecture
 in BRAIN_DESIGN.md — gather → rank → flag → render.
 
 The write half — extracting new facts from the live conversation into tree
-nodes — needs its own model and is deliberately deferred (see Open Questions
-in BRAIN_DESIGN). Until that exists, the chat loop calls the small, explicit
-update hooks at the bottom of this file after a turn completes: the cheap,
-unambiguous signals that don't need semantic judgment to record.
+nodes — now runs after each turn: brain._extract_knowledge asks the model what
+it learned and files each fact via extractor.save_fact_to_tree. The small,
+explicit update hooks at the bottom of this file record the cheap reinforcement
+signals on top of that: a surfaced node held up (frequency), the user validated
+or corrected Kai's read (state stores).
 """
 
 from . import intuition, scorer
@@ -113,8 +114,9 @@ def gather_context(
     data-only detectors (accumulation, escalation_approach) still run as
     long as the tree has the relevant nodes.
 
-    Returns the rendered block plus the raw flag list — the chat loop injects
-    the block, the memory model logs every flag regardless of which one won.
+    Returns the rendered block, the raw flag list, and the paths of the nodes that
+    were surfaced this turn — the chat loop injects the block, logs every flag, and
+    reinforces the surfaced paths (frequency) after the turn via record_node_used.
     """
     relationship = _state.load_relationship_state(user_id)
     user_state = _state.load_user_state(user_id)
@@ -135,7 +137,8 @@ def gather_context(
     flags = _run_detectors_for_turn(user_id, query_embedding, detector_signals or {})
 
     block = render_memory_block(relationship, user_state, kai_state, ranked, flags)
-    return block, flags
+    surfaced_paths = [node.path for node, _score in ranked]
+    return block, flags, surfaced_paths
 
 
 def _run_detectors_for_turn(
@@ -174,11 +177,11 @@ def _run_detectors_for_turn(
 
 # ─── Post-turn hooks — small, explicit, called by the chat loop ──────────────
 #
-# The write half of the parallel architecture (turning a live conversation
-# into new tree nodes) needs its own model — deferred per BRAIN_DESIGN's open
-# questions. These hooks record the cheap, unambiguous signals that don't
-# need semantic judgment at all: a node got used, the user confirmed a read,
-# the user corrected one. Real learning starts here even before that model exists.
+# These record the cheap reinforcement signals that need no semantic judgment:
+# a surfaced node held up (brain._post_turn → record_node_used), the user
+# validated or corrected Kai's read (feedback route → record_turn_*). They sit
+# alongside the write half proper (brain._extract_knowledge → save_fact_to_tree),
+# which turns the live conversation into new scored tree nodes.
 
 
 def record_node_used(user_id: str, path: str) -> None:

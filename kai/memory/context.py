@@ -17,6 +17,7 @@ Memory tiers:
   - RAG chunks: ROUTED — only searched when "documents" domain is active
 """
 
+import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,6 +32,8 @@ from kai.core.sleep import clear_welcome_back, load_welcome_back
 from kai.memory import episodic, procedural, router, semantic
 from kai.persona.identity import build_identity_block
 from kai.store.schema import ContextBlock
+
+_log = logging.getLogger(__name__)
 
 # Shared pool for parallel retrieval — 2 workers covers episodic + RAG.
 _retrieval_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kai-retrieve")
@@ -155,6 +158,20 @@ def build(
     # Trim if over budget — drop oldest episodic first, then RAG chunks.
     # Compute rendered length once and estimate savings to avoid O(n^2) re-renders.
     rendered_len = len(block.render())
+
+    # Episodic and RAG are the only blocks trimming can touch. If everything else
+    # already exceeds the budget, trimming cannot get under it — it would just
+    # evict every retrieved memory and still overshoot, leaving the turn with no
+    # recall at all. That is a misconfiguration, not a trim decision: keep the
+    # memories and say so. (This silently zeroed all recall for months when the
+    # budget was 15000 and the static blocks alone were 15,664.)
+    removable = sum(len(str(e)) + 20 for e in block.episodic) + sum(
+        len(str(c)) + 20 for c in block.rag_chunks
+    )
+    if rendered_len - removable > budget:
+        _warn_static_over_budget(rendered_len - removable, budget)
+        return block
+
     while block.episodic and rendered_len > budget:
         removed = block.episodic.pop(0)
         # Estimate char savings (entry text + formatting overhead)
@@ -166,6 +183,24 @@ def build(
         rendered_len -= len(str(removed)) + 20
 
     return block
+
+
+_static_over_budget_warned = False
+
+
+def _warn_static_over_budget(static_len: int, budget: int) -> None:
+    """Warn once per process — this fires on every turn once it fires at all."""
+    global _static_over_budget_warned
+    if _static_over_budget_warned:
+        return
+    _static_over_budget_warned = True
+    _log.warning(
+        "Context static blocks (%d chars: identity + tool index + facts) exceed "
+        "MAX_CONTEXT_CHARS (%d). Recall is being kept anyway — raise the budget "
+        "or shrink persona.md, or every turn overruns the window.",
+        static_len,
+        budget,
+    )
 
 
 _welcome_back_used = False

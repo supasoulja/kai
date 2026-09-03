@@ -3,7 +3,7 @@
 tool_test_loop.py — drive every Kai tool many times, score it, and emit training traces.
 
 A user-simulator (a local Ollama model) paraphrases each tool's canonical prompt from
-docs/TOOL_TEST_PROMPTS.md into many phrasings. Each phrasing is routed to the tool's
+docs/reference/TOOL_TEST_PROMPTS.md into many phrasings. Each phrasing is routed to the tool's
 owning specialist exactly as the crew does at runtime (lean prompt + narrowed tool
 schema), the crew model is asked to act, and a PROGRAMMATIC judge (reusing
 verify_examples.verify_call) scores the result:
@@ -145,10 +145,10 @@ _PROMPT_RE = re.compile(r"`([^`]+)`\s*(?:\([^)]*\)\s*)?(?:→|->)\s*\*\*([a-z][a
 
 
 def _canonical_prompts() -> dict[str, list[str]]:
-    """Parse docs/TOOL_TEST_PROMPTS.md → {tool: [seed prompts]}. A line like
+    """Parse docs/reference/TOOL_TEST_PROMPTS.md → {tool: [seed prompts]}. A line like
     `Check the temperatures.` → **system.temps** [safe]  yields one mapping; lines
     naming two tools map the same prompt to both."""
-    doc = _REPO / "docs" / "TOOL_TEST_PROMPTS.md"
+    doc = _REPO / "docs" / "reference" / "TOOL_TEST_PROMPTS.md"
     out: dict[str, list[str]] = defaultdict(list)
     if not doc.exists():
         return out

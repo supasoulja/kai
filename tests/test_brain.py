@@ -217,15 +217,16 @@ def _tool_call_response(name="time.now", args=None):
     }
 
 
-def test_tool_rounds_use_selected_granite_model():
-    """With a granite level applied, rounds run on granite (think off) and
+def test_tool_rounds_use_selected_tool_model():
+    """With a tool level applied, rounds run on that model (think off) and
     the final answer still streams on the chat model in Kai's voice."""
+    tool_model = cfg.TOOL_MODEL_LEVELS["light"]["model"]
     mock_ollama = MagicMock(spec=OllamaClient)
     mock_ollama.embed.return_value = [0.0] * 2560
-    mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL, "granite4.1:3b"]
+    mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL, tool_model]
     mock_ollama.chat.side_effect = [
         _tool_call_response(),
-        {"message": {"content": "granite prose — must be discarded"}},
+        {"message": {"content": "tool-model prose — must be discarded"}},
     ]
     mock_ollama.chat_stream.side_effect = make_mock_stream("It is Tuesday.")
 
@@ -239,9 +240,9 @@ def test_tool_rounds_use_selected_granite_model():
 
     result = brain.run("What time is it?")
     for call in mock_ollama.chat.call_args_list:
-        assert call.kwargs["model"] == "granite4.1:3b"
+        assert call.kwargs["model"] == tool_model
         assert call.kwargs["think"] is False
-    # Granite's prose was discarded — the reply came from the streamed chat model
+    # The tool model's prose was discarded — the reply came from the streamed chat model
     assert result == "It is Tuesday."
     assert mock_ollama.chat_stream.call_args.kwargs["model"] == cfg.CHAT_MODEL
 
@@ -612,6 +613,70 @@ def test_tree_facts_injected_into_context(tmp_path, monkeypatch):
     ctx = brain._build_turn_context("what do I do for work?", [1.0] * 384)
     assert "[MEMORY CONTEXT]" in ctx
     assert "stuntman" in ctx
+
+
+# ── Durable learning queue + tree redirect ───────────────────────────────────
+
+
+def _fake_embed(text):
+    """Deterministic offline embedding — identical text → identical vector."""
+    import hashlib
+
+    import numpy as np
+
+    h = int(hashlib.md5(text.strip().lower().encode()).hexdigest(), 16)
+    return np.random.default_rng(h % (2**32)).standard_normal(16).tolist()
+
+
+def test_pending_learn_queue_roundtrip():
+    from kai.memory import pending
+
+    n0 = pending.count(4242)
+    pending.enqueue(
+        4242, "user text that is plenty long", "assistant reply that is also long", "sess"
+    )
+    assert pending.count(4242) == n0 + 1
+    batch = pending.peek(4242, limit=5)
+    assert batch and batch[-1][1].startswith("user text")
+    pending.delete(batch[-1][0])
+    assert pending.count(4242) == n0
+
+
+def test_extraction_writes_tree_not_episodic(tmp_path, monkeypatch):
+    from kai.memory import extractor as ex
+    from kai.memory import tree as mtree
+
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    ex._TREE_SEEDED.clear()
+
+    brain, _ = make_brain(
+        "profession | The user is a welder at Boeing\npreference | The user prefers short answers"
+    )
+    monkeypatch.setattr(brain, "get_embed_fn", lambda: _fake_embed)
+
+    brain._extract_knowledge("I weld at Boeing and I hate long answers", "Got it.")
+
+    nodes = [
+        n for n in mtree.all_nodes("0") if n.source != "seed" and not n.path.startswith("tools/")
+    ]
+    paths = sorted(n.path for n in nodes)
+    assert any(p.startswith("user/identity/profession/") for p in paths), paths
+    assert any(p.startswith("user/preferences/") for p in paths), paths
+    assert nodes and all(n.source == "inferred" for n in nodes)
+
+
+def test_extraction_dedup_reinforces(tmp_path, monkeypatch):
+    from kai.memory import extractor as ex
+    from kai.memory import tree as mtree
+
+    monkeypatch.setattr(mtree, "_TREE_DIR", tmp_path)
+    ex._TREE_SEEDED.clear()
+
+    a1 = ex.save_fact_to_tree(0, "preference", "The user loves espresso", embed_fn=_fake_embed)
+    a2 = ex.save_fact_to_tree(0, "preference", "The user loves espresso", embed_fn=_fake_embed)
+    assert a1[0] == "created"
+    assert a2[0] == "reinforced"
+    assert mtree.read("0", a1[1]).frequency == 2
 
 
 # ── OllamaClient ───────────────────────────────────────────────────────────────
