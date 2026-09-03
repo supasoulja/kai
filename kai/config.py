@@ -77,8 +77,10 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 # raising it does not slow prefill for a given prompt.
 # Keep MAX_CONTEXT_CHARS below in step with this — see the note there.
 #
-# 131072 is the largest size in the table that leaves real headroom: 12.1 GB of
-# 16 GB, ~4 GB clear for the compositor and the CPU-side embed/STT/TTS work.
+# 131072 is the largest size in the table that leaves real headroom. Verified live
+# 2026-09-02: `ollama ps` reports 131072 CONTEXT at 100% GPU, 11.6 GB of 16.4 GB
+# resident — ~4.7 GB clear for the compositor and the CPU-side embed/STT/TTS work,
+# and slightly better than the table's 12.1 GB estimate.
 # 262144 (14.3 GB) is the one to leave alone.
 CONTEXT_WINDOW = 131072  # tokens; passed as num_ctx to Ollama
 
