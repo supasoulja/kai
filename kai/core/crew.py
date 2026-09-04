@@ -94,6 +94,31 @@ _FINISH_RE = re.compile(r"\bFINISH\b\s*:?\s*(.*)", re.I)
 # changes; tests/test_crew_calibration.py is the drift tripwire that fails loudly
 # (with the new distribution printed) when this floor stops separating the lanes.
 CATEGORY_FLOOR = 0.60
+# Relative admission (F1–F3). A category within this cosine distance of the TOP
+# scorer joins the matched set even when it misses the absolute floor. On a compound
+# ask the second domain lands in a 0.49–0.58 band — consistently just under 0.60 —
+# so the absolute floor alone covered 4 of 20 cross-domain tasks.
+#
+# EXPAND-ONLY: this can add domains 2..n, it can never create the FIRST match. That
+# restriction is what stops it turning a chat turn the fuzzy tool axis mis-read into
+# a tool turn, since _specialists_for also feeds the FAST/CHAT routing decision.
+CATEGORY_DELTA = 0.14
+# How many categories triage ranks before the floor/delta rule filters them. Lives
+# here beside the knobs it constrains: crew_runner asks rank_categories for exactly
+# this many, and a category that never enters the list cannot be admitted by any
+# floor. 3 covered 4/20; 5 is where the measured curve flattens (6 buys nothing but
+# over-dispatch).
+TRIAGE_TOP_K = 5
+# The floor used ONCE A TURN IS ALREADY HEADED TO BOSS. Nine of the twenty
+# cross-domain tasks have nothing clearing 0.60 at all ("how many watts is this
+# machine pulling?" tops out at 0.578), and expand-only cannot reach them by
+# construction — there is no first match to expand from. Applied only inside the
+# BOSS branch, after the lane is already decided, so it cannot route chat into tools.
+BOSS_CATEGORY_FLOOR = 0.50
+# Cap on the coverage set handed to run_crew. Every entry is force-dispatched if Otto
+# skips it, so this bounds latency and GPU swaps; MAX_DISPATCHES bounds Otto's own
+# loop on top. Measured 2026-09-04 — see the table in CREW_TRIAGE_DECISION.md.
+MAX_COVERAGE = 3
 # Secondary guard: even a single matched specialist needs the top category this
 # confident to take FAST. With CATEGORY_FLOOR at 0.60 a match already clears this,
 # so it's a subordinate floor kept as an explicit minimum.
@@ -134,13 +159,32 @@ class TriageResult:
         return "background"
 
 
-def _specialists_for(category_scores: list[tuple[str, float]]) -> list[str]:
-    """Distinct specialists owning the matched (above-floor) top categories,
-    in score order. Categories with no owner (e.g. a future MCP-only one) are
-    skipped."""
+def _specialists_for(
+    category_scores: list[tuple[str, float]],
+    *,
+    floor: float = CATEGORY_FLOOR,
+    delta: float | None = CATEGORY_DELTA,
+) -> list[str]:
+    """Distinct specialists owning the matched top categories, in score order.
+
+    A category matches when it clears `floor`, or — expand-only — when some category
+    already cleared `floor` and this one is within `delta` of the top scorer. Both
+    gates are load-bearing: raising one without the other changes nothing, because
+    each is capped by the other (measured, CREW_TRIAGE_DECISION.md).
+
+    Pass `delta=None` for the absolute floor alone. Categories with no owner (e.g. a
+    future MCP-only one) are skipped.
+    """
+    if not category_scores:
+        return []
+    top = category_scores[0][1]
+    # Expand-only: without a match above the floor there is nothing to expand FROM,
+    # so the relative rule stays shut and a chat turn cannot be promoted to tools.
+    anchored = any(score >= floor for _, score in category_scores)
+    admits_relative = anchored and delta is not None
     seen: list[str] = []
     for cat, score in category_scores:
-        if score < CATEGORY_FLOOR:
+        if score < floor and not (admits_relative and score >= top - delta):
             continue
         spec = CATEGORY_TO_SPECIALIST.get(cat)
         if spec and spec not in seen:
@@ -208,11 +252,18 @@ def triage(
     #     don't pay full Otto orchestration for "hey there".
     if not specialists:
         if keyword_gated or not category_scores:
+            # The lane is already decided — this turn goes to Otto either way. Retry
+            # the match at the lower BOSS-only floor purely to BUILD A COVERAGE SET.
+            # Without one this returned matched=(), so run_crew had nothing to
+            # force-dispatch and Otto could FINISH having dispatched nobody. This
+            # cannot affect routing: we are already inside the BOSS branch.
+            boss_specialists = _specialists_for(category_scores, floor=BOSS_CATEGORY_FLOOR)
             return TriageResult(
                 profile=Profile.BOSS,
                 specialist=None,
                 think=not think_capped,
                 tools=True,
+                matched=tuple(boss_specialists[:MAX_COVERAGE]),
             )
         return TriageResult(
             profile=Profile.REASON if think else Profile.CHAT,
@@ -232,8 +283,8 @@ def triage(
             tools=True,
         )
 
-    # ≥2 specialists → Otto orchestrates. Pass the top-2 distinct domains as the
-    # coverage set so run_crew won't let Otto FINISH before every one is dispatched
+    # ≥2 specialists → Otto orchestrates. Pass the top MAX_COVERAGE distinct domains
+    # as the coverage set so run_crew won't let Otto FINISH before every one is dispatched
     # (measured on granite, which stopped after the first and dropped the rest of a
     # compound ask; the crew runs gemma now and this has not been re-measured).
     # BOSS always reasons (the leaf table fixes think=on for orchestration).
@@ -242,7 +293,7 @@ def triage(
         specialist=None,
         think=not think_capped,
         tools=True,
-        matched=tuple(specialists[:2]),
+        matched=tuple(specialists[:MAX_COVERAGE]),
     )
 
 

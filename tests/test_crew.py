@@ -8,6 +8,7 @@ import os
 
 os.environ.setdefault("KAI_ENTRYPOINT", "test")
 
+from kai.core import crew as crew_mod
 from kai.core.crew import (
     CATEGORY_TO_SPECIALIST,
     CREW_CATEGORIES,
@@ -133,7 +134,9 @@ def test_boss_when_index_unavailable_and_keyword_gated():
 
 
 def test_boss_exposes_matched_coverage_set():
-    # BOSS carries the top-2 distinct matched domains so run_crew can enforce coverage
+    # BOSS carries the top MAX_COVERAGE distinct matched domains so run_crew can
+    # enforce coverage. 3 is measured, not arbitrary: at 2 the corpus scores 15/20,
+    # at 3 it scores 17/20, and 4 buys nothing (CREW_TRIAGE_DECISION.md).
     r = triage(
         tools_open=True,
         needs_think=False,
@@ -144,7 +147,64 @@ def test_boss_exposes_matched_coverage_set():
         ],
     )
     assert r.profile is Profile.BOSS
-    assert r.matched == ("Dewey", "Scout")  # top-2 distinct owners, in score order
+    assert r.matched == ("Dewey", "Scout", "Gus")  # distinct owners, in score order
+
+
+def test_boss_coverage_set_is_capped_at_max_coverage():
+    """Every entry in the coverage set is force-dispatched if Otto skips it, so an
+    uncapped set would let one vague query fan out to every specialist."""
+    r = triage(
+        tools_open=True,
+        needs_think=False,
+        category_scores=[
+            ("disk_analysis", 0.69),
+            ("web_content", 0.68),
+            ("system_health", 0.67),
+            ("notes_and_memory", 0.66),
+        ],
+    )
+    assert r.profile is Profile.BOSS
+    assert len(r.matched) == crew_mod.MAX_COVERAGE
+    assert r.matched == ("Dewey", "Scout", "Gus")
+
+
+def test_delta_rule_admits_a_near_miss_second_domain():
+    """F1-F3: on a compound ask the second domain lands just under the floor. The
+    relative rule admits it; the absolute floor alone drops half the question."""
+    scores = [("disk_analysis", 0.69), ("system_health", 0.57), ("docs_rag", 0.40)]
+    assert crew_mod._specialists_for(scores, delta=None) == ["Dewey"]
+    assert crew_mod._specialists_for(scores) == ["Dewey", "Gus"]
+
+
+def test_delta_rule_is_expand_only():
+    """The rule must never create the FIRST match — otherwise a chat turn the fuzzy
+    tool axis mis-read becomes a tool turn. Nothing above the floor => no anchor."""
+    scores = [("system_health", 0.55), ("notes_and_memory", 0.54), ("network", 0.53)]
+    assert crew_mod._specialists_for(scores) == []
+    # ...but one point over the floor anchors it and the same runners-up come in.
+    anchored = [("system_health", 0.60), ("notes_and_memory", 0.54), ("network", 0.53)]
+    assert crew_mod._specialists_for(anchored) == ["Gus", "Remy"]
+
+
+def test_boss_branch_builds_a_coverage_set_at_the_lower_floor():
+    """Nothing clears CATEGORY_FLOOR, but the turn is keyword-gated so it goes to
+    Otto anyway. Before the BOSS floor this returned matched=() and Otto was free to
+    FINISH having dispatched nobody."""
+    scores = [("disk_analysis", 0.57), ("notes_and_memory", 0.55), ("network", 0.41)]
+    r = triage(tools_open=True, needs_think=False, category_scores=scores, keyword_gated=True)
+    assert r.profile is Profile.BOSS
+    assert r.matched == ("Dewey", "Remy")  # network at 0.41 is below the BOSS floor
+
+
+def test_lower_floor_never_applies_to_a_chat_turn():
+    """The safety invariant: the same scores that build a coverage set under BOSS
+    must still route to chat when no TRUSTED gate fired."""
+    scores = [("disk_analysis", 0.57), ("notes_and_memory", 0.55), ("network", 0.41)]
+    assert crew_mod._specialists_for(scores, floor=crew_mod.BOSS_CATEGORY_FLOOR)
+    r = triage(tools_open=True, needs_think=False, category_scores=scores, keyword_gated=False)
+    assert r.lane == "chat"
+    assert not r.tools
+    assert r.matched == ()
 
 
 # ── BACKGROUND: long-running beats lane ───────────────────────────────────────────

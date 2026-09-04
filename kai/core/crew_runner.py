@@ -185,8 +185,13 @@ class CrewRunner:
         scores: list[tuple[str, float]] = []
         if query_emb and self._brain._tool_index:
             try:
+                # top_k must exceed the number of domains a compound ask can need:
+                # the floor/delta rule in crew._specialists_for can only choose from
+                # what lands here, so a low top_k silently caps coverage no matter
+                # how the floor is tuned. Raising this alone changes nothing — both
+                # gates bind (CREW_TRIAGE_DECISION.md).
                 scores = self._brain.tool_registry.rank_categories(
-                    query_emb, self._brain._tool_index, top_k=3
+                    query_emb, self._brain._tool_index, top_k=crew.TRIAGE_TOP_K
                 )
             except Exception:
                 scores = []
