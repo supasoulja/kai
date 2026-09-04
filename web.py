@@ -971,15 +971,21 @@ def _init() -> None:
     # Archive any raw turns left from the previous session so they're searchable
     threading.Thread(target=_archive_pending_turns, args=(_state.ollama,), daemon=True).start()
 
-    # Register shutdown hook: sleep cycle + HQ re-embed for every per-user brain
-    import atexit
+    # Register shutdown hook: sleep cycle + HQ re-embed for every per-user brain.
+    # Never under pytest. The hook fires at interpreter exit, long after pytest has
+    # closed its capture streams, so every log line inside graceful_shutdown raises
+    # "ValueError: I/O operation on closed file" and buries the summary line under a
+    # wall of tracebacks. A test that imports web.py should not arm live shutdown
+    # behaviour in the first place.
+    if "pytest" not in sys.modules:
+        import atexit
 
-    def _on_shutdown():
-        with _user_brains_lock:
-            brains = list(_user_brains.values())
-        bootstrap.run_shutdown(_state.ollama, brains, call_brain_shutdown=True)
+        def _on_shutdown():
+            with _user_brains_lock:
+                brains = list(_user_brains.values())
+            bootstrap.run_shutdown(_state.ollama, brains, call_brain_shutdown=True)
 
-    atexit.register(_on_shutdown)
+        atexit.register(_on_shutdown)
 
 
 def _get_lan_ip() -> str:
