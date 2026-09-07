@@ -32,7 +32,8 @@ _PBKDF2_ROUNDS = 600_000  # OWASP 2023 recommendation for PBKDF2-HMAC-SHA256
 # delete_user() (account teardown) and export_user_data() (the data-export
 # endpoint) so the two can never drift apart. Tables with FK children or vector
 # mirrors (rag_*, episodic_*) keep their own special handling in
-# delete_user; flow_log is handled separately because it's created lazily.
+# delete_user; flow_log and crew_log are handled separately because they're
+# created lazily, so a plain loop over this tuple would raise on a fresh DB.
 _USER_TABLES = (
     "episodic_transcripts",
     "episodic_entries",
@@ -282,6 +283,14 @@ def _delete_user_rows(conn: sqlite3.Connection, user_id: int) -> None:
         conn.execute("DELETE FROM flow_log WHERE user_id = ?", (user_id,))
     except sqlite3.OperationalError:
         pass  # no flow_log table — nothing to delete
+    # crew_log is created lazily by kai.core.crew_trace on the first crew turn.
+    # It holds per-user crew decisions and specialist findings, so it is user
+    # content and must go with the account — it only escaped _USER_TABLES
+    # because of the lazy creation.
+    try:
+        conn.execute("DELETE FROM crew_log WHERE user_id = ?", (user_id,))
+    except sqlite3.OperationalError:
+        pass  # no crew_log table — nothing to delete
     # provider_keys (cloud LLM API keys) is also created lazily by
     # kai.llm.keystore on first use — guard it the same way. Kept OUT of
     # _USER_TABLES on purpose so export_user_data never includes it (auth
@@ -384,7 +393,7 @@ def export_user_data(user_id: int) -> dict:
     tables = out["tables"]
     # Plain user-scoped tables (shared list with delete_user), plus the ones with
     # their own ownership column / lazy creation handled explicitly below.
-    extra = ("rag_documents", "flow_log")
+    extra = ("rag_documents", "flow_log", "crew_log")
     for table in (*[t for t in _USER_TABLES if t not in _EXPORT_SKIP], *extra):
         try:
             tables[table] = _rows_as_dicts(

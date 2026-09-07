@@ -116,3 +116,70 @@ def test_record_and_read_roundtrip():
     assert len(steps) == 1
     assert steps[0]["expected"] == ["Dewey", "Gus"]
     assert steps[0]["scores"][0] == ["disk_analysis", 0.714]
+
+
+# ── crew_log goes with the account (PRIV-3) ───────────────────────────────────
+
+
+def test_delete_user_removes_crew_log_rows():
+    """crew_log holds per-user crew decisions and specialist findings, so it is
+    user content. It sat outside _USER_TABLES because crew_trace creates it
+    lazily, which is exactly how it escaped account deletion."""
+    from kai.core._app_state import set_current_user_id
+    from kai.store import users as u
+    from kai.store.db import get_conn
+
+    conn = get_conn()
+    uid = _new_user(u, "deleteme")
+    other = _new_user(u, "keepme")
+
+    set_current_user_id(uid)
+    crew_trace.record("t-doomed", "specialist_result", findings="private finding")
+    set_current_user_id(other)
+    crew_trace.record("t-kept", "specialist_result", findings="someone else's row")
+
+    def rows(user_id):
+        return conn.execute(
+            "SELECT COUNT(*) FROM crew_log WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+
+    assert rows(uid) == 1
+    assert u.delete_user(uid) is True
+    assert rows(uid) == 0, "crew_log survived account deletion"
+    assert rows(other) == 1, "deletion must not touch another user's crew rows"
+
+    set_current_user_id(0)
+    u.delete_user(other)
+
+
+def test_export_includes_crew_log():
+    """Deletion and export are meant to stay in lockstep — a table that is wiped
+    on delete must also be visible in the user's own data export."""
+    from kai.core._app_state import set_current_user_id
+    from kai.store import users as u
+
+    uid = _new_user(u, "exporter")
+    set_current_user_id(uid)
+    crew_trace.record("t-export", "triage", lane="boss")
+
+    out = u.export_user_data(uid)
+    assert "crew_log" in out["tables"], "crew_log missing from the data export"
+    assert len(out["tables"]["crew_log"]) == 1
+
+    set_current_user_id(0)
+    u.delete_user(uid)
+
+
+def _unique(prefix: str) -> str:
+    import uuid
+
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def _new_user(users_mod, prefix: str) -> int:
+    """Create a user directly, bypassing the machine-key/HTTP path."""
+    from kai.system.device import key_hash
+
+    result = users_mod.create_user(_unique(prefix), "1234", key_hash())
+    assert result is not None
+    return result["id"]
