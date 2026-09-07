@@ -9,11 +9,11 @@ Active goals are injected into every context block so they're never forgotten.
 from __future__ import annotations
 
 import json
-import secrets
 import time
 from datetime import datetime
 
 from kai.tools.registry import registry
+from kai.util.ids import short_id
 
 
 def _get_conn():
@@ -55,7 +55,7 @@ def _user_id() -> int:
 def create_goal(title: str, description: str = "", steps: str = "") -> str:
     """steps is a comma-separated string; split internally."""
     uid = _user_id()
-    goal_id = secrets.token_hex(6)
+    goal_id = short_id(12)
     now = time.time()
     step_list = [s.strip() for s in steps.split(",") if s.strip()] if steps else []
     conn = _get_conn()

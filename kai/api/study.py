@@ -8,7 +8,6 @@ exist but aren't widely known. Mounted by web.py via include_router.
 import asyncio
 import threading
 import urllib.request as _urlreq
-import uuid as _uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -23,6 +22,7 @@ from kai.api.models import (
     StudySearchRequest,
 )
 from kai.util import log
+from kai.util.ids import short_id
 
 router = APIRouter()
 
@@ -266,7 +266,7 @@ async def study_download(req: StudyDownloadRequest, request: Request):
     lib_path = Path(cfg.STUDY_LIBRARY_PATH) / str(uid)
     lib_path.mkdir(parents=True, exist_ok=True)
 
-    item_id = _uuid.uuid4().hex
+    item_id = short_id(32)
     ext = "epub" if req.format == "epub" else "pdf"
     file_path = lib_path / f"{item_id}.{ext}"
 

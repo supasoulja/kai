@@ -8,13 +8,13 @@ in Settings. A disk failure never loses the note — the DB write is what counts
 and the file write is reported as a warning alongside it.
 """
 
-import secrets
 from datetime import datetime
 
 from kai.core._app_state import get_current_user_id
 from kai.store import note_files
 from kai.store.db import get_conn, like_escape
 from kai.tools.registry import registry
+from kai.util.ids import short_id
 
 _MAX_NOTE_CHARS = 10_000  # ~2 500 words; prevents multi-MB notes clogging the DB
 
@@ -42,7 +42,7 @@ def save_note(content: str, title: str = "") -> str:
     if len(content) > _MAX_NOTE_CHARS:
         return f"Note too long ({len(content):,} chars). Maximum is {_MAX_NOTE_CHARS:,}."
     try:
-        note_id = secrets.token_hex(4)
+        note_id = short_id(8)
         ts = datetime.now().isoformat()
         user_id = get_current_user_id()
         conn = get_conn()

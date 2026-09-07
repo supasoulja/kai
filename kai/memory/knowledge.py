@@ -14,12 +14,12 @@ Knowledge system — two-layer learned intelligence:
 
 import sqlite3
 import threading
-import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from kai.config import FAST_EMBED_DIM, HANDOFF_THRESHOLD
+from kai.util.ids import new_id
 
 EmbedFn = Callable[[str], list[float]]
 
@@ -219,7 +219,7 @@ class HandoffRouter:
             import sqlite_vec
 
             conn = get_conn()
-            pattern_id = str(uuid.uuid4())
+            pattern_id = new_id()
             ts = datetime.now().isoformat()
 
             conn.execute(
@@ -281,7 +281,7 @@ class HandoffRouter:
                 return
 
             for pattern, mode in _SEED_PATTERNS:
-                pid = str(uuid.uuid4())
+                pid = new_id()
                 ts = datetime.now().isoformat()
                 conn.execute(
                     "INSERT INTO handoff_patterns "
@@ -381,7 +381,7 @@ class KnowledgeStore:
             import sqlite_vec
 
             conn = self._conn()
-            entry_id = str(uuid.uuid4())
+            entry_id = new_id()
             ts = datetime.now().isoformat()
 
             conn.execute(

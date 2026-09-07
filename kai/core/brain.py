@@ -13,7 +13,6 @@ import json
 import re
 import threading
 import time
-import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -39,6 +38,7 @@ from kai.memory.manager import MemoryManager
 from kai.memory.privacy import learning_enabled
 from kai.store import sessions
 from kai.util import log
+from kai.util.ids import short_id
 from kai.util.text import strip_thinking as _strip_thinking
 
 if TYPE_CHECKING:
@@ -712,7 +712,7 @@ class Brain:
         Tool calls are handled internally (non-streaming) before the
         final answer is streamed.
         """
-        trace_id = trace_id or str(uuid.uuid4())[:8]
+        trace_id = trace_id or short_id(8)
         turn_start = time.monotonic()
         tools_used: list[str] = []
         self._cancel.clear()  # fresh turn — clear any prior stop request

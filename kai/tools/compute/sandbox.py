@@ -14,12 +14,12 @@ Protected system paths are permanently blocked — no proposal, no override.
 
 import shutil
 import time
-import uuid
 from pathlib import Path
 
 import kai.config as cfg
 from kai.store.db import get_conn
 from kai.tools.registry import registry
+from kai.util.ids import short_id
 
 # ── Protected paths (never touched, period) ──────────────────────────────────
 
@@ -108,7 +108,7 @@ def _clean_expired():
 
 def _create_proposal(op: str, source: str, dest: str = "") -> dict:
     _clean_expired()
-    pid = uuid.uuid4().hex[:8]
+    pid = short_id(8)
     entry = {
         "op": op,
         "source": source,
@@ -144,7 +144,7 @@ def _log_op(op: str, source: str, dest: str, status: str, user_id: int = 0):
     conn.execute(
         "INSERT INTO sandbox_log (id, timestamp, operation, source, dest, status, user_id) "
         "VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
-        (uuid.uuid4().hex[:12], op, source, dest, status, user_id),
+        (short_id(12), op, source, dest, status, user_id),
     )
     conn.commit()
 

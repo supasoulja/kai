@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import re
-import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -30,6 +29,7 @@ from enum import IntEnum
 
 import kai.config as cfg
 from kai.llm.vecmath import cosine_distance as _cosine_distance  # shared cosine math
+from kai.util.ids import short_id
 
 
 class Verdict(IntEnum):
@@ -307,7 +307,7 @@ def _write_log(
             "(id, user_id, ts, tool_name, phase, verdict, score, reason, tool_args, output_snippet) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                secrets.token_hex(8),
+                short_id(16),
                 user_id,
                 time.time(),
                 tool_name,

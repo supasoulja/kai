@@ -15,11 +15,11 @@ loaded, adds zero VRAM pressure, and runs in under 100ms.
 
 from __future__ import annotations
 
-import secrets
 import time
 from datetime import datetime
 
 import kai.config as cfg
+from kai.util.ids import short_id
 
 
 def generate_and_store(user_id: int = 0) -> None:
@@ -80,7 +80,7 @@ def _store(content: str, user_id: int) -> None:
         conn.execute(
             "INSERT INTO pending_briefings (id, user_id, generated_at, content, delivered) "
             "VALUES (?, ?, ?, ?, 0)",
-            (secrets.token_hex(8), user_id, time.time(), content),
+            (short_id(16), user_id, time.time(), content),
         )
         conn.commit()
     except Exception:

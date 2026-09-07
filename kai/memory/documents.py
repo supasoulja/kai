@@ -13,13 +13,13 @@ The docs.search tool lets the model do targeted retrieval.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from kai.config import DEBUG
 from kai.store.db import get_conn, like_escape, sqlite_vec_available, vec_knn
+from kai.util.ids import new_id
 
 EmbedFn = Callable[[str], list[float]]
 
@@ -138,7 +138,7 @@ def ingest_text(
     if not chunks:
         raise ValueError("No text could be extracted from the document.")
 
-    doc_id = str(uuid.uuid4())
+    doc_id = new_id()
     now = datetime.now().isoformat()
     filename = source_name
     char_count = len(text)
@@ -152,7 +152,7 @@ def ingest_text(
     )
     chunk_rows = []
     for i, chunk_text in enumerate(chunks):
-        chunk_id = str(uuid.uuid4())
+        chunk_id = new_id()
         chunk_rows.append((chunk_id, doc_id, i, chunk_text))
     conn.executemany(
         "INSERT INTO rag_chunks (chunk_id, doc_id, chunk_index, content) VALUES (?, ?, ?, ?)",

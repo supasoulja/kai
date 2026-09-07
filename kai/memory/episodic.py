@@ -5,7 +5,6 @@ Falls back to substring search if sqlite-vec is not installed.
 """
 
 import json
-import uuid
 from collections.abc import Callable
 from datetime import datetime
 
@@ -18,6 +17,7 @@ from kai.store.db import (
     vec_knn,
 )
 from kai.store.schema import EpisodicEntry
+from kai.util.ids import new_id
 
 EmbedFn = Callable[[str], list[float]]
 
@@ -30,7 +30,7 @@ def add_entry(
     user_id: int = 0,
 ) -> str:
     """Store an episodic entry. Returns the entry ID."""
-    entry_id = str(uuid.uuid4())
+    entry_id = new_id()
     ts = datetime.now().isoformat()
     meta_json = json.dumps(metadata or {})
 
@@ -236,7 +236,7 @@ def archive_and_clear_turns(
     failure there never undoes the archive (same contract as add_entry).
     """
     conn = get_conn()
-    entry_id = str(uuid.uuid4())
+    entry_id = new_id()
     ts = datetime.now().isoformat()
 
     # Capture the verbatim transcript and the turn rowids BEFORE anything is

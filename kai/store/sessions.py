@@ -6,17 +6,17 @@ Tables (in kai.db):
   session_messages — one row per message (user or assistant)
 """
 
-import uuid
 from datetime import datetime
 
 from kai.store.db import get_conn, like_escape
+from kai.util.ids import new_id
 
 # ── Write ────────────────────────────────────────────────────────────────────
 
 
 def new_session(title: str, user_id: int = 0) -> str:
     """Create a new session row and return its UUID."""
-    sid = str(uuid.uuid4())
+    sid = new_id()
     now = datetime.now().isoformat()
     conn = get_conn()
     conn.execute(
