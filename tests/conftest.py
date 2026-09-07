@@ -39,7 +39,7 @@ def pytest_configure(config):
         tmp.close()
         cfg.DB_PATH = Path(tmp.name)
 
-    # The tree/state/knowledge dirs default to the real var/ too — and since
+    # The tree/state/knowledge/workspace dirs default to the real ones too — and since
     # _post_turn now WRITES to the tree (extraction + reinforcement) on top of the
     # regex mirror commit_turn already did, an un-isolated Brain test would mutate
     # real memory. Redirect them to a session sandbox. Modules capture these at
@@ -49,7 +49,11 @@ def pytest_configure(config):
         cfg.TREE_DIR = sandbox / "tree"
         cfg.STATE_DIR = sandbox / "state"
         cfg.KNOWLEDGE_DIR = sandbox / "knowledge"
-        for d in (cfg.TREE_DIR, cfg.STATE_DIR, cfg.KNOWLEDGE_DIR):
+        # notes.save mirrors every note to disk, so an un-isolated notes test
+        # drops .md/.txt files into the user's real ~/KaiFiles/notes.
+        cfg.WORKSPACE_DIR = sandbox / "KaiFiles"
+        cfg.NOTES_DIR = cfg.WORKSPACE_DIR / "notes"
+        for d in (cfg.TREE_DIR, cfg.STATE_DIR, cfg.KNOWLEDGE_DIR, cfg.NOTES_DIR):
             d.mkdir(parents=True, exist_ok=True)
         for modname, attr, val in (
             ("kai.memory.tree", "_TREE_DIR", cfg.TREE_DIR),

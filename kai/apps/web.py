@@ -314,6 +314,9 @@ from kai.api.routes import (
     memory as _memory_router,
 )
 from kai.api.routes import (
+    notes as _notes_router,
+)
+from kai.api.routes import (
     pages as _pages_router,
 )
 from kai.api.routes import (
@@ -339,6 +342,7 @@ for _r in (
     _debug_router,
     _documents_router,
     _system_router,
+    _notes_router,
 ):
     app.include_router(_r.router)
 

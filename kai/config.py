@@ -327,6 +327,14 @@ WORKSPACE_DIR = Path(
     or (Path("C:/KaiFiles") if IS_WINDOWS else Path.home() / "KaiFiles")
 )
 
+# Where notes.save mirrors each note to disk as .md + .txt. The SQLite `notes`
+# table stays the source of truth for search; these files are the human-readable
+# copy you can open, diff, and commit. Defaults inside the workspace sandbox.
+# If the user points Kai at a notes repo (settings → Notes & repo, stored as the
+# `notes_repo` fact), notes land in <repo>/NOTES_REPO_SUBDIR instead.
+NOTES_DIR = WORKSPACE_DIR / "notes"
+NOTES_REPO_SUBDIR = "notes"  # folder inside the configured repo notes are written to
+
 # Git repos Kai is allowed to clone. Add URLs here to grant access.
 # Trailing slashes and .git suffixes are ignored during comparison.
 ALLOWED_GIT_REPOS: list[str] = [

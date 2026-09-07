@@ -92,3 +92,8 @@ class StudyDownloadRequest(BaseModel):
 
 class StudyAskRequest(BaseModel):
     question: str
+
+
+class NotesRepoRequest(BaseModel):
+    path: str = ""
+    message: str = ""

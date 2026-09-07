@@ -1,11 +1,18 @@
 """
-notes.save / notes.search / notes.list — persistent note storage in SQLite.
+notes.save / notes.search / notes.list / notes.commit — persistent note storage.
+
+SQLite is the source of truth (search and list read it); every saved note is
+also mirrored to disk as a .md + .txt pair by kai.store.note_files, so notes are
+readable outside Kai and can be committed to a local git repo the user nominates
+in Settings. A disk failure never loses the note — the DB write is what counts,
+and the file write is reported as a warning alongside it.
 """
 
 import secrets
 from datetime import datetime
 
 from kai.core._app_state import get_current_user_id
+from kai.store import note_files
 from kai.store.db import get_conn, like_escape
 from kai.tools.registry import registry
 
@@ -44,9 +51,18 @@ def save_note(content: str, title: str = "") -> str:
             (note_id, user_id, ts, title or None, content),
         )
         conn.commit()
-        return f"Saved note [{note_id}]: {title or content[:40]}"
     except Exception as e:
         return f"Error saving note: {e}"
+
+    # The note is safely in the DB from here on. Mirroring it to disk is a
+    # best-effort extra: a full disk or a bad repo path degrades to a warning
+    # rather than telling the user their note wasn't saved.
+    saved = f"Saved note [{note_id}]: {title or content[:40]}"
+    try:
+        paths = note_files.write_note(note_id, ts, title, content, user_id=user_id)
+        return f"{saved}\n  → {paths[0]}\n  → {paths[1]}"
+    except Exception as e:
+        return f"{saved}\n  (warning: could not write note files: {e})"
 
 
 @registry.tool(
@@ -109,3 +125,56 @@ def list_notes() -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"Error listing notes: {e}"
+
+
+@registry.tool(
+    name="notes.commit",
+    description=(
+        "Commit saved note files to the local git repo the user configured in "
+        "Settings → Notes & repo. Use when the user asks to commit, save, or "
+        "check in their notes. Stages only the notes folder — never other work "
+        "in that repo — and does not push."
+    ),
+    parameters={
+        "message": {
+            "type": "string",
+            "description": "Optional commit message. Defaults to a summary of the files committed.",
+        },
+    },
+    category="workspace_and_code",
+    label="Committing notes",
+    risk="caution",
+)
+def commit_notes(message: str = "") -> str:
+    return note_files.commit_notes(message, user_id=get_current_user_id())
+
+
+@registry.tool(
+    name="notes.where",
+    description=(
+        "Show where notes are being written on disk and whether a git repo is "
+        "configured for them. Use when the user asks where their notes are kept."
+    ),
+    parameters={},
+    category="notes_and_memory",
+    label="Checking where notes live",
+    risk="safe",
+)
+def notes_where() -> str:
+    info = note_files.repo_status(user_id=get_current_user_id())
+    lines = [f"Notes folder: {info['notes_dir']} ({info['file_count']} note files)"]
+    if info["repo"]:
+        branch = f" on {info['branch']}" if info["branch"] else ""
+        lines.append(f"Git repo: {info['repo']}{branch}")
+        lines.append(
+            f"Uncommitted note changes: {info['pending']}"
+            if info["pending"]
+            else "All notes are committed."
+        )
+    elif info["repo_missing"]:
+        lines.append(
+            f"Configured repo is missing or is no longer a git repo: {info['configured_path']}"
+        )
+    else:
+        lines.append("No git repo configured (Settings → Notes & repo).")
+    return "\n".join(lines)

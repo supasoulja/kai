@@ -150,6 +150,7 @@ function switchTab(tabName) {
   if (tabName === 'study') loadStudy();
   if (tabName === 'settings') settingsBackToHub();
   if (tabName === 'memory') loadMemoryBrowser();
+  if (tabName === 'notes') loadNotes();
   if (tabName === 'chat') {
     if (inputEl) inputEl.focus();
     // Refresh goals banner when returning to chat
@@ -2473,6 +2474,7 @@ function openSettingsSub(name) {
   // Refresh the data the opened page shows.
   if (name === 'brains') { loadModels(); loadToolLevel(); loadToolsSettings(); }
   else if (name === 'skills') loadRecipes();
+  else if (name === 'notes') loadNotesSettings();
   const pane = $('panel-settings');
   if (pane) pane.scrollTop = 0;
 }
@@ -3648,3 +3650,180 @@ function closeStudyReader() {
   const epubViewer = document.getElementById('epub-viewer');
   if (epubViewer) epubViewer.innerHTML = '';
 }
+
+
+// ── Notes ────────────────────────────────────────────────────────────────────
+// Browser for notes Kai saved (notes.save), plus the git repo they mirror into.
+// The DB is the listing source; `on_disk` says whether the .md/.txt pair exists,
+// which is false for notes saved before file mirroring landed until Export runs.
+
+let _notes = [];
+let _noteSel = null;
+
+function _notesMsg(el, text, isErr) {
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('err', !!isErr);
+  el.style.display = text ? 'block' : 'none';
+}
+
+async function loadNotes() {
+  const list = $('notes-list');
+  if (!list) return;
+  try {
+    const data = await fetch('/api/notes').then(r => r.json());
+    _notes = data.notes || [];
+    const loc = $('notes-loc');
+    if (loc) loc.textContent = data.dir || '';
+    renderNotesList();
+  } catch {
+    list.innerHTML = '<div class="notes-empty" style="padding:16px">Could not load notes.</div>';
+  }
+}
+
+function renderNotesList(filter) {
+  const list = $('notes-list');
+  if (!list) return;
+  const q = (filter || '').trim().toLowerCase();
+  const rows = q
+    ? _notes.filter(n => ((n.title || '') + ' ' + (n.preview || '')).toLowerCase().includes(q))
+    : _notes;
+
+  if (!rows.length) {
+    list.innerHTML = `<div class="notes-empty" style="padding:16px">${q ? 'No notes match.' : 'No notes yet. Ask Kai to take one.'}</div>`;
+    return;
+  }
+
+  list.innerHTML = rows.map(n => {
+    const title = esc(n.title || (n.preview || '').slice(0, 40) || 'Untitled');
+    const dot = n.on_disk
+      ? '<span class="notes-dot" title="Written to disk">&#9679;</span>'
+      : '<span class="notes-dot-off" title="Not on disk yet — run Export all">&#9675;</span>';
+    const active = n.id === _noteSel ? ' active' : '';
+    return `<button class="notes-item${active}" data-id="${esc(n.id)}">
+      <div class="notes-item-title">${title}</div>
+      <div class="notes-item-meta">${dot} ${esc((n.timestamp || '').slice(0, 10))} · ${n.chars} chars</div>
+    </button>`;
+  }).join('');
+
+  list.querySelectorAll('.notes-item').forEach(b =>
+    b.addEventListener('click', () => openNote(b.dataset.id)));
+}
+
+async function openNote(id) {
+  const view = $('notes-view');
+  if (!view) return;
+  _noteSel = id;
+  renderNotesList($('notes-search')?.value);
+  try {
+    const n = await fetch(`/api/notes/${encodeURIComponent(id)}`).then(r => {
+      if (!r.ok) throw new Error('not found');
+      return r.json();
+    });
+    const meta = _notes.find(x => x.id === id) || {};
+    const ts = (n.timestamp || '').replace('T', ' ').slice(0, 16);
+    const files = meta.md
+      ? `<div class="notes-view-files">
+           <div class="settings-label" style="margin-bottom:6px">Files</div>
+           <div class="notes-path">${esc(meta.md)}</div>
+           <div class="notes-path" style="margin-top:4px">${esc(meta.txt)}</div>
+           ${meta.on_disk ? '' : '<div class="settings-nav-sub" style="margin-top:6px">Not written yet — use “Export all”.</div>'}
+         </div>`
+      : '';
+    view.innerHTML = `
+      <div class="notes-view-title">${esc(n.title || 'Untitled')}</div>
+      <div class="notes-view-meta">${esc(ts)} · id ${esc(n.id)}</div>
+      <div class="notes-view-body">${esc(n.content)}</div>
+      ${files}`;
+  } catch {
+    view.innerHTML = '<div class="notes-empty">Could not open that note.</div>';
+  }
+}
+
+async function _notesPost(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || 'Request failed.');
+  return d;
+}
+
+async function exportNotes(msgEl) {
+  _notesMsg(msgEl, 'Exporting…');
+  try {
+    const d = await _notesPost('/api/notes/export');
+    const failed = d.failed && d.failed.length ? `\n${d.failed.length} failed: ${d.failed[0]}` : '';
+    _notesMsg(msgEl, `Wrote ${d.written} note(s) to ${d.dir}${failed}`, !d.ok);
+    loadNotes();
+  } catch (e) { _notesMsg(msgEl, e.message, true); }
+}
+
+async function commitNotes(msgEl) {
+  _notesMsg(msgEl, 'Committing…');
+  try {
+    const d = await _notesPost('/api/notes/commit', {});
+    _notesMsg(msgEl, d.result, false);
+    loadNotes();
+  } catch (e) { _notesMsg(msgEl, e.message, true); }
+}
+
+// ── Notes settings page ──────────────────────────────────────────────────────
+
+async function loadNotesSettings() {
+  try {
+    const d = await fetch('/api/notes/repo/status').then(r => r.json());
+    const dir = $('notes-set-dir');
+    if (dir) dir.textContent = `${d.notes_dir}  (${d.file_count} files)`;
+
+    const input = $('notes-repo-input');
+    if (input) input.value = d.repo || d.configured_path || '';
+
+    const branch = $('notes-set-branch');
+    if (branch) {
+      branch.textContent = d.repo
+        ? `${d.branch || '?'} · ${d.pending ? d.pending + ' uncommitted' : 'clean'}`
+        : '';
+    }
+    _notesMsg($('notes-repo-msg'),
+      d.repo_missing ? `Configured repo is missing or no longer a git repo: ${d.configured_path}` : '',
+      true);
+  } catch { /* settings page is read-only decoration until the user acts */ }
+}
+
+async function saveNotesRepo() {
+  const msg = $('notes-repo-msg');
+  const path = ($('notes-repo-input')?.value || '').trim();
+  _notesMsg(msg, 'Checking…');
+  try {
+    const d = await _notesPost('/api/notes/repo', { path });
+    // Refresh first — loadNotesSettings clears the message box, so the
+    // confirmation has to be written after it, not before.
+    await loadNotesSettings();
+    _notesMsg(msg, `Notes will be saved to ${d.notes_dir}`, false);
+    loadNotes();
+  } catch (e) { _notesMsg(msg, e.message, true); }
+}
+
+async function clearNotesRepo() {
+  const msg = $('notes-repo-msg');
+  try {
+    const r = await fetch('/api/notes/repo', { method: 'DELETE' });
+    const d = await r.json();
+    const input = $('notes-repo-input');
+    if (input) input.value = '';
+    await loadNotesSettings();
+    _notesMsg(msg, `Repo cleared. Notes go to ${d.notes_dir}`, false);
+    loadNotes();
+  } catch { _notesMsg(msg, 'Could not clear the repo.', true); }
+}
+
+$('notes-search')?.addEventListener('input', e => renderNotesList(e.target.value));
+$('notes-export-btn')?.addEventListener('click', () => exportNotes($('notes-msg')));
+$('notes-commit-btn')?.addEventListener('click', () => commitNotes($('notes-msg')));
+$('notes-repo-save')?.addEventListener('click', saveNotesRepo);
+$('notes-repo-clear')?.addEventListener('click', clearNotesRepo);
+$('notes-set-export')?.addEventListener('click', () => exportNotes($('notes-set-msg')));
+$('notes-set-commit')?.addEventListener('click', () => commitNotes($('notes-set-msg')));
