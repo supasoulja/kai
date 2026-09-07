@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 import kai.config as cfg
+from kai.util import log
 
 # ── Singleton state ──────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ def _download_model() -> Path:
         return model_dir
 
     model_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[~] Downloading embedding model {cfg.FAST_EMBED_MODEL}...")
+    log.info(f"Downloading embedding model {cfg.FAST_EMBED_MODEL}...")
 
     from huggingface_hub import hf_hub_download
 
@@ -67,7 +68,7 @@ def _download_model() -> Path:
         local_dir=str(model_dir),
     )
 
-    print(f"[+] Model cached at {model_dir}")
+    log.ok(f"Model cached at {model_dir}")
     return model_dir
 
 
@@ -177,7 +178,7 @@ def warm_up() -> None:
     # Quick sanity check
     test = _embed_texts(["test"])
     dim = test.shape[1]
-    print(f"[+] Fast embed ready  ({cfg.FAST_EMBED_MODEL}, {dim}-dim, CPU)")
+    log.ok(f"Fast embed ready  ({cfg.FAST_EMBED_MODEL}, {dim}-dim, CPU)")
 
 
 # ── Shutdown: HQ re-embed ────────────────────────────────────────────────────
@@ -214,7 +215,7 @@ def shutdown_reembed(progress_cb=None) -> None:
 
     ollama = OllamaClient(cfg.OLLAMA_BASE_URL)
     if not ollama.is_alive():
-        print("[!] Ollama not running — skipping HQ re-embed")
+        log.warn("Ollama not running — skipping HQ re-embed")
         return
 
     import sqlite_vec
@@ -248,7 +249,7 @@ def shutdown_reembed(progress_cb=None) -> None:
         to_embed = [(rid, content) for rid, content in rows if rid not in existing]
 
         if to_embed:
-            print(f"[~] HQ re-embed: {len(to_embed)} episodic entries...")
+            log.info(f"HQ re-embed: {len(to_embed)} episodic entries...")
             _tick(f"{len(to_embed)} episodic entries", 0)
             texts = [content for _, content in to_embed]
             try:
@@ -259,9 +260,9 @@ def shutdown_reembed(progress_cb=None) -> None:
                         (rid, sqlite_vec.serialize_float32(emb)),
                     )
                 conn.commit()
-                print(f"[+] HQ re-embed: {len(to_embed)} episodic entries done")
+                log.ok(f"HQ re-embed: {len(to_embed)} episodic entries done")
             except Exception as exc:
-                print(f"[!] HQ episodic re-embed failed: {exc}")
+                log.warn(f"HQ episodic re-embed failed: {exc}")
 
     # ── RAG chunks ───────────────────────────────────────────────────────
     rag_rows = conn.execute("SELECT rowid, content FROM rag_chunks").fetchall()
@@ -277,7 +278,7 @@ def shutdown_reembed(progress_cb=None) -> None:
         to_embed_rag = [(rid, content) for rid, content in rag_rows if rid not in existing_rag]
 
         if to_embed_rag:
-            print(f"[~] HQ re-embed: {len(to_embed_rag)} RAG chunks...")
+            log.info(f"HQ re-embed: {len(to_embed_rag)} RAG chunks...")
             _tick(f"{len(to_embed_rag)} document chunks", 0)
             texts = [content for _, content in to_embed_rag]
             try:
@@ -297,6 +298,6 @@ def shutdown_reembed(progress_cb=None) -> None:
                         f"{min(i + batch_size, total)}/{total} document chunks",
                         int(min(i + batch_size, total) * 100 / total),
                     )
-                print(f"[+] HQ re-embed: {len(to_embed_rag)} RAG chunks done")
+                log.ok(f"HQ re-embed: {len(to_embed_rag)} RAG chunks done")
             except Exception as exc:
-                print(f"[!] HQ RAG re-embed failed: {exc}")
+                log.warn(f"HQ RAG re-embed failed: {exc}")

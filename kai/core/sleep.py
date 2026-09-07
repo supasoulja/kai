@@ -15,6 +15,7 @@ Human-readable, inspectable, ~1000 chars max.
 from datetime import datetime
 
 from kai.config import CHAT_MODEL, MEMORY_DIR, TEMPERATURE_REASON
+from kai.util import log
 from kai.util.text import strip_thinking
 
 _WELCOME_BACK_FILE = MEMORY_DIR / "welcome_back.txt"
@@ -171,7 +172,7 @@ def run_sleep_cycle(ollama, brain) -> None:
     HQ re-embed is handled separately (embed.shutdown_reembed).
     Memory consolidation will be added here later.
     """
-    print("[~] Kai is going to sleep...")
+    log.info("Kai is going to sleep...")
 
     # Fact review runs regardless of whether there was a conversation — it's
     # time-based maintenance (decay un-reconfirmed guesses, prune the faded ones,
@@ -182,22 +183,22 @@ def run_sleep_cycle(ollama, brain) -> None:
 
             stats = _semantic.review_facts(user_id=brain.user_id)
             if stats["decayed"] or stats["purged"]:
-                print(f"[~] Fact review: decayed {stats['decayed']}, purged {stats['purged']}")
+                log.info(f"Fact review: decayed {stats['decayed']}, purged {stats['purged']}")
         except Exception:
             pass
 
     session_history = brain.snapshot_history() if brain else []
 
     if not session_history:
-        print("[~] No conversation this session — skipping welcome-back message.")
+        log.info("No conversation this session — skipping welcome-back message.")
         return
 
     msg = generate_welcome_back(ollama, session_history, model=brain.model)
     if msg:
         save_welcome_back(msg)
-        print(f"[+] Welcome-back message saved ({len(msg)} chars)")
+        log.ok(f"Welcome-back message saved ({len(msg)} chars)")
     else:
-        print("[~] Couldn't generate welcome-back message — skipping.")
+        log.info("Couldn't generate welcome-back message — skipping.")
 
     # Clean shutdown produced a real note — the crash checkpoint is now stale.
     clear_checkpoint()

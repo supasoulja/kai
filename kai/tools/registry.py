@@ -22,6 +22,7 @@ from typing import Any
 
 import kai.config as cfg
 from kai.llm.vecmath import cosine as _cosine
+from kai.util import log
 
 
 class ToolRegistry:
@@ -112,26 +113,22 @@ class ToolRegistry:
 
         if best_name and best_score >= threshold:
             if not self._args_fit(best_name, args):
-                if cfg.DEBUG:
-                    print(
-                        f"[alias] rejected {hallucinated_name!r} → {best_name!r} "
-                        f"(score={best_score:.2f}) — args don't fit the target schema"
-                    )
+                log.debug(
+                    f"[alias] rejected {hallucinated_name!r} → {best_name!r} "
+                    f"(score={best_score:.2f}) — args don't fit the target schema"
+                )
                 return None
             self._aliases[hallucinated_name] = best_name
             self._persist_alias(hallucinated_name, best_name, best_score)
-            if cfg.DEBUG:
-                print(
-                    f"[alias] learned: {hallucinated_name!r} → {best_name!r} "
-                    f"(score={best_score:.2f})"
-                )
+            log.debug(
+                f"[alias] learned: {hallucinated_name!r} → {best_name!r} (score={best_score:.2f})"
+            )
             return best_name
 
-        if cfg.DEBUG:
-            print(
-                f"[alias] no match for {hallucinated_name!r} "
-                f"(best={best_name!r}, score={best_score:.2f})"
-            )
+        log.debug(
+            f"[alias] no match for {hallucinated_name!r} "
+            f"(best={best_name!r}, score={best_score:.2f})"
+        )
         return None
 
     def _args_fit(self, tool_name: str, args: dict | None) -> bool:
@@ -458,7 +455,7 @@ class ToolRegistry:
             selected -= exclude
         if cfg.DEBUG:
             chosen = [(c, f"{s:.2f}") for c, s in scores[:top_k]]
-            print(f"[tool select] categories={chosen}  tools={len(selected)}")
+            log.debug(f"[tool select] categories={chosen}  tools={len(selected)}")
         schemas = [t["schema"] for name, t in self._tools.items() if name in selected]
         # Include alias schemas for selected tools so the model can call either form
         schemas += self._alias_schemas(for_names=selected, exclude=exclude)

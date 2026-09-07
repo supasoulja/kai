@@ -843,9 +843,9 @@ def _archive_pending_turns(ollama: OllamaClient) -> None:
             _, summary = _strip_thinking(summary)
             if summary:
                 memory.archive_history(summary)
-                print(f"[✓] Archived {len(pending.splitlines())} lines for user {uid}")
+                _klog.ok(f"Archived {len(pending.splitlines())} lines for user {uid}")
         except Exception as exc:
-            print(f"[!] Startup archive failed for user {uid} (non-critical): {exc}")
+            _klog.warn(f"Startup archive failed for user {uid} (non-critical): {exc}")
 
 
 def _init() -> None:
@@ -905,7 +905,7 @@ def _init() -> None:
     # for the server after 30s. The web UI handles an unwarmed model fine — the
     # first request just loads it on demand.
     def _prewarm_chat_model() -> None:
-        print(f"[~] Loading {cfg.CHAT_MODEL} into VRAM (background)...")
+        _klog.info(f"Loading {cfg.CHAT_MODEL} into VRAM (background)...")
         t_warm = _time.monotonic()
         try:
             import urllib.request
@@ -928,9 +928,9 @@ def _init() -> None:
             )
             with urllib.request.urlopen(warm_req, timeout=300) as _resp:
                 _resp.read()
-            print(f"[+] Model loaded in {_time.monotonic() - t_warm:.1f}s")
+            _klog.ok(f"Model loaded in {_time.monotonic() - t_warm:.1f}s")
         except Exception as exc:
-            print(f"[!] Model pre-warm failed (non-critical): {exc}")
+            _klog.warn(f"Model pre-warm failed (non-critical): {exc}")
 
     threading.Thread(target=_prewarm_chat_model, daemon=True).start()
 
@@ -941,16 +941,16 @@ def _init() -> None:
     sched = get_scheduler()
     sched.add_daily(cfg.BRIEFING_TIME, lambda: _gen_briefing(user_id=0), name="morning-briefing")
     sched.start()
-    print(f"[+] Scheduler started — daily briefing at {cfg.BRIEFING_TIME}")
+    _klog.ok(f"Scheduler started — daily briefing at {cfg.BRIEFING_TIME}")
 
-    print(f"[+] Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
+    _klog.ok(f"Kai ready  —  model: {cfg.CHAT_MODEL}  think: ON")
 
     # Upgrade awareness — detect version changes and write an episodic memory entry
     from kai.system.upgrade import check_for_upgrade
 
     upgrade_msg = check_for_upgrade(embed_fn=fast_embed)
     if upgrade_msg:
-        print(f"[+] Upgrade detected: {upgrade_msg[:80]}...")
+        _klog.ok(f"Upgrade detected: {upgrade_msg[:80]}...")
 
     # Pre-warm STT + TTS sequentially — both use onnxruntime and hang if loaded
     # simultaneously. Loading one after the other avoids ONNX contention.
@@ -959,16 +959,16 @@ def _init() -> None:
             from kai.audio import _get_whisper
 
             _get_whisper()
-            print("[+] Whisper STT ready")
+            _klog.ok("Whisper STT ready")
         except Exception as exc:
-            print(f"[!] Whisper pre-warm failed: {exc}")
+            _klog.warn(f"Whisper pre-warm failed: {exc}")
         try:
             from kai.audio import _get_kokoro
 
             _get_kokoro()
-            print("[+] Kokoro TTS ready")
+            _klog.ok("Kokoro TTS ready")
         except Exception as exc:
-            print(f"[!] Kokoro pre-warm failed: {exc}")
+            _klog.warn(f"Kokoro pre-warm failed: {exc}")
 
     threading.Thread(target=_warm_audio, daemon=True).start()
 
@@ -1056,7 +1056,7 @@ def _generate_self_signed_cert(cert_dir: Path, lan_ip: str | None = None) -> tup
         )
     )
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    print(f"[+] Generated self-signed TLS cert: {cert_path}")
+    _klog.ok(f"Generated self-signed TLS cert: {cert_path}")
     return str(cert_path), str(key_path)
 
 

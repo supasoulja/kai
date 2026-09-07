@@ -20,6 +20,8 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 
+from kai.util import log
+
 
 class Scheduler:
     def __init__(self) -> None:
@@ -54,7 +56,7 @@ class Scheduler:
                     try:
                         job["fn"]()
                     except Exception as exc:
-                        print(f"[scheduler] {job['name']} failed: {exc}")
+                        log.warn(f"[scheduler] {job['name']} failed: {exc}")
                     self._last_run[job["name"]] = today
             self._stop.wait(60)  # check once per minute
 

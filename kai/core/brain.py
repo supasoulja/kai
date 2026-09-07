@@ -38,6 +38,7 @@ from kai.memory import pending
 from kai.memory.manager import MemoryManager
 from kai.memory.privacy import learning_enabled
 from kai.store import sessions
+from kai.util import log
 from kai.util.text import strip_thinking as _strip_thinking
 
 if TYPE_CHECKING:
@@ -728,7 +729,7 @@ class Brain:
         # If a confirm-gated tool is waiting and the user just said "go ahead",
         # execute the tool now and stream the model's presentation of results.
         if self._pending_confirm and _CONFIRM_RE.match(user_input.strip()):
-            print(f"[confirm] user confirmed — executing {self._pending_confirm['name']}")
+            log.info(f"[confirm] user confirmed — executing {self._pending_confirm['name']}")
             yield from self._run_confirmed_tool(
                 user_input,
                 trace_id,
@@ -739,7 +740,7 @@ class Brain:
 
         # If the user said something other than confirm, clear the pending tool
         if self._pending_confirm:
-            print(
+            log.info(
                 f"[confirm] user said '{user_input}' — clearing pending {self._pending_confirm['name']}"
             )
             self._pending_confirm = None
@@ -991,8 +992,7 @@ class Brain:
                     _fast_embed,
                     query_emb=query_emb,
                 )
-                if cfg.DEBUG:
-                    print(f"[handoff] mode={handoff_mode} conf={handoff_conf:.3f}")
+                log.debug(f"[handoff] mode={handoff_mode} conf={handoff_conf:.3f}")
             except Exception:
                 pass
         return query_emb, handoff_mode
@@ -1078,8 +1078,7 @@ class Brain:
         # its embedding — when it says tool/researcher, open the gate even if
         # the keyword regex missed. New tools then work without new keywords.
         if not gate and cfg.SEMANTIC_TOOL_GATE and handoff_mode in ("tool", "researcher"):
-            if cfg.DEBUG:
-                print(f"[tool gate] keyword miss, semantic hit ({handoff_mode})")
+            log.debug(f"[tool gate] keyword miss, semantic hit ({handoff_mode})")
             gate = "direct"
         if not gate:
             # A durable fact stated in passing ("I work as a welder") is not a
@@ -1493,11 +1492,9 @@ class Brain:
             from kai.llm.embed import embed_batch as _fast_embed_batch
 
             self._tool_index = self.tool_registry.build_category_index(_fast_embed_batch)
-            if cfg.DEBUG:
-                print(f"[tool index] {len(self._tool_index)} categories indexed")
+            log.debug(f"[tool index] {len(self._tool_index)} categories indexed")
         except Exception as exc:
-            if cfg.DEBUG:
-                print(f"[tool index] build failed (will use full schema): {exc}")
+            log.debug(f"[tool index] build failed (will use full schema): {exc}")
         finally:
             self._tool_index_ready = True
 
@@ -1513,11 +1510,9 @@ class Brain:
             from kai.llm.embed import embed_batch as _fast_embed_batch
 
             self.memory.init_router(_fast_embed_batch)
-            if cfg.DEBUG:
-                print(f"[memory router] {len(self.memory._domain_index)} domains indexed")
+            log.debug(f"[memory router] {len(self.memory._domain_index)} domains indexed")
         except Exception as exc:
-            if cfg.DEBUG:
-                print(f"[memory router] build failed (will inject everything): {exc}")
+            log.debug(f"[memory router] build failed (will inject everything): {exc}")
         finally:
             self._memory_router_ready = True
 
@@ -1533,11 +1528,9 @@ class Brain:
             from kai.llm.embed import embed as _fast_embed
 
             self._handoff_router.init(_fast_embed)
-            if cfg.DEBUG:
-                print("[handoff router] seeded and ready")
+            log.debug("[handoff router] seeded and ready")
         except Exception as exc:
-            if cfg.DEBUG:
-                print(f"[handoff router] init failed: {exc}")
+            log.debug(f"[handoff router] init failed: {exc}")
         finally:
             self._handoff_router_ready = True
 
@@ -1675,8 +1668,8 @@ class Brain:
                 entries=saved,
                 source="knowledge_extraction",
             )
-        if cfg.DEBUG and saved:
-            print(f"[learn] saved/reinforced {saved} tree facts")
+        if saved:
+            log.debug(f"[learn] saved/reinforced {saved} tree facts")
 
     def get_embed_fn(self):
         from kai.llm.embed import embed as _fast_embed

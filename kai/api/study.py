@@ -22,6 +22,7 @@ from kai.api.models import (
     StudyFindFreeRequest,
     StudySearchRequest,
 )
+from kai.util import log
 
 router = APIRouter()
 
@@ -301,11 +302,9 @@ async def study_download(req: StudyDownloadRequest, request: Request):
         try:
             n = index_study_item(item_id, uid, str(file_path), ext)
             if n:
-                print(
-                    f"[+] Study: indexed {n} chunks for item {item_id} ({req.title or 'untitled'})"
-                )
+                log.ok(f"Study: indexed {n} chunks for item {item_id} ({req.title or 'untitled'})")
         except Exception as exc:
-            print(f"[!] Study index failed for item {item_id} (non-critical): {exc}")
+            log.warn(f"Study index failed for item {item_id} (non-critical): {exc}")
 
     threading.Thread(target=_index, daemon=True).start()
 

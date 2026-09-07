@@ -43,6 +43,7 @@ import threading
 from pathlib import Path
 
 import kai.config as cfg
+from kai.util import log
 
 _local = threading.local()
 # Which database files have had their schema created. Keyed by resolved path so
@@ -282,14 +283,14 @@ def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
             conn.rollback()
 
     # Old dimension detected — drop all vec tables so they'll be recreated
-    print("[~] Migrating vector tables to 384-dim (CPU fast embed)...")
+    log.info("Migrating vector tables to 384-dim (CPU fast embed)...")
     for vt in ["episodic_vec", "rag_chunks_vec"]:
         try:
             conn.execute(f"DROP TABLE IF EXISTS {vt}")
         except Exception:
             pass
     conn.commit()
-    print("[+] Old vector tables dropped — new ones will be created at 384-dim")
+    log.ok("Old vector tables dropped — new ones will be created at 384-dim")
 
 
 def _create_all_tables(conn: sqlite3.Connection) -> None:

@@ -16,6 +16,7 @@ import hashlib
 import secrets
 
 from kai.config import MEMORY_DIR
+from kai.util import log
 
 _KEY_FILE = MEMORY_DIR / "device.key"
 _device_key: bytes | None = None
@@ -40,7 +41,7 @@ def get_key() -> bytes:
             _KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # owner read/write only
         except Exception:
             pass  # Windows may not support chmod — acceptable
-        print(f"[+] Machine certificate created: {_KEY_FILE}")
+        log.ok(f"Machine certificate created: {_KEY_FILE}")
 
     return _device_key
 

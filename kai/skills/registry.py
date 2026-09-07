@@ -24,6 +24,7 @@ from typing import Any
 
 import kai.config as cfg
 from kai.skills.base import Skill, SkillResult
+from kai.util import log
 
 # Skill names must be safe identifiers: lowercase alphanumeric, hyphens, dots.
 # No path separators, no whitespace, no special characters.
@@ -404,7 +405,7 @@ class SkillRegistry:
             # Symlink / path-traversal guard: file must resolve inside the directory
             if not py_file.resolve().is_relative_to(real_dir):
                 if cfg.DEBUG:
-                    print(f"[skills] skipping {py_file} — resolves outside {real_dir}")
+                    log.warn(f"[skills] skipping {py_file} — resolves outside {real_dir}")
                 continue
             try:
                 mod = self._import_file(py_file, package)
@@ -434,7 +435,7 @@ class SkillRegistry:
             # Symlink / path-traversal guard
             if not md_file.resolve().is_relative_to(real_dir):
                 if cfg.DEBUG:
-                    print(f"[skills] skipping {md_file} — resolves outside {real_dir}")
+                    log.warn(f"[skills] skipping {md_file} — resolves outside {real_dir}")
                 continue
             skill = _parse_md_skill(md_file)
             if skill:

@@ -10,6 +10,7 @@ import urllib.request
 
 from kai.config import SEARCH_MAX_RESULTS
 from kai.tools.registry import registry
+from kai.util import log
 
 # recency → DuckDuckGo's `df` date-filter code.
 _RECENCY_CODES = {"day": "d", "week": "w", "month": "m", "year": "y"}
@@ -82,8 +83,8 @@ def _ddg_search(query: str, max_results: int = 5, recency: str = "") -> list[dic
         if results:
             return results
         if len(html) > 1000:
-            print(
-                "[!] search.web: DuckDuckGo HTML endpoint returned "
+            log.warn(
+                "search.web: DuckDuckGo HTML endpoint returned "
                 f"{len(html)} chars but 0 results parsed — trying DDG-Lite fallback. "
                 "If this recurs, check _parse_results() regex patterns."
             )

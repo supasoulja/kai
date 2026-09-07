@@ -33,6 +33,7 @@ from kai.tools.registry import (
 from kai.tools.registry import (
     confirm_tool_names as _confirm_tool_names,
 )
+from kai.util import log
 from kai.util.text import strip_thinking as _strip_thinking
 
 if TYPE_CHECKING:
@@ -107,8 +108,7 @@ def _match_narrated_intent(clean: str, known_tools: set[str]) -> dict | None:
         m = pattern.search(clean)
         if m:
             value = m.group(1).rstrip(".,;:!?")
-            if cfg.DEBUG:
-                print(f"[recover] narrated intent: {tool_name}({arg_name}={value!r})")
+            log.debug(f"[recover] narrated intent: {tool_name}({arg_name}={value!r})")
             return {"function": {"name": tool_name, "arguments": {arg_name: value}}}
     return None
 
@@ -179,8 +179,7 @@ def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
                 continue
         if not _NARRATED_VERB_RE.search(clean[max(0, idx - 40) : idx]):
             continue
-        if cfg.DEBUG:
-            print(f"[recover] narrated tool call: {tool_name}")
+        log.debug(f"[recover] narrated tool call: {tool_name}")
         return {"function": {"name": tool_name, "arguments": {}}}
     return None
 
@@ -293,8 +292,10 @@ class TurnEngine:
             try:
                 if wanted in self.ollama.installed_models():
                     resolved = wanted
-                elif cfg.DEBUG:
-                    print(f"[tool model] {wanted} not installed — rounds fall back to {self.model}")
+                else:
+                    log.debug(
+                        f"[tool model] {wanted} not installed — rounds fall back to {self.model}"
+                    )
             except Exception:
                 pass  # Ollama unreachable — fall back; apply_tool_level re-checks
         self._tool_model = resolved
@@ -322,8 +323,7 @@ class TurnEngine:
         except Exception as e:
             if client is self.ollama:
                 raise
-            if cfg.DEBUG:
-                print(f"[brain] cloud chat failed → local fallback: {e}")
+            log.debug(f"[brain] cloud chat failed → local fallback: {e}")
             return self.ollama.chat(
                 messages, tools=tools, model=CHAT_MODEL, think=True, temperature=temp
             )
@@ -347,11 +347,9 @@ class TurnEngine:
                 yield chunk
         except Exception as e:
             if emitted:
-                if cfg.DEBUG:
-                    print(f"[brain] cloud stream broke mid-answer: {e}")
+                log.debug(f"[brain] cloud stream broke mid-answer: {e}")
                 return
-            if cfg.DEBUG:
-                print(f"[brain] cloud stream failed pre-token → local: {e}")
+            log.debug(f"[brain] cloud stream failed pre-token → local: {e}")
             yield from self.ollama.chat_stream(
                 messages, tools=None, model=CHAT_MODEL, think=True, temperature=temperature
             )
@@ -519,11 +517,9 @@ class TurnEngine:
                     )
                 yield "", False, {"think_step": True, "text": tool_round_thinking}
 
-            if cfg.DEBUG:
-                print(
-                    f"\n[{trace_id}] tool round={round_num} "
-                    f"tool_calls={bool(msg.get('tool_calls'))}"
-                )
+            log.debug(
+                f"\n[{trace_id}] tool round={round_num} tool_calls={bool(msg.get('tool_calls'))}"
+            )
 
             if not msg.get("tool_calls"):
                 content = msg.get("content", "")
@@ -535,11 +531,10 @@ class TurnEngine:
                     known = set(self.tool_registry.list_tools())
                     recovered = _try_recover_tool_call(content, known)
                     if recovered:
-                        if cfg.DEBUG:
-                            print(
-                                f"[{trace_id}] recovered broken tool call: "
-                                f"{recovered['function']['name']}"
-                            )
+                        log.debug(
+                            f"[{trace_id}] recovered broken tool call: "
+                            f"{recovered['function']['name']}"
+                        )
                         flow_rec.record(
                             trace_id, "recovered_call", name=recovered["function"]["name"]
                         )
@@ -754,7 +749,7 @@ class TurnEngine:
 
             # ── Confirm gate: pause and ask the user before running ──────────
             if tool_name in _CONFIRM_TOOLS:
-                print(f"[confirm] intercepted {tool_name} — waiting for user OK")
+                log.info(f"[confirm] intercepted {tool_name} — waiting for user OK")
                 self._pending_confirm = {
                     "name": tool_name,
                     "args": tool_args,
@@ -945,7 +940,7 @@ class TurnEngine:
             _dbg = str(result)
             if len(_dbg) > 300:
                 _dbg = _dbg[:300] + "… [truncated]"
-            print(f"[{trace_id}] TOOL: {tool_name} → {_dbg}")
+            log.debug(f"[{trace_id}] TOOL: {tool_name} → {_dbg}")
         flow_rec.record(
             trace_id,
             "tool",
@@ -964,8 +959,7 @@ class TurnEngine:
             # Validate skill name — reject anything that isn't a safe identifier
             if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", skill_name):
                 return {"success": False, "error": f"Invalid skill name: {skill_name!r}"}
-            if cfg.DEBUG:
-                print(f"[brain] skill delegation: {name!r} → skill {skill_name!r}")
+            log.debug(f"[brain] skill delegation: {name!r} → skill {skill_name!r}")
             return self.run_skill(skill_name, args)
 
         if not self.tool_registry:
@@ -1001,8 +995,7 @@ class TurnEngine:
                         "success": False,
                         "error": f"'{target}' is turned off in Settings and was not run.",
                     }
-                if cfg.DEBUG:
-                    print(f"[brain] alias redirect: {name!r} → {target!r}")
+                log.debug(f"[brain] alias redirect: {name!r} → {target!r}")
                 try:
                     output = self.tool_registry.execute(target, args)
                     return {"success": True, "output": output}
