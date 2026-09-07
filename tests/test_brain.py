@@ -687,6 +687,57 @@ def test_ollama_client_is_alive_false_when_down():
     assert client.is_alive() is False
 
 
+# ── Background work never rides the cloud brain (PRIV-2) ───────────────────────
+
+
+def _cloud_brain(response_text: str = "cloud reply"):
+    """A Brain whose active chat brain is a stub cloud client, local mock intact."""
+    brain, _ = make_brain(response_text)
+    cloud = MagicMock()
+    cloud.chat.return_value = {"message": {"content": "CATEGORY | a cloud-extracted fact"}}
+    cloud.chat_stream.side_effect = make_mock_stream(response_text)
+    brain._chat_client = cloud
+    brain._chat_model = "cloud-model-x"
+    return brain, cloud
+
+
+def test_knowledge_extraction_stays_local_when_cloud_brain_is_active():
+    """Memory formation must not egress. It runs on a bg thread with nothing on
+    screen, so a cloud round-trip here is one the user never sees or consents to."""
+    brain, cloud = _cloud_brain()
+    brain.ollama.chat.return_value = {"message": {"content": "NONE"}}
+
+    brain._extract_knowledge("I use PostgreSQL at work.", "Noted — PostgreSQL it is.")
+
+    cloud.chat.assert_not_called()
+    assert brain.ollama.chat.called
+    assert brain.ollama.chat.call_args.kwargs["model"] == brain.model
+
+
+def test_history_compression_stays_local_when_cloud_brain_is_active():
+    """Same reason: compression ships raw history, and it is invisible work."""
+    brain, cloud = _cloud_brain()
+    brain.ollama.chat.return_value = {"message": {"content": "They discussed databases."}}
+
+    summary = brain._summarize_messages(
+        [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    )
+
+    assert summary == "They discussed databases."
+    cloud.chat.assert_not_called()
+    assert brain.ollama.chat.called
+
+
+def test_visible_reply_still_uses_the_active_cloud_brain():
+    """The other half of the contract — pinning background work must not quietly
+    demote the brain the user actually chose for the answer they asked for."""
+    brain, cloud = _cloud_brain()
+    resp = brain._chat([{"role": "user", "content": "hi"}])
+
+    cloud.chat.assert_called_once()
+    assert resp["message"]["content"] == "CATEGORY | a cloud-extracted fact"
+
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────────
 
 

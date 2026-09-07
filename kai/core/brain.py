@@ -513,6 +513,22 @@ class Brain:
     def _chat_stream(self, messages: list[dict], think: bool, temperature: float):
         return self._engine._chat_stream(messages, think=think, temperature=temperature)
 
+    def _chat_local(
+        self, messages: list[dict], think: bool = False, temperature: float | None = None
+    ) -> dict:
+        """Chat on the local brain, whatever the active brain happens to be.
+
+        Background work must not ride the active brain. When that is a cloud
+        provider, _chat sends the whole exchange off-device — fine for the reply
+        the user asked for, not for work they never see. Memory formation and
+        history compression run on a bg thread with nothing on screen, so they
+        pin to Ollama here and the cloud only ever sees the visible answer.
+        """
+        temp = self._final_temp if temperature is None else temperature
+        return self.ollama.chat(
+            messages, tools=None, model=self.model, think=think, temperature=temp
+        )
+
     def _execute_tool(self, name: str, args: dict, trace_id: str) -> dict:
         return self._engine._execute_tool(name, args, trace_id)
 
@@ -1629,7 +1645,7 @@ class Brain:
 
         exchange = f"User: {user_text}\nKai: {assistant_text}"
         try:
-            resp = self._chat(
+            resp = self._chat_local(
                 [{"role": "user", "content": f"{LEARN_PROMPT}\n\n{exchange}"}],
                 think=False,
                 temperature=TEMPERATURE_REASON,
@@ -1685,7 +1701,7 @@ class Brain:
         """
         raw = "\n\n".join(f"[{m['role']}]: {m.get('content', '')[:800]}" for m in msgs)
         try:
-            resp = self._chat(
+            resp = self._chat_local(
                 _build_compress_messages(raw), think=False, temperature=TEMPERATURE_REASON
             )
             summary = resp.get("message", {}).get("content", "").strip()
