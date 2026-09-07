@@ -150,3 +150,19 @@ def test_no_container_detection():
             if needle in text:
                 offenders.append(f"{py.relative_to(REPO_ROOT)}: {needle}")
     assert not offenders, "container detection leaked into the app:\n" + "\n".join(offenders)
+
+
+def test_docker_layer_is_deletable():
+    """The container files must live in docker/ (plus .dockerignore) and nowhere
+    else, so `rm -rf docker/ .dockerignore` fully removes them."""
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout.split()
+    stray = [
+        f
+        for f in tracked
+        if ("docker" in f.lower() or "compose" in f.lower())
+        and not f.startswith("docker/")
+        and f != ".dockerignore"
+    ]
+    assert not stray, f"container files outside docker/: {stray}"

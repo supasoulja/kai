@@ -1,0 +1,32 @@
+# Optional convenience wrapper. `docker build` + `docker run` do the same thing;
+# this just spells out the volume and the host mapping.
+#
+#   docker compose -f docker/compose.yaml up --build
+#
+# Note what is NOT here: an ollama service. Kai talks to an Ollama you already
+# run — on this host, or on a beefier machine on your LAN. Adding it here would
+# make the stack the "real" way to run Kai and pull GPU passthrough into the
+# compose file. Set KAI_OLLAMA_URL to point wherever yours lives.
+
+services:
+  kai:
+    build:
+      context: ..                    # the project root, not docker/
+      dockerfile: docker/Dockerfile
+    image: kai:0.7.0
+    ports:
+      - "127.0.0.1:7860:7860"        # loopback only — Kai's auth is not built
+                                     # to face the open internet
+    volumes:
+      - kai-data:/data
+    environment:
+      # Ollama on the Docker host. Override for a box on the LAN:
+      #   KAI_OLLAMA_URL=http://192.168.1.50:11434
+      KAI_OLLAMA_URL: ${KAI_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      # Docker Desktop provides this name; on Linux this line is what creates it.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  kai-data:

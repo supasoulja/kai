@@ -1,0 +1,28 @@
+# Keeps the build context small and, more importantly, keeps private runtime
+# data out of any image layer.
+.git/
+.venv/
+venv/
+var/
+data/
+models/
+node_modules/
+docs/
+.claude/
+CLAUDE.md
+KaiFiles/
+experiments/
+tests/
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+.env
+.env.*
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/

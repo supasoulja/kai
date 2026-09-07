@@ -1,0 +1,62 @@
+# Publishes a release when you push a vX.Y.Z tag.
+#
+# This workflow deliberately owns almost no logic: it hands off to
+# scripts/release.sh, the same script you run locally. If the two ever disagreed
+# about what "released" means, the YAML would win silently — so it doesn't get a
+# say. Its only real jobs are authenticating to GHCR and passing --ci.
+#
+# The expected flow:
+#     scripts/release.sh 0.8.0        # local: full suite, bump, commit, tag
+#     git push origin main --follow-tags
+#   -> this workflow verifies the version, rebuilds, and publishes.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write        # create the GitHub Release and attach the wheel/sdist
+  packages: write        # let GITHUB_TOKEN push to GHCR — no secret to configure
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest ruff build
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release
+        env:
+          # ghcr.io/<owner> — lowercased, since GHCR rejects uppercase paths and
+          # a GitHub username may contain capitals.
+          KAI_REGISTRY: ghcr.io/${{ github.repository_owner }}
+          PY: python
+        run: |
+          KAI_REGISTRY="$(echo "$KAI_REGISTRY" | tr '[:upper:]' '[:lower:]')"
+          export KAI_REGISTRY
+          VERSION="${GITHUB_REF_NAME#v}"        # v0.8.0 -> 0.8.0
+          echo "Releasing $VERSION to $KAI_REGISTRY"
+          ./scripts/release.sh "$VERSION" --ci --push
+
+      - name: Attach wheel + sdist to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
