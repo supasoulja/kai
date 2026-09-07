@@ -62,13 +62,38 @@ def _cipher():
     return _cipher_cache
 
 
-def set_key(user_id: int, conn_id: str, secret: str, provider: str, base_url: str = "") -> None:
+# What the caller is confirming the user was told. Storing a key is the only
+# step between "local-only" and "every turn leaves this machine", and it is the
+# last point where anyone can be asked — after this a cloud brain is selectable
+# and the egress is silent.
+EGRESS_NOTICE = (
+    "Connecting a cloud brain sends your whole turn off-device: persona, "
+    "retrieved memories, your message, and tool arguments and results."
+)
+
+
+def set_key(
+    user_id: int,
+    conn_id: str,
+    secret: str,
+    provider: str,
+    base_url: str = "",
+    *,
+    egress_consented: bool = False,
+) -> None:
     """Store (or replace) an encrypted API key for one connection.
 
     conn_id is a stable per-user label for the connection (e.g. "openrouter").
     provider / base_url are non-secret metadata stored alongside so the UI can
     list connections without ever touching the secret.
+
+    egress_consented must be True: the caller asserts it showed EGRESS_NOTICE
+    and the user agreed. Keyword-only and unset by default so a future settings
+    route cannot land without deciding what the user was told — no route stores
+    a key today, which is the only reason this gate can still be added cheaply.
     """
+    if not egress_consented:
+        raise ValueError(f"refusing to store a cloud key without consent. {EGRESS_NOTICE}")
     if not secret:
         raise ValueError("secret must not be empty")
     conn = get_conn()

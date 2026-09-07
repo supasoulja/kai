@@ -40,9 +40,24 @@ def fixed_device_key(monkeypatch):
     yield
 
 
+def test_keystore_refuses_to_store_without_egress_consent(fixed_device_key):
+    """Storing a key is the last point where the user can be told that every
+    turn will leave the machine. No route stores one yet, so the gate exists to
+    make sure the route that eventually does has to decide what it disclosed."""
+    with pytest.raises(ValueError, match="without consent"):
+        keystore.set_key(99, "openrouter", "sk-nope", provider="openai")
+    assert keystore.has_key(99, "openrouter") is False
+    assert keystore.get_secret(99, "openrouter") is None
+
+
 def test_keystore_roundtrip(fixed_device_key):
     keystore.set_key(
-        1, "openrouter", "sk-secret-123", provider="openai", base_url="https://openrouter.ai/api/v1"
+        1,
+        "openrouter",
+        "sk-secret-123",
+        provider="openai",
+        base_url="https://openrouter.ai/api/v1",
+        egress_consented=True,
     )
     assert keystore.get_secret(1, "openrouter") == "sk-secret-123"
     assert keystore.has_key(1, "openrouter") is True
@@ -61,8 +76,8 @@ def test_keystore_roundtrip(fixed_device_key):
 
 
 def test_keystore_is_user_scoped(fixed_device_key):
-    keystore.set_key(10, "anthropic", "key-A", provider="anthropic")
-    keystore.set_key(20, "anthropic", "key-B", provider="anthropic")
+    keystore.set_key(10, "anthropic", "key-A", provider="anthropic", egress_consented=True)
+    keystore.set_key(20, "anthropic", "key-B", provider="anthropic", egress_consented=True)
     assert keystore.get_secret(10, "anthropic") == "key-A"
     assert keystore.get_secret(20, "anthropic") == "key-B"
     # one user's list never shows another's connections
@@ -70,7 +85,9 @@ def test_keystore_is_user_scoped(fixed_device_key):
 
 
 def test_keystore_encrypted_at_rest(fixed_device_key):
-    keystore.set_key(2, "openai", "sk-plaintext-should-not-appear", provider="openai")
+    keystore.set_key(
+        2, "openai", "sk-plaintext-should-not-appear", provider="openai", egress_consented=True
+    )
     from kai.store.db import get_conn
 
     row = (
@@ -86,7 +103,7 @@ def test_keystore_encrypted_at_rest(fixed_device_key):
 
 
 def test_keystore_fails_closed_on_wrong_machine_key(fixed_device_key, monkeypatch):
-    keystore.set_key(3, "gemini", "g-secret", provider="gemini")
+    keystore.set_key(3, "gemini", "g-secret", provider="gemini", egress_consented=True)
     # Simulate the DB moved to a different machine: different device key + fresh cipher.
     from kai.system import device
 

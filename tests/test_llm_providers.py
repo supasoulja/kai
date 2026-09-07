@@ -241,7 +241,12 @@ def test_resolve_local_entry():
 
 def test_resolve_cloud_entry_with_key(fixed_device_key):
     keystore.set_key(
-        5, "openrouter", "sk-live", provider="openai", base_url="https://openrouter.ai/api/v1"
+        5,
+        "openrouter",
+        "sk-live",
+        provider="openai",
+        base_url="https://openrouter.ai/api/v1",
+        egress_consented=True,
     )
     entry = {
         "provider": "openai",
