@@ -97,12 +97,18 @@ echo      Ollama is running.
 echo.
 echo [4/5] Checking AI models...
 
-:: Chat model
-call :check_model qwen3.5:9b Chat
-:: Reasoning model
-call :check_model qwen3:8b Reasoning
-:: Embedding model
-call :check_model qwen3-embedding:4b Embedding
+:: Ask config.py which models Kai actually needs instead of repeating the names
+:: here. This script used to hardcode qwen3.5:9b + qwen3:8b -- neither of which
+:: Kai has loaded since the move to gemma4 -- so a fresh install downloaded ~14 GB
+:: of unused weights and still had no chat model on first run.
+::
+:: Only the two models needed to BOOT are pulled. The optional tool-level models
+:: (gemma4:e4b / gemma4:31b) are opt-in in Settings; 31b needs a 24 GB card.
+for /f "delims=" %%M in ('"%PY%" -c "import kai.config as c; print(c.CHAT_MODEL)"') do set "CHAT_M=%%M"
+for /f "delims=" %%M in ('"%PY%" -c "import kai.config as c; print(c.HQ_EMBED_MODEL)"') do set "EMBED_M=%%M"
+
+call :check_model %CHAT_M% Chat
+call :check_model %EMBED_M% Embedding
 
 :: -- Step 5: Set KV cache quantization for 8GB cards --
 echo.

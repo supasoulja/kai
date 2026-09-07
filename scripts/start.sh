@@ -92,9 +92,19 @@ check_model() {
     fi
 }
 
-check_model "qwen3.5:9b"          "Chat"
-check_model "qwen3:8b"            "Reasoning"
-check_model "qwen3-embedding:4b"  "Embedding"
+# Ask config.py which models it actually needs rather than repeating the names
+# here. This script used to hardcode qwen3.5:9b + qwen3:8b — neither of which
+# Kai has loaded since the move to gemma4 — so a fresh install downloaded ~14 GB
+# of unused weights and still had no chat model on first run.
+#
+# Only the two models Kai needs to BOOT are pulled. The optional tool-level
+# models (cfg.TOOL_MODEL_LEVELS: gemma4:e4b / gemma4:31b) are opt-in in
+# Settings, and 31b needs a 24 GB card — not something to force on first launch.
+CHAT_M=$("$PY" -c "import kai.config as c; print(c.CHAT_MODEL)")
+EMBED_M=$("$PY" -c "import kai.config as c; print(c.HQ_EMBED_MODEL)")
+
+check_model "$CHAT_M"   "Chat"
+check_model "$EMBED_M"  "Embedding"
 
 # ── Step 5: Set KV cache quantization ────────────────────────────────
 echo ""

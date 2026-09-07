@@ -166,3 +166,31 @@ def test_docker_layer_is_deletable():
         and f != ".dockerignore"
     ]
     assert not stray, f"container files outside docker/: {stray}"
+
+
+def test_launchers_do_not_hardcode_model_names():
+    """scripts/start.sh and start.bat must ask config.py which models to pull.
+
+    They used to hardcode `qwen3.5:9b` and `qwen3:8b` — models Kai stopped
+    loading when CHAT_MODEL moved to gemma4. A fresh install pulled ~14 GB of
+    weights nothing uses and still had no chat model, so first run failed. The
+    launchers are an install path like any other; they get the same single
+    source of truth.
+    """
+    import re
+
+    # Any `family:tag` that looks like an Ollama model reference.
+    model_ref = re.compile(r"\b(?:gemma|qwen|llama|mistral|phi)[\w.]*:\w+", re.I)
+
+    for name in ("start.sh", "start.bat"):
+        script = REPO_ROOT / "scripts" / name
+        if not script.is_file():
+            continue
+        for i, line in enumerate(script.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith("::"):
+                continue  # comments may name models for explanation
+            assert not model_ref.search(line), (
+                f"scripts/{name}:{i} hardcodes a model name — read it from "
+                f"kai.config instead:\n    {stripped}"
+            )
