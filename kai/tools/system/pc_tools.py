@@ -11,17 +11,13 @@ import subprocess
 import threading
 
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
-from kai.tools._shell import run_powershell
+from kai.tools._shell import run_argv, run_powershell
 from kai.tools.registry import registry
 
 
 def _run(cmd: list[str], timeout: int = 10) -> str:
     """Run a command, return stdout or empty string."""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
-    except Exception:
-        return ""
+    return run_argv(cmd, timeout).out
 
 
 def _ps(cmd: str, timeout: int = 20) -> str | None:

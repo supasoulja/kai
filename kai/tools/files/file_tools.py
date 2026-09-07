@@ -8,12 +8,11 @@ pure Python / shell commands are used on Linux.
 """
 
 import json
-import subprocess
 from pathlib import Path
 
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 from kai.tools._shell import TIMEOUT_SENTINEL as _TIMEOUT_SENTINEL
-from kai.tools._shell import run_powershell
+from kai.tools._shell import run_argv, run_powershell
 from kai.tools.registry import registry
 
 # Platform-aware path guidance baked into the tool descriptions. On Linux the
@@ -46,14 +45,10 @@ def _ps(cmd: str, timeout: int = 45) -> str | None:
 
 def _run_args(args: list[str], timeout: int = 45) -> str | None:
     """Run a command via a list of arguments (no shell). Returns stdout or None on error."""
-    try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-        out = r.stdout.strip()
-        return out if out else None
-    except subprocess.TimeoutExpired:
+    res = run_argv(args, timeout)
+    if res.timed_out:
         return _TIMEOUT_SENTINEL
-    except Exception:
-        return None
+    return res.out or None
 
 
 def _safe_path(path: str) -> str:

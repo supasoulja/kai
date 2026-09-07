@@ -6,28 +6,15 @@ Platform: Cross-platform (uses native ping/traceroute with OS-specific flags).
 """
 
 import re
-import subprocess
 
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
+from kai.tools._shell import run_argv
 from kai.tools.registry import registry
 
 
 def _run(args: list[str], timeout: int = 60) -> str:
     """Run a command, return stdout. Empty string on error/timeout."""
-    try:
-        r = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return (r.stdout or "").strip()
-    except subprocess.TimeoutExpired:
-        return ""
-    except Exception:
-        return ""
+    return run_argv(args, timeout).out
 
 
 def _safe_host(host: str) -> str:

@@ -3,9 +3,9 @@ Shared subprocess helpers for tool modules.
 
 The PowerShell invocation (flags, UTF-8 decoding, timeout handling) used to be
 copy-pasted as a private `_ps()` in four tool files — each with a slightly
-different return shape. The actual call lives here now; each tool keeps a thin
-`_ps()` adapter that maps this structured result onto whatever shape its call
-sites expect.
+different return shape; likewise a plain-argv `_run()` in three. The actual calls
+live here now (`run_powershell`, `run_argv`); each tool keeps a thin adapter that
+maps this structured result onto whatever shape its call sites expect.
 """
 
 import subprocess
@@ -44,17 +44,17 @@ def run_powershell(cmd: str, timeout: int = 20) -> ShellResult:
         return ShellResult("", str(exc), False, False)
 
 
-def run_shell(cmd: str, timeout: int = 20) -> ShellResult:
-    """POSIX companion to run_powershell — run a command through /bin/sh and
-    return the same structured ShellResult.
+def run_argv(args: list[str], timeout: int = 20) -> ShellResult:
+    """Run a command from an argv list (no shell) and return a structured result.
 
-    Never raises — failures come back as a ShellResult with ok=False. Note that
-    a command which runs but exits non-zero still has ok=True (it *ran*); inspect
-    `err` or do your own returncode handling for command-level failure.
+    The argv companion to run_powershell — no shell means no quoting or injection
+    concerns. Each tool file keeps a thin adapter that maps this onto whatever
+    shape its call sites expect (str, str|None + TIMEOUT_SENTINEL, …), exactly as
+    they do for run_powershell. Never raises — failures come back as ok=False.
     """
     try:
         r = subprocess.run(
-            ["/bin/sh", "-c", cmd],
+            args,
             capture_output=True,
             text=True,
             timeout=timeout,
