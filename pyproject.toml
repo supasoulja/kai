@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kai-agent"
 dynamic = ["version"]                     # read from kai/__init__.py
-description = "A local AI agent — Python + Ollama + SQLite. Observes, plans, acts, and remembers across sessions. No cloud calls."
+description = "A local-first AI agent — Python + Ollama + SQLite. Observes, plans, acts, and remembers across sessions. Runs on your hardware by default; cloud brains are opt-in."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

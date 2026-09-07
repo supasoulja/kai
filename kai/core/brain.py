@@ -7,6 +7,11 @@ Flow per turn:
   3. For tool calls: non-streaming round trip, then stream the final answer
   4. Strip <think> tags (log in debug mode)
   5. Commit turn to memory
+
+Chat is not necessarily local: TurnEngine routes it to whatever the active brain
+is, which may be a cloud provider (see engine._chat and kai/llm/providers/).
+Background work — memory formation, history compression — deliberately does not
+follow it and pins to Ollama via _chat_local.
 """
 
 import json

@@ -1,6 +1,8 @@
 # Kai
 
-Local AI agent. No cloud. No API keys. Runs entirely on your hardware.
+Local AI agent. Runs entirely on your hardware by default — no cloud, no API keys.
+An opt-in cloud brain can be connected instead; while one is active it receives the
+full turn (persona, retrieved memories, your message, tool arguments and results).
 
 **Stack:** Python + Ollama + SQLite. No LangChain. No frameworks.
 
@@ -445,7 +447,9 @@ Phone access via `--lan` only requires name + PIN (no machine certificate check 
 
 ## Privacy & Data at Rest
 
-Kai is local-only, but "local" is not the same as "encrypted." Be aware of how your data sits on disk:
+Kai is local-first: nothing leaves the machine unless you connect a cloud brain
+(off by default, and storing a provider key requires confirming what gets sent).
+Even so, "local" is not the same as "encrypted." Be aware of how your data sits on disk:
 
 - **`var/` is plaintext at rest.** All of Kai's data lives under `var/` (`var/memory/` for the SQLite databases, `var/state/` for app settings, `var/tls/` for the self-signed cert). The SQLite files are **not** encrypted at the application level — anyone with read access to `var/` can read your facts, conversations, and knowledge store directly. Secrets are the exception: PINs and session tokens are hashed, and provider API keys are encrypted with the per-device key.
 - **To protect data at rest, put `var/` on an encrypted volume** — full-disk encryption (LUKS, FileVault, BitLocker) or a dedicated encrypted partition. Point Kai at it with `KAI_VAR_DIR=/path/to/encrypted/var`. Transparent SQLCipher-style database encryption is a possible future option but is not built in today.
