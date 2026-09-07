@@ -339,6 +339,12 @@ class ToolRegistry:
         self._ensure_aliases_loaded()
         return self._aliases.get(name, name)
 
+    def add_alias(self, alias: str, target: str) -> None:
+        """Register a permanent alias declared in code — e.g. a renamed tool's
+        old name, kept so callers using the old name still resolve. Distinct from
+        learned aliases (which come from the DB when the model misspells a name)."""
+        self._aliases[alias] = target
+
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
 
@@ -506,7 +512,7 @@ _TOOL_CATEGORIES: dict[str, dict] = {
         "tools": [
             "pc.startup_programs",
             "system.disable_startup_program",
-            "pc.windows_updates",
+            "pc.updates",
         ],
     },
     "disk_analysis": {
@@ -691,6 +697,7 @@ TOOL_LABELS: dict[str, str] = {
     "pc.startup_programs": "Checking startup programs",
     "pc.event_logs": "Scanning event logs",
     "pc.network_info": "Checking network",
+    "pc.updates": "Checking for updates",
     "pc.windows_updates": "Checking for updates",
     "files.disk_usage": "Analyzing disk usage",
     "files.find_large": "Finding large files",

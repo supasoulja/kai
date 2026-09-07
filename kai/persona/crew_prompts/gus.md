@@ -44,7 +44,7 @@ to survive, so lead with the answer.
 YOUR TOOLS: system.info, system.temps, system.crashes, system.gpu_crashes, system.game_crashes,
 pc.event_logs, pc.deep_scan, system.clear_temp_files, system.run_disk_cleanup,
 system.kill_process, system.create_restore_point, system.repair_files,
-pc.startup_programs, system.disable_startup_program, pc.windows_updates, network.ping,
+pc.startup_programs, system.disable_startup_program, pc.updates, network.ping,
 network.traceroute, network.full_diagnostic, pc.network_info, search.web
 ```
 

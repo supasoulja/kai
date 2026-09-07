@@ -1,10 +1,9 @@
 """
-pc.* tools — startup programs, event logs, network info, Windows updates,
-and deep system scan.
-All read-only. No system changes made.
+pc.* tools — startup programs, event logs, network info, updates, and deep
+system scan. All read-only. No system changes made.
 
-Platform: Windows only (uses PowerShell / WMI).  On Linux these tools return
-a helpful message instead of crashing.
+Cross-platform: PowerShell / WMI on Windows, `_linux_*` implementations on
+Linux (journalctl / apt / /proc where available).
 """
 
 import json
@@ -166,7 +165,7 @@ def get_network_info() -> str:
 
 
 @registry.tool(
-    name="pc.windows_updates",
+    name="pc.updates",
     description=(
         "Check for pending Windows updates and show recently installed updates. "
         "After retrieving: if there are 0 pending updates, confirm the system is up to date. "
@@ -175,7 +174,7 @@ def get_network_info() -> str:
         "If the count is large (10+), note that running Windows Update would be a good idea."
     ),
 )
-def get_windows_updates() -> str:
+def get_updates() -> str:
     if not _IS_WINDOWS:
         return _linux_updates()
     cmd = (
@@ -213,6 +212,10 @@ def get_windows_updates() -> str:
         return result.strip()
     except Exception:
         return out[:2000]
+
+
+# Back-compat: renamed from pc.windows_updates (it was never Windows-only).
+registry.add_alias("pc.windows_updates", "pc.updates")
 
 
 @registry.tool(
