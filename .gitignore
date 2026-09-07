@@ -7,6 +7,10 @@ HISTORY_AND_VISION.md
 docs/
 BUILD_PLAN.md
 PROJECT_PLAN.md
+audits/
+AUDIT_PLAN.md
+CODE_MAP.md
+experiments/
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
