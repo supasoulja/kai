@@ -47,6 +47,10 @@ STATE_DIR = VAR_DIR / "state"
 TREE_DIR = VAR_DIR / "tree"
 TLS_DIR = VAR_DIR / "tls"  # self-signed certs (honors KAI_VAR_DIR)
 APP_SETTINGS_PATH = STATE_DIR / "app_settings.json"  # desktop window state
+# Which account the terminal REPL speaks as. The CLI has no login, so without
+# this it fell back to user_id 0 — a uid with no users row — and every terminal
+# conversation landed in a store the web UI could not see.
+CLI_USER_PATH = STATE_DIR / "cli_user"
 DB_PATH = MEMORY_DIR / "kai.db"
 REFLECTIONS_PATH = MEMORY_DIR / "reflections.md"
 

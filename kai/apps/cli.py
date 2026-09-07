@@ -438,6 +438,64 @@ def _show_vector_stats() -> None:
     print()
 
 
+# ── Identity ───────────────────────────────────────────────────────────────────
+
+
+def _remembered_user() -> str | None:
+    try:
+        return cfg.CLI_USER_PATH.read_text(encoding="utf-8").strip() or None
+    except Exception:
+        return None
+
+
+def _remember_user(name: str) -> None:
+    try:
+        cfg.CLI_USER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cfg.CLI_USER_PATH.write_text(name, encoding="utf-8")
+    except Exception:
+        pass  # remembering is a convenience — never block the REPL on it
+
+
+def _resolve_user_id(requested: str | None) -> tuple[int, str]:
+    """Decide which account the terminal speaks as. Returns (user_id, name).
+
+    The CLI has no login, so it used to pass no user_id at all and both
+    MemoryManager and Brain defaulted to 0 — a uid with no `users` row. Every
+    terminal conversation went to a store the web UI could not see.
+
+    Order: explicit --user/KAI_USER, then the remembered choice, then the sole
+    account if there is only one. Deliberately NOT users.get_owner_id(): that
+    means MIN(id) and is the *admin* check (web.py, dashboard), which is a
+    different question from who is sitting at this terminal.
+    """
+    from kai.store import users as _users
+
+    names = _users.list_users()
+
+    if requested:
+        uid = _users.get_user_id(requested)
+        if uid is None:
+            print(f"[!] No account named {requested!r}. Registered: {', '.join(names) or 'none'}")
+            sys.exit(2)
+        return uid, requested
+
+    if not names:
+        print("[~] No accounts registered — running as a scratch identity (user 0).")
+        print("    Register in the web UI (python web.py) to share memory between the two.")
+        return 0, "scratch"
+
+    remembered = _remembered_user()
+    if remembered and remembered in names:
+        return _users.get_user_id(remembered), remembered
+
+    if len(names) == 1:
+        return _users.get_user_id(names[0]), names[0]
+
+    print(f"[!] Several accounts on this machine: {', '.join(names)}")
+    print("    Pick one with --user NAME (or set KAI_USER); it will be remembered.")
+    sys.exit(2)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 
@@ -450,6 +508,11 @@ def main() -> None:
         choices=list(cfg.GEN_PRESETS),
         default=cfg.DEFAULT_PRESET,
         help="Generation mode: thinking | normal | creative | crazy",
+    )
+    parser.add_argument(
+        "--user",
+        default=os.getenv("KAI_USER"),
+        help="Account to speak as (defaults to KAI_USER, then the remembered choice)",
     )
     args = parser.parse_args()
 
@@ -481,7 +544,11 @@ def main() -> None:
     _warm_embed()  # pre-load ONNX model (~50 MB first-run download)
 
     # ── Initialize memory + identity ───────────────────────────────────────────
-    memory = MemoryManager(embed_fn=fast_embed)
+    user_id, user_name = _resolve_user_id(args.user)
+    if user_id:
+        _remember_user(user_name)
+        print(f"[~] Signed in as {user_name}.")
+    memory = MemoryManager(embed_fn=fast_embed, user_id=user_id)
     bootstrap.run_migrations_and_seed()  # migrate stale keys + seed procedural rules
 
     # ── Initialize brain ───────────────────────────────────────────────────────
@@ -491,6 +558,7 @@ def main() -> None:
         memory=memory,
         model=active_model,
         ollama=ollama,
+        user_id=user_id,
         tool_registry=tool_registry,
         skill_registry=build_skill_registry(tool_registry),
     )
