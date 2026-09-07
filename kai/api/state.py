@@ -55,7 +55,7 @@ def reload_skills() -> int:
     sr = ensure_skill_registry()
     if sr is None:
         return 0
-    return sr.reload(extra_dirs=[cfg.ROOT_DIR / "user_skills"])
+    return sr.reload(extra_dirs=[cfg.SKILLS_DIR])
 
 
 # ── Per-user Brain + MemoryManager instances ─────────────────────────────────

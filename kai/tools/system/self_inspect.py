@@ -6,10 +6,10 @@ import difflib
 import re
 from pathlib import Path
 
-from kai.config import PERSONA_PATH, ROOT_DIR
+from kai.config import PERSONA_PATH, SOURCE_ROOT
 from kai.tools.registry import registry
 
-_PROJECT_ROOT = ROOT_DIR
+_PROJECT_ROOT = SOURCE_ROOT
 
 _EXCLUDED_DIRS = {
     "__pycache__",

@@ -42,11 +42,10 @@ from kai.store.db import _reset_for_tests, get_conn
 
 _reset_for_tests()
 
-# Import and configure the app — no _init(), so no model loading
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from web import app, setup_app
+# Import and configure the app — no _init(), so no model loading.
+# Import from the package path, not the root web.py shim: the shim re-exports
+# with `import *`, which skips the private helpers these tests reach for.
+from kai.apps.web import app, setup_app
 
 # Call setup_app exactly once for the whole test session
 _setup_done = False
@@ -523,18 +522,18 @@ class TestVoiceTest:
 
 class TestHashHelpers:
     def test_hash_token_is_deterministic(self):
-        from web import _hash_token
+        from kai.apps.web import _hash_token
 
         assert _hash_token("abc") == _hash_token("abc")
 
     def test_hash_token_is_always_64_chars(self):
-        from web import _hash_token
+        from kai.apps.web import _hash_token
 
         for val in ["short", "a" * 100, secrets.token_urlsafe(32)]:
             assert len(_hash_token(val)) == 64
 
     def test_hash_token_different_inputs_differ(self):
-        from web import _hash_token
+        from kai.apps.web import _hash_token
 
         assert _hash_token("token_a") != _hash_token("token_b")
 

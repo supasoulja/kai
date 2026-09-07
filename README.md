@@ -70,7 +70,48 @@ CPU-only works but reasoning and tool-call speed will be significantly slower.
 
 ---
 
-## Setup
+## Install
+
+Three ways in. They share one packaging foundation, so nothing is a second-class
+path — pick whichever suits you.
+
+| | Command | Best for |
+|---|---|---|
+| **Clone** | `git clone … && pip install -r requirements.txt` | Hacking on Kai. Data stays in `./var`. |
+| **Package** | `pip install kai-agent[voice,documents]` | Just running it. Data goes to your OS data dir. |
+| **Container** | `docker compose -f docker/compose.yaml up` | Isolating Kai from your system Python. See [docker/README.md](docker/README.md). |
+
+Ollama is a prerequisite in all three cases — it is never bundled, because it
+needs your GPU. Point Kai at it with `KAI_OLLAMA_URL` if it is not on
+`127.0.0.1:11434`.
+
+Installed as a package, you get three commands:
+
+```bash
+kai          # terminal REPL
+kai-web      # browser UI at http://localhost:7860
+kai-app      # native desktop window (needs the [desktop] extra + system packages)
+```
+
+### Configuration
+
+Every path Kai writes to takes an environment override. Useful for a second
+profile, data on a bigger disk, or an Ollama running elsewhere:
+
+| Variable | Default (clone) | Default (installed) |
+|---|---|---|
+| `KAI_OLLAMA_URL` | `http://127.0.0.1:11434` | same |
+| `KAI_VAR_DIR` | `./var` | `~/.local/share/kai` (Linux) |
+| `KAI_MODELS_DIR` | `./models` | `$KAI_VAR_DIR/models` |
+| `KAI_SKILLS_DIR` | `./user_skills` | `$KAI_VAR_DIR/user_skills` |
+| `KAI_WORKSPACE_DIR` | `~/KaiFiles` | `~/KaiFiles` |
+
+On Windows the installed default is `%LOCALAPPDATA%\Kai`; on macOS,
+`~/Library/Application Support/Kai`.
+
+---
+
+## Setup (from a clone)
 
 ```bash
 # 1. Clone the repo
@@ -94,9 +135,13 @@ sudo apt-get install ffmpeg
 # Windows: download from https://ffmpeg.org
 
 # 6. Pull required models
-ollama pull gemma4:12b              # primary model — always resident (~8 GB)
-ollama pull gemma4:26b              # reasoning model — loaded on demand (~14 GB)
+# The two Kai needs to boot:
+ollama pull gemma4:12b              # chat / tools / vision / reasoning (~8 GB)
 ollama pull qwen3-embedding:4b      # HQ embedding for shutdown re-embed (~2.5 GB)
+
+# Optional — only if you change Settings → tool-model level away from the default:
+# ollama pull gemma4:e4b            # "Light"  — faster tool rounds (~3.3 GB resident)
+# ollama pull gemma4:31b            # "Deep"   — needs a 24 GB card, spills below that
 
 # 7. Run
 python web.py       # browser-based web UI at http://localhost:7860
@@ -116,8 +161,8 @@ use (and a future installer can offer them as checkboxes). Each is guarded by
 
 | Feature | Install | Enables |
 |---------|---------|---------|
-| **Document ingest** | `pip install -r requirements-documents.txt` | Upload PDFs/Word docs for RAG; index downloaded study material (uses `pypdf` + `python-docx`) |
-| **Native desktop app** | `pip install -r requirements-desktop.txt` | `python app.py` window + tray (see [Desktop App](#desktop-app-linux--windows)) |
+| **Document ingest** | `pip install -r requirements-documents.txt` *(or `kai-agent[documents]`)* | Upload PDFs/Word docs for RAG; index downloaded study material (uses `pypdf` + `python-docx`) |
+| **Native desktop app** | `pip install -r requirements-desktop.txt` *(or `kai-agent[desktop]`)* | `python app.py` window + tray (see [Desktop App](#desktop-app-linux--windows)) |
 | **HTTPS / LAN** | `pip install cryptography` | Self-signed TLS for `python web.py --https` / `--lan` (already in core requirements) |
 | **AMD GPU temps (Windows)** | `pip install pyadl` | GPU temperature readout on AMD cards via the AMD Display Library |
 

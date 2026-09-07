@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from kai.config import ROOT_DIR
+import kai.config as cfg
 
 # ── The crew → category map (from plan Part A.2) ─────────────────────────────────
 # Each of the 15 tool categories in kai/tools/registry.py is owned by exactly one
@@ -61,7 +61,7 @@ SPECIALISTS: tuple[str, ...] = ("Gus", "Dewey", "Scout", "Remy", "Envoy")
 # documentation — they live inside the package so a fresh clone has them. (They
 # previously sat in docs/, which .gitignore excludes, so a clean checkout booted
 # with no crew prompts at all.)
-CREW_PROMPTS_DIR: Path = ROOT_DIR / "kai" / "persona" / "crew_prompts"
+CREW_PROMPTS_DIR: Path = cfg.CREW_PROMPTS_DIR
 
 # needs:<domain> → specialist, the five fixed escalation tokens (plan Part A.2).
 NEEDS_TO_SPECIALIST: dict[str, str] = {

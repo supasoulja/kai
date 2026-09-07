@@ -1,26 +1,92 @@
 import os
 from pathlib import Path
 
-from kai.system.platform import IS_WINDOWS
+from kai.system.platform import IS_MAC, IS_WINDOWS
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-ROOT_DIR = Path(__file__).parent.parent
-# Runtime data lives OUTSIDE the source package (kai/). Override the whole
-# tree with KAI_VAR_DIR; model binaries live in models/ at the repo root.
-VAR_DIR = Path(os.getenv("KAI_VAR_DIR", ROOT_DIR / "var"))
+# Two roots, deliberately separate. Conflating them is what breaks packaging:
+#
+#   PKG_DIR   read-only assets that ship WITH the code (persona.md, crew prompts,
+#             the web UI). Package-relative, so they resolve the same from a git
+#             checkout, a wheel in site-packages, or a frozen bundle.
+#   VAR_DIR   everything mutable Kai owns (DBs, state, tree, TLS certs). Never
+#             inside the package — an installed package may sit on a read-only
+#             filesystem, and a reinstall would wipe it.
+#
+# Every user-data path below takes a KAI_* env override. Those exist for native
+# reasons (a second profile, data on another disk, Ollama on another machine);
+# containers just happen to use the same knobs. No path here knows or cares
+# whether it is running in one.
+PKG_DIR = Path(__file__).parent  # the kai/ package itself
+ROOT_DIR = PKG_DIR.parent  # repo root in a source checkout
+
+# A source checkout has pyproject.toml sitting next to the package; an installed
+# wheel does not. This is the ONLY thing that distinguishes the two modes, and it
+# only ever changes *defaults* — an explicit env var wins in both.
+_IS_SOURCE_CHECKOUT = (ROOT_DIR / "pyproject.toml").is_file()
+
+
+def _user_data_home() -> Path:
+    """Per-OS conventional home for application data."""
+    if IS_WINDOWS:
+        base = os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+        return Path(base) / "Kai"
+    if IS_MAC:
+        return Path.home() / "Library" / "Application Support" / "Kai"
+    return Path(os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "kai"
+
+
+# Running from a checkout keeps data in ./var so a dev box stays self-contained
+# and `rm -rf var/` is a clean reset. Installed, it goes where the OS expects.
+_DEFAULT_VAR_DIR = ROOT_DIR / "var" if _IS_SOURCE_CHECKOUT else _user_data_home()
+
+VAR_DIR = Path(os.getenv("KAI_VAR_DIR", _DEFAULT_VAR_DIR))
 MEMORY_DIR = VAR_DIR / "memory"
 KNOWLEDGE_DIR = VAR_DIR / "knowledge"
 STATE_DIR = VAR_DIR / "state"
 TREE_DIR = VAR_DIR / "tree"
 TLS_DIR = VAR_DIR / "tls"  # self-signed certs (honors KAI_VAR_DIR)
 APP_SETTINGS_PATH = STATE_DIR / "app_settings.json"  # desktop window state
-AUDIO_MODELS_DIR = ROOT_DIR / "models"
 DB_PATH = MEMORY_DIR / "kai.db"
-PERSONA_PATH = ROOT_DIR / "kai" / "persona" / "persona.md"
 REFLECTIONS_PATH = MEMORY_DIR / "reflections.md"
-CHANGELOG_PATH = ROOT_DIR / "kai" / "persona" / "changelog.json"
 
-MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+# Model binaries (ONNX embed, Kokoro voices) — downloaded on first run, GB-sized,
+# and worth keeping across reinstalls, so they are user data, not package data.
+_DEFAULT_MODELS_DIR = ROOT_DIR / "models" if _IS_SOURCE_CHECKOUT else VAR_DIR / "models"
+AUDIO_MODELS_DIR = Path(os.getenv("KAI_MODELS_DIR", _DEFAULT_MODELS_DIR))
+
+# User-authored SKILL.md recipes. Repo-local in a checkout; alongside the rest of
+# the user's data once installed, so an upgrade can't delete them.
+_DEFAULT_SKILLS_DIR = ROOT_DIR / "user_skills" if _IS_SOURCE_CHECKOUT else VAR_DIR / "user_skills"
+SKILLS_DIR = Path(os.getenv("KAI_SKILLS_DIR", _DEFAULT_SKILLS_DIR))
+
+# Downloaded study material (papers, PDFs). User data for the same reason models
+# are: large, slow to re-fetch, and must survive a reinstall.
+_DEFAULT_LIBRARY_DIR = ROOT_DIR / "data" / "library" if _IS_SOURCE_CHECKOUT else VAR_DIR / "library"
+
+# ── Package assets — read-only, ship with the code ─────────────────────────────
+PERSONA_PATH = PKG_DIR / "persona" / "persona.md"
+CHANGELOG_PATH = PKG_DIR / "persona" / "changelog.json"
+CREW_PROMPTS_DIR = PKG_DIR / "persona" / "crew_prompts"
+STATIC_DIR = PKG_DIR / "static"
+
+# The tree self_inspect walks when Kai reads her own code. A checkout has tests,
+# scripts and the entry points worth showing; an installed copy has only the
+# package.
+SOURCE_ROOT = ROOT_DIR if _IS_SOURCE_CHECKOUT else PKG_DIR
+
+
+def ensure_dirs() -> None:
+    """Create the runtime directory tree.
+
+    Called from the entry points and from db.get_conn(). Deliberately NOT run at
+    import time: importing kai.config must stay side-effect free, or `--help`,
+    a wheel build, and a read-only package layer all write to disk as a side
+    effect of an import.
+    """
+    for d in (MEMORY_DIR, KNOWLEDGE_DIR, STATE_DIR, TREE_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 # Sized for 16 GB VRAM.  Ollama swaps models so only one is loaded at a time —
@@ -65,7 +131,10 @@ HQ_EMBED_MODEL = "qwen3-embedding:4b"
 HQ_EMBED_DIM = 2560
 EMBED_MODEL = HQ_EMBED_MODEL  # shutdown re-embed alias — see note above
 
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+# Where Ollama lives. An env override matters natively long before it matters in
+# a container: a beefier GPU box on the LAN, a second Ollama on another port, an
+# SSH tunnel. Containers reuse the same knob rather than needing their own path.
+OLLAMA_BASE_URL = os.getenv("KAI_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 
 # ── Context window ─────────────────────────────────────────────────────────────
 # gemma4:12b advertises 262144. Sliding-window attention makes its KV cache
@@ -251,8 +320,11 @@ FLOW_TRACE = False
 # grow unbounded when FLOW_TRACE is left on.
 FLOW_LOG_MAX = 5000
 
-WORKSPACE_DIR = (  # only folder Kai can write files to
-    Path("C:/KaiFiles") if IS_WINDOWS else Path.home() / "KaiFiles"
+# The only folder Kai can write files to. Overridable so the sandbox root can be
+# pointed at a mounted volume, a scratch disk, or a per-profile folder.
+WORKSPACE_DIR = Path(
+    os.getenv("KAI_WORKSPACE_DIR")
+    or (Path("C:/KaiFiles") if IS_WINDOWS else Path.home() / "KaiFiles")
 )
 
 # Git repos Kai is allowed to clone. Add URLs here to grant access.
@@ -290,7 +362,7 @@ GOAL_STALE_DAYS = 3  # days without progress before a goal appears in briefing
 # Unpaywall is a free legal service that finds open-access copies of papers.
 # They only ask for an email address for rate-limiting — no account required.
 UNPAYWALL_EMAIL = os.getenv("UNPAYWALL_EMAIL", "")
-STUDY_LIBRARY_PATH = os.getenv("STUDY_LIBRARY_PATH", str(ROOT_DIR / "data" / "library"))
+STUDY_LIBRARY_PATH = os.getenv("STUDY_LIBRARY_PATH", str(_DEFAULT_LIBRARY_DIR))
 # CORE aggregates 200M+ open-access papers. Free API key at core.ac.uk/services/api
 # Works without a key but rate-limited. With key: much higher limits.
 CORE_API_KEY = os.getenv("CORE_API_KEY", "")

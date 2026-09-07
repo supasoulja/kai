@@ -1,3 +1,111 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kai-agent"
+dynamic = ["version"]                     # read from kai/__init__.py
+description = "A local AI agent — Python + Ollama + SQLite. Observes, plans, acts, and remembers across sessions. No cloud calls."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "supasoulja" }]
+keywords = ["ai", "agent", "local", "ollama", "llm", "assistant", "offline"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core — what Kai needs to boot, chat, remember, and serve the web UI.
+# Kept in step with requirements.txt, which stays as the documented
+# `pip install -r` path for people running from a clone.
+dependencies = [
+    "pydantic>=2.0",
+    "sqlite-vec",
+    "psutil",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    "onnxruntime>=1.20",
+    "tokenizers",
+    "numpy",
+    "huggingface_hub",
+    "httpx>=0.28",
+    # >=46.0.7 clears the CVEs the system 41.x resolves to, through CVE-2026-39892.
+    "cryptography>=46.0.7",
+]
+
+# Feature groups. Each mirrors a requirements-*.txt file and is guarded by
+# try/except in code, so Kai runs with none of them installed.
+[project.optional-dependencies]
+voice = [
+    "faster-whisper>=1.0",   # STT — pulls av, ctranslate2
+    "kokoro-onnx>=0.5",      # TTS — pulls soundfile
+]
+browser = [
+    "playwright>=1.40",      # then: python -m playwright install chromium
+]
+documents = [
+    "pypdf>=4.0",            # PDF text extraction (uploads + study library)
+    "python-docx>=1.1",      # .docx / .doc extraction (imported as `docx`)
+]
+# Native desktop window + tray. On Linux these also need system packages first
+# (python3-gi, gir1.2-webkit2-4.1, libappindicator3-dev) — see README.
+desktop = [
+    "pywebview>=5.0",
+    "pystray",
+    "Pillow",
+    "keyboard",
+]
+dev = [
+    "pytest",
+    "ruff",
+    "build",
+]
+# Everything except desktop (which needs system packages) and dev.
+all = [
+    "kai-agent[voice,browser,documents]",
+]
+
+[project.scripts]
+kai = "kai.apps.cli:main"          # terminal REPL
+kai-web = "kai.apps.web:main"      # FastAPI + SSE server
+kai-app = "kai.apps.desktop:main"  # native desktop window
+
+[project.urls]
+Homepage = "https://github.com/supasoulja/newb_agent"
+Repository = "https://github.com/supasoulja/newb_agent"
+Issues = "https://github.com/supasoulja/newb_agent/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "kai.__version__" }
+
+[tool.setuptools.packages.find]
+# Only the kai/ package ships. The root web.py / cli.py / app.py are checkout-only
+# shims: installing them would put modules named "web" and "app" on every user's
+# import path.
+include = ["kai*"]
+
+[tool.setuptools.package-data]
+# Runtime assets that must travel inside the wheel. These were the files that
+# silently went missing from fresh clones when they lived in gitignored dirs —
+# the same class of bug, one layer up.
+"kai" = [
+    "persona/*.md",
+    "persona/*.json",
+    "persona/crew_prompts/*.md",
+    "static/**/*",
+    "skills/**/*.md",
+]
+
 [tool.ruff]
 # Kai targets the 3.12 interpreter shipped in .venv.
 target-version = "py312"

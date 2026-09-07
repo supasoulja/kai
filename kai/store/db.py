@@ -97,6 +97,11 @@ def get_conn() -> sqlite3.Connection:
     # Resolve the path at call time (not a frozen import-time value) so tests
     # that reassign cfg.DB_PATH before connecting actually reach their temp DB.
     db_path = Path(cfg.DB_PATH)
+    # kai.config no longer mkdirs at import time (that made importing the module
+    # write to disk). Every DB open funnels through here, so this is the one
+    # place that has to guarantee the directory exists — and it honors a test
+    # that has repointed cfg.DB_PATH at a temp dir.
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if DB is locked

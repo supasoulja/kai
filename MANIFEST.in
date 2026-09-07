@@ -1,0 +1,22 @@
+# Source distribution contents. The wheel gets its assets from
+# [tool.setuptools.package-data]; this file covers the extra top-level pieces an
+# sdist should carry so `pip install <sdist>` can rebuild the wheel.
+include README.md LICENSE pyproject.toml
+include requirements*.txt
+
+# Runtime assets inside the package (belt-and-braces with package-data).
+recursive-include kai/persona *.md *.json
+recursive-include kai/static *
+recursive-include kai/skills *.md
+
+# Never ship runtime data, private context, or the build scaffolding.
+prune var
+prune data
+prune models
+prune node_modules
+prune docs
+prune .claude
+prune experiments
+prune tests
+exclude CLAUDE.md
+global-exclude *.py[cod] __pycache__/* *.db *.db-wal *.db-shm *.db-journal

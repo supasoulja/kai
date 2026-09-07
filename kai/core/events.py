@@ -94,6 +94,10 @@ def _get_db():
         from kai.config import MEMORY_DIR
 
         db_path = MEMORY_DIR / "events.db"
+        # kai.config no longer mkdirs at import time, so every direct
+        # sqlite3.connect has to make its own parent (tree.py, state.py and
+        # knowledge.py already do; this one was riding on the import side effect).
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         _db_conn = sqlite3.connect(str(db_path), check_same_thread=False)
         _db_conn.execute("PRAGMA journal_mode=WAL")
         _db_conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock contention

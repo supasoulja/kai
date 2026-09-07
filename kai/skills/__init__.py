@@ -20,7 +20,7 @@ __all__ = ["Skill", "SkillResult", "SkillRegistry", "build_skill_registry"]
 def build_skill_registry(tool_registry, extra_dirs: "list[Path] | None" = None):
     """Construct a SkillRegistry and discover built-in + user skills.
 
-    `extra_dirs` defaults to [ROOT_DIR/user_skills] — where SKILL.md recipes and
+    `extra_dirs` defaults to [cfg.SKILLS_DIR] — where SKILL.md recipes and
     first-party Python skills live. Skills are optional: any failure degrades to
     None (no skills) rather than blocking Brain/app startup.
     """
@@ -28,7 +28,7 @@ def build_skill_registry(tool_registry, extra_dirs: "list[Path] | None" = None):
 
     try:
         sr = SkillRegistry(tool_registry=tool_registry)
-        dirs = extra_dirs if extra_dirs is not None else [cfg.ROOT_DIR / "user_skills"]
+        dirs = extra_dirs if extra_dirs is not None else [cfg.SKILLS_DIR]
         sr.discover(extra_dirs=dirs)
         return sr
     except Exception:

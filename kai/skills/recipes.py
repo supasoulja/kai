@@ -25,7 +25,7 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 def recipes_dir() -> Path:
     """The folder recipes live in (created on demand)."""
-    d = cfg.ROOT_DIR / "user_skills"
+    d = cfg.SKILLS_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -234,16 +234,13 @@ def _relaunch() -> None:
     if entry == "app":
         # pywebview's GTK/WebKit main loop can't be re-exec'd in place — spawn a
         # detached fresh instance, then exit this one. The single-instance lock
-        # in app.py makes the new process wait/bind cleanly once we're gone.
+        # kai/apps/desktop.py makes the new process wait/bind cleanly once
+        # we're gone.
         import subprocess
 
-        import kai.config as cfg
-
-        app_py = str(cfg.ROOT_DIR / "app.py")
         try:
             subprocess.Popen(
-                [sys.executable, app_py],
-                cwd=str(cfg.ROOT_DIR),
+                [sys.executable, "-m", "kai.apps.desktop"],
                 start_new_session=True,
             )
         except Exception as exc:
