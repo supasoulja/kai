@@ -4,8 +4,8 @@ system.* operation tools — actions that modify system state.
 These tools change the PC. Each one is labeled clearly and creates a
 restore point first where appropriate.
 
-Platform: Windows only (uses PowerShell).  On Linux these tools return
-a helpful message instead of crashing.
+Windows only (uses PowerShell). Unlike pc_tools, nothing here has a Linux
+implementation — on Linux each tool short-circuits to _LINUX_MSG.
 """
 
 import datetime
