@@ -1137,8 +1137,12 @@ class Brain:
 
         if self._tool_index and selection_emb:
             try:
+                # top_k=4, not 2. Measured 2026-09-07 on the composition corpus
+                # (60 runs, gemma4:12b): composed 47% at k=2, 68% at k=4, 32% with
+                # the gate fully open. Selection — not context budget — is the
+                # ceiling; 78 schemas is 9.2% of the window and still the worst arm.
                 tools_schema = self.tool_registry.select_tools_by_category(
-                    selection_emb, self._tool_index, top_k=2, exclude=excluded
+                    selection_emb, self._tool_index, top_k=4, exclude=excluded
                 )
             except Exception:
                 tools_schema = self.tool_registry.get_schema(exclude=excluded)
