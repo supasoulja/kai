@@ -948,3 +948,26 @@ def test_study_results_number_only_what_is_rendered():
     assert "Found 2 papers" in out
     assert re.findall(r"^(\d+)\. ", out, re.M) == ["1", "2"], "indices must start at 1"
     assert "arXiv error" in out, "failed sources are still disclosed, not hidden"
+
+
+def test_weather_search_fallback_declares_itself_unverified():
+    """Asked for a place that does not exist, weather.current fell through to a web
+    search and returned conditions for "Nowhere, OK" — a real town — presented as
+    the answer. A named place in the reply reads as the answer whether or not it
+    is the one asked about, so the fallback now says it is unverified and tells
+    the model to compare the place name."""
+    from kai.tools.web import weather
+
+    with (
+        patch.object(weather.urllib.request, "urlopen", side_effect=OSError("no route")),
+        patch(
+            "kai.tools.web.search._ddg_search",
+            return_value=[{"snippet": "Hourly weather forecast in Nowhere, OK."}],
+        ),
+    ):
+        out = weather.get_weather("Zzzzqqq Nowhere Land 99999")
+
+    assert "Could not get verified weather" in out
+    assert "Zzzzqqq Nowhere Land 99999" in out, "must name what was actually asked for"
+    assert "Unverified" in out
+    assert "Nowhere, OK" in out, "the snippet is still shown, just labelled"

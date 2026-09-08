@@ -47,7 +47,19 @@ def get_weather(location: str = "") -> str:
         q = f"weather {location}" if location else "current weather conditions"
         results = _ddg_search(q, max_results=1)
         if results:
-            return f"Weather (via search):\n{results[0]['snippet']}"
+            # Say whose weather this is. The primary provider failed or did not
+            # recognise the place, so this is an unverified web snippet for the
+            # search string — asked for "Zzzzqqq Nowhere Land" it happily
+            # returned conditions for Nowhere, Oklahoma with nothing marking it
+            # as a different location. A named place in the reply reads as the
+            # answer whether or not it is the one that was asked about.
+            asked = location or "your location"
+            return (
+                f"Could not get verified weather for {asked!r}. "
+                f"Unverified web search result below — CHECK the place name in it "
+                f"matches what was asked, and say so if it does not:\n"
+                f"{results[0]['snippet']}"
+            )
     except Exception:
         pass
 
