@@ -194,3 +194,27 @@ def test_evidence_extraction_reads_successful_tool_output():
     ev = _evidence_from(msgs)
     assert "55.3" in ev
     assert "boom" not in ev, "failed tool output is not evidence"
+
+
+def test_grounding_check_reads_full_tool_output_not_the_fence_excerpt():
+    """The citation fence is excerpted to keep the prompt small; the CHECK must
+    not be. pc.deep_scan returns ~17k chars, so verifying against only the first
+    500 flagged every correctly-quoted value past that point as fabricated —
+    turning the guard into a false-positive generator that rewrites correct
+    answers."""
+    from kai.core.brain import _evidence_from
+    from kai.memory.cerebellum import Verdict, check_grounded
+
+    big = (
+        "=== SCAN ===\ncpu 22.9%\n"
+        + ("filler line\n" * 60)
+        + "Disk: 55.3% used (163.7/312.1 GB)\nRAM: 7.4/31.2 GB"
+    )
+    msgs = [{"role": "tool", "content": json.dumps({"success": True, "output": big})}]
+    answer = "Disk is 55.3% used (163.7 of 312.1 GB) and RAM is 7.4 of 31.2 GB."
+
+    assert len(_evidence_from(msgs)) == 500, "fence stays excerpted"
+    assert len(_evidence_from(msgs, limit=None)) > 500, "check sees all of it"
+    assert check_grounded(answer, _evidence_from(msgs, limit=None)).verdict < Verdict.FLAG
+    # and the truncated view is exactly what used to produce the false alarm
+    assert check_grounded(answer, _evidence_from(msgs)).verdict >= Verdict.FLAG

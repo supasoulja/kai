@@ -320,13 +320,20 @@ def _build_compress_messages(raw_text: str) -> list[dict]:
 # ── Brain ──────────────────────────────────────────────────────────────────────
 
 
-def _evidence_from(messages: list[dict]) -> str:
-    """The successful tool output from this turn, as the model was shown it.
+# The citation fence is injected into the prompt, so it is excerpted to keep the
+# turn small. The grounding CHECK must not be: pc.deep_scan returns ~17k chars,
+# and verifying an answer against only its first 500 flags every correctly-quoted
+# value past that point as fabricated. Truncating the check turns it into a
+# false-positive generator that makes Kai rewrite correct answers.
+_FENCE_EXCERPT = 500
 
-    Shared by _ground_evidence (which fences the answer to it) and the
-    post-answer check_grounded (which verifies the answer against it) — if the
-    two read evidence differently, the check would police text the model never
-    saw.
+
+def _evidence_from(messages: list[dict], limit: int | None = _FENCE_EXCERPT) -> str:
+    """Successful tool output from this turn. limit=None returns it in full.
+
+    Shared by _ground_evidence (which fences the answer to an excerpt) and the
+    post-answer check_grounded (which needs all of it, or it polices text the
+    model was legitimately shown).
     """
     lines = []
     for m in messages:
@@ -337,7 +344,9 @@ def _evidence_from(messages: list[dict]) -> str:
         except (json.JSONDecodeError, TypeError):
             continue
         if data.get("success"):
-            out = str(data.get("output", ""))[:500]
+            out = str(data.get("output", ""))
+            if limit is not None:
+                out = out[:limit]
             if out:
                 lines.append(out)
     return "\n---\n".join(lines)
@@ -970,7 +979,7 @@ class Brain:
             nudge = ANSWER_REVERIFY_NUDGE
             reason_kind = "hedge"  # flow.record already takes "kind" positionally
             if v.verdict < _cb.Verdict.FLAG:
-                v = _cb.check_grounded(clean_text, _evidence_from(messages))
+                v = _cb.check_grounded(clean_text, _evidence_from(messages, limit=None))
                 nudge = FABRICATION_NUDGE.format(stray=v.reason)
                 reason_kind = "fabrication"
             _cb.log_result("answer", "verify", v, self.user_id, output_snippet=clean_text[:500])
