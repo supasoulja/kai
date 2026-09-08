@@ -971,3 +971,22 @@ def test_weather_search_fallback_declares_itself_unverified():
     assert "Zzzzqqq Nowhere Land 99999" in out, "must name what was actually asked for"
     assert "Unverified" in out
     assert "Nowhere, OK" in out, "the snippet is still shown, just labelled"
+
+
+def test_traceroute_says_missing_binary_instead_of_timed_out():
+    """traceroute is not installed on this box (only tracepath), and _run kept
+    only stdout — so the tool answered "Traceroute timed out" in 0.0s and sent
+    anyone reading it to debug a healthy network. run_argv already knew the
+    difference; the adapter was discarding it."""
+    from kai.tools._shell import ShellResult
+    from kai.tools.web import network
+
+    missing = ShellResult("", "[Errno 2] No such file or directory: 'traceroute'", False, False)
+    with patch.object(network, "run_argv", return_value=missing):
+        out = network.traceroute("1.1.1.1")
+    assert "not installed" in out
+    assert "timed out" not in out.lower()
+
+    timed = ShellResult("", "Timed out", True, False)
+    with patch.object(network, "run_argv", return_value=timed):
+        assert "timed out" in network.traceroute("1.1.1.1").lower()

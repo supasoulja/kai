@@ -17,6 +17,28 @@ def _run(args: list[str], timeout: int = 60) -> str:
     return run_argv(args, timeout).out
 
 
+def _why_empty(args: list[str], timeout: int = 60) -> tuple[str, str]:
+    """(stdout, reason) — reason is "" on success, else why there is no output.
+
+    run_argv already distinguishes a timeout from a missing binary from a
+    non-zero exit; _run threw all of that away and returned only stdout, so
+    every failure looked identical. traceroute is not installed on this box
+    (only tracepath), which made the tool report "Traceroute timed out" in 0.0s
+    and send anyone reading it to debug a network that was fine.
+    """
+    r = run_argv(args, timeout)
+    if r.timed_out:
+        return "", "timed out"
+    if not r.ok:
+        missing = "No such file" in r.err or "not found" in r.err.lower()
+        return "", (
+            f"{args[0]} is not installed on this system"
+            if missing
+            else f"{args[0]} failed: {r.err[:120]}"
+        )
+    return r.out, ""
+
+
 def _safe_host(host: str) -> str:
     """Strip everything except valid hostname/IP characters."""
     return re.sub(r"[^a-zA-Z0-9.\-]", "", host.strip())
@@ -153,9 +175,9 @@ def traceroute(host: str) -> str:
     else:
         # Linux: traceroute -n (no DNS) -m 20 (max hops) -w 1 (1s timeout)
         cmd = ["traceroute", "-n", "-m", "20", "-w", "1", host]
-    out = _run(cmd, timeout=90)
+    out, why = _why_empty(cmd, timeout=90)
     if not out:
-        return f"Traceroute to {host} timed out."
+        return f"Traceroute to {host} unavailable — {why or 'no output'}."
     # Trim the header/footer and limit output
     lines = [line.rstrip() for line in out.splitlines() if line.strip()]
     return "\n".join(lines[:35])
