@@ -892,3 +892,27 @@ def test_find_old_reports_when_nothing_has_a_usable_date():
         out = file_tools.find_old_files(path="/home/u")
     assert "none with a usable modification date" in out
     assert "1 file(s) skipped" in out
+
+
+def test_goals_create_accepts_a_list_and_stops_splitting_steps():
+    """steps was a comma-separated string split on every comma, so a step that
+    contained one was silently torn in half — "buy milk, eggs and bread" became
+    two steps with no error. The schema now asks for an array; strings still work
+    because saved skills and recipes emit them."""
+    from kai.tools.agent.goals import _as_steps
+
+    assert _as_steps(["buy milk, eggs and bread", "ship it"]) == [
+        "buy milk, eggs and bread",
+        "ship it",
+    ]
+    assert _as_steps("one, two ,three") == ["one", "two", "three"]
+    assert _as_steps("") == []
+    assert _as_steps([]) == []
+    assert _as_steps([" a ", "", "b"]) == ["a", "b"]
+
+
+def test_goals_create_schema_advertises_an_array():
+    from kai.tools.registry import registry
+
+    props = registry._tools["goals.create"]["schema"]["function"]["parameters"]["properties"]
+    assert props["steps"]["type"] == "array"

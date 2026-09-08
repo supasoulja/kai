@@ -31,6 +31,15 @@ def _user_id() -> int:
         return 0
 
 
+def _as_steps(steps: str | list[str]) -> list[str]:
+    """Normalise the steps argument to a clean list, accepting either shape."""
+    if isinstance(steps, (list, tuple)):
+        return [str(s).strip() for s in steps if str(s).strip()]
+    if not steps:
+        return []
+    return [s.strip() for s in str(steps).split(",") if s.strip()]
+
+
 @registry.tool(
     name="goals.create",
     description=(
@@ -47,17 +56,24 @@ def _user_id() -> int:
         },
         "description": {"type": "string", "description": "What this goal is and why it matters"},
         "steps": {
-            "type": "string",
-            "description": "Comma-separated ordered steps to accomplish the goal",
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Ordered steps to accomplish the goal, one per item",
         },
     },
 )
-def create_goal(title: str, description: str = "", steps: str = "") -> str:
-    """steps is a comma-separated string; split internally."""
+def create_goal(title: str, description: str = "", steps: str | list[str] = "") -> str:
+    """steps may be a list (preferred) or a comma-separated string (legacy).
+
+    It was string-only, split on every comma, so a step that contained one was
+    silently torn in half: "buy milk, eggs and bread" became two steps and the
+    user was never told. An array cannot be mis-split, so the schema now asks for
+    one; strings still work because saved skills and recipes emit them.
+    """
     uid = _user_id()
     goal_id = short_id(12)
     now = time.time()
-    step_list = [s.strip() for s in steps.split(",") if s.strip()] if steps else []
+    step_list = _as_steps(steps)
     conn = _get_conn()
     conn.execute(
         "INSERT INTO goals (id, user_id, title, description, steps_json, current_step, "
