@@ -758,3 +758,57 @@ def teardown_module(module):
         os.unlink(_tmp.name)
     except Exception:
         pass
+
+
+# ── system.drives (regression: fabricated drives) ─────────────────────────────
+
+
+def test_system_drives_reports_every_mount_not_just_root():
+    """Kai invented /dev/sda1, /dev/sdb1 and /dev/sdc1 when asked to look for more
+    drives: system.info reports only psutil.disk_usage("/") and files.disk_usage
+    returns folder sizes, so nothing could enumerate mounts and the model filled
+    the gap. Guards that the capability exists and reports what collect_disk saw."""
+    from kai.tools.system.drives import get_drives
+
+    fake = [
+        {
+            "mount": "/",
+            "fstype": "ext4",
+            "total_gb": 335.1,
+            "used_gb": 175.8,
+            "free_gb": 142.2,
+            "percent": 55.3,
+        },
+        {
+            "mount": "/mnt/data",
+            "fstype": "btrfs",
+            "total_gb": 256.1,
+            "used_gb": 225.6,
+            "free_gb": 28.6,
+            "percent": 88.8,
+        },
+    ]
+    with patch("kai.tools.system.drives.collect_disk", return_value=fake):
+        out = get_drives()
+
+    assert "2 mounted drive(s)" in out
+    assert "/mnt/data" in out, "a non-root mount must be reported"
+    assert "btrfs" in out and "88.8" in out
+    # Device paths are exactly what the model hallucinated; this tool never emits them.
+    assert "/dev/sd" not in out
+
+
+def test_system_drives_handles_no_readable_mounts():
+    from kai.tools.system.drives import get_drives
+
+    with patch("kai.tools.system.drives.collect_disk", return_value=[]):
+        assert "No mounted drives" in get_drives()
+
+
+def test_system_drives_is_reachable_from_disk_questions():
+    """The gate offers whole categories, so membership is what decides whether a
+    drive question can reach this tool at all."""
+    from kai.tools.registry import _TOOL_CATEGORIES, registry
+
+    assert "system.drives" in _TOOL_CATEGORIES["disk_analysis"]["tools"]
+    assert registry._tools["system.drives"].get("risk") == "safe"
