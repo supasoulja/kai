@@ -36,6 +36,10 @@ else:
 # capacities. Nothing in the result said "these are directories, not drives", so
 # the model had no way to tell it was holding the wrong kind of answer. Stated in
 # the RESULT because that is what survives into the final-answer context.
+# Files whose mtime is at or below the epoch carry no usable date. Anything
+# before this is treated as "unknown age", never as "very old".
+_MTIME_FLOOR = "1980-01-01"
+
 _FOLDER_SIZES_CAVEAT = (
     "\n(These are FOLDER sizes inside one filesystem — not drives, partitions, or "
     "total capacity. For drives and free space call system.drives.)"
@@ -491,20 +495,37 @@ def find_old_files(path: str = "", days: int = 365, min_size_mb: int = 50, top_n
         if not raw:
             return f"No files older than {days} days (>{min_size_mb} MB) found in '{path}'."
         records: list[tuple[str, str, float, str]] = []
+        undated = 0
         for line in raw.splitlines():
             parts = line.split(None, 2)
             if len(parts) >= 3:
                 try:
                     date_str = parts[0][:10]
                     mb = round(int(parts[1]) / 1_048_576, 1)
-                    records.append((parts[0], date_str, mb, parts[2]))
                 except (ValueError, IndexError):
-                    pass
+                    continue
+                # A zeroed mtime means the timestamp is UNKNOWN, not that the file
+                # is ancient. Flatpak and other reproducible-build tooling zero
+                # them deliberately, and sorting oldest-first put every one of
+                # them at the top: asked what old files could go, this listed
+                # nothing but live flatpak runtimes, dated 1969. Deleting on that
+                # advice breaks the user's applications.
+                if date_str < _MTIME_FLOOR:
+                    undated += 1
+                    continue
+                records.append((parts[0], date_str, mb, parts[2]))
         records.sort()
         records = records[:top_n]
         lines = [f"Files not modified in {days}+ days (>{min_size_mb} MB) in {path}:"]
         for _, date_str, mb, name in records:
             lines.append(f"  {date_str}  {mb:>8.1f} MB  {name}")
+        if not records:
+            lines.append("  (none with a usable modification date)")
+        if undated:
+            lines.append(
+                f"\n({undated} file(s) skipped: modification time is zeroed, so their age "
+                "is unknown — usually flatpak/OCI content. Not old, not safe to delete.)"
+            )
         return "\n".join(lines)
 
 

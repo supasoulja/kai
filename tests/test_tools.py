@@ -855,3 +855,40 @@ def test_partial_view_tools_point_at_their_complete_counterpart():
     partials = [_json.dumps(_json.loads(get_system_info())), _FOLDER_SIZES_CAVEAT]
     for text in partials:
         assert "system.drives" in text, "a partial view must name the tool that completes it"
+
+
+def test_find_old_treats_zeroed_mtimes_as_unknown_not_ancient():
+    """A zeroed mtime means the date is unknown, not that the file is from 1969.
+    Flatpak zeroes them deliberately, and sorting oldest-first put every one at
+    the top — asked what old files could be cleared, the tool listed nothing but
+    live flatpak runtimes dated 1969. Acting on that breaks the user's apps."""
+    from kai.tools.files import file_tools
+
+    raw = (
+        "1969-12-31+19:00:00 67000000 /home/u/.local/share/flatpak/runtime/libfoo.so\n"
+        "1969-12-31+19:00:00 64000000 /home/u/.local/share/flatpak/repo/objects/ab.file\n"
+        "2023-04-10+11:22:33 68000000 /home/u/.steam/proton/xul.dll\n"
+    )
+    with (
+        patch.object(file_tools, "_run_args", return_value=raw),
+        patch.object(file_tools, "_IS_WINDOWS", False),
+    ):
+        out = file_tools.find_old_files(path="/home/u")
+
+    assert "1969" not in out, "a zeroed mtime must never be shown as a date"
+    assert "xul.dll" in out, "genuinely dated files still listed"
+    assert "2 file(s) skipped" in out
+    assert "not safe to delete" in out
+
+
+def test_find_old_reports_when_nothing_has_a_usable_date():
+    from kai.tools.files import file_tools
+
+    raw = "1969-12-31+19:00:00 67000000 /home/u/.local/share/flatpak/a.file\n"
+    with (
+        patch.object(file_tools, "_run_args", return_value=raw),
+        patch.object(file_tools, "_IS_WINDOWS", False),
+    ):
+        out = file_tools.find_old_files(path="/home/u")
+    assert "none with a usable modification date" in out
+    assert "1 file(s) skipped" in out
