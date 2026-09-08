@@ -278,6 +278,69 @@ def verify_answer(answer: str, user_input: str, tools_used: list[str]) -> Cerebe
     return CerebellarResult(Verdict.CLEAR, "ok", 0.0)
 
 
+# Numbers Kai may state without a tool having produced them: the ordinals and
+# small counts that show up in ordinary prose ("the 3 drives", "step 2"), plus
+# percentages of 100. Without this every sentence with "one" or "100%" in it
+# would look ungrounded.
+_FREE_NUMBERS = {0.0, 1.0, 2.0, 3.0, 100.0}
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+# How many untraceable numbers before it is fabrication rather than arithmetic.
+# Derived, correct answers exist — "312.1 total, 163.7 used" legitimately yields
+# "148 GB free", a number appearing in no tool result — so a single stray value
+# must not trip this. The real failure looked nothing like that: six invented
+# capacities across three invented device names in one reply.
+_UNGROUNDED_LIMIT = 3
+
+
+def _numbers(text: str) -> list[float]:
+    out = []
+    for m in _NUM_RE.finditer(text or ""):
+        try:
+            out.append(float(m.group()))
+        except ValueError:
+            pass
+    return out
+
+
+def check_grounded(answer: str, evidence: str) -> CerebellarResult:
+    """Deterministic fabrication check: do the answer's numbers trace to evidence?
+
+    The counterpart to verify_answer, which only catches the opposite failure —
+    hedging DESPITE evidence. Nothing checked the reverse, so a turn could invent
+    values wholesale and pass: asked to find more drives, Kai was handed folder
+    sizes and replied with /dev/sda1 32/50 GB, /dev/sdb1 180/250, /dev/sdc1
+    40/100. Not one of those numbers appeared in any tool result.
+
+    This is the same test kaibench's check_grounded scores runs with. It existed
+    only in the harness; a detector that never runs in production catches nothing.
+
+    Tolerant on purpose — a value within 2% of an evidence number counts as
+    traced (rounding, unit conversion), and only _UNGROUNDED_LIMIT untraceable
+    numbers FLAG. The caller nudges and regenerates once, so a false positive
+    costs one retry, never a wrong answer.
+    """
+    if not (answer or "").strip() or not (evidence or "").strip():
+        return CerebellarResult(Verdict.CLEAR, "no-answer-or-evidence", 0.0)
+    have = _numbers(evidence)
+    if not have:
+        return CerebellarResult(Verdict.CLEAR, "evidence carries no numbers", 0.0)
+    stray = []
+    for n in _numbers(answer):
+        if n in _FREE_NUMBERS:
+            continue
+        if any(abs(n - h) <= max(0.05, abs(h) * 0.02) for h in have):
+            continue
+        stray.append(n)
+    if len(stray) >= _UNGROUNDED_LIMIT:
+        return CerebellarResult(
+            Verdict.FLAG,
+            f"{len(stray)} numbers in the answer trace to no tool result: {stray[:6]}",
+            1.0,
+        )
+    return CerebellarResult(Verdict.CLEAR, f"{len(stray)} untraced (under limit)", 0.0)
+
+
 def log_result(
     tool_name: str,
     phase: str,

@@ -8,6 +8,7 @@ instead of using/redoing the tool. verify_answer flags that on a tool turn; the
 turn buffers the answer, silently retries once, and reveals only the fixed reply.
 """
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -92,6 +93,11 @@ def _tool_turn_brain(*stream_responses):
     mock.embed.return_value = [0.0] * 2560
     mock.installed_models.return_value = [cfg.CHAT_MODEL]
     mock.chat_stream.side_effect = _multi_stream(*stream_responses)
+    # Single-tool turns now run two-phase fact extraction too
+    # (_FACT_EXTRACT_THRESHOLD dropped 2 -> 1), so the non-streaming chat used by
+    # _ground_evidence has to return a real payload. Left as a bare MagicMock it
+    # hands a MagicMock to strip_thinking.
+    mock.chat.return_value = {"message": {"content": "- the time is 09:00"}}
     reg = MagicMock()
     reg.list_tools.return_value = ["time.now"]  # real list → fast-path fires
     reg.execute.return_value = "2026-07-08 09:00"
@@ -119,3 +125,72 @@ def test_good_tool_answer_is_not_retried():
     out = brain.run("what time is it?")
     assert out == "It's 9:00 AM."
     assert mock.chat_stream.call_count == 1  # verified clean → no retry
+
+
+# ── The opposite failure: asserting numbers no tool returned ──────────────────
+
+
+def test_check_grounded_flags_the_invented_drives():
+    """The real regression. Asked to find more drives, Kai was handed folder sizes
+    by files.disk_usage and answered with three device paths and six capacities,
+    none of which appear anywhere in the tool output. verify_answer could not see
+    this — it only catches hedging DESPITE evidence, the opposite failure."""
+    from kai.memory.cerebellum import Verdict, check_grounded
+
+    evidence = (
+        "Folder sizes in /:\n 88.71 GB /usr\n 62.17 GB /home\n 6.24 GB /var\n"
+        " 886 MB /boot\n 376 MB /opt\n 18 MB /etc\n 5 MB /tmp\n 1 MB /root"
+    )
+    answer = (
+        "*   **/dev/sda1 (Root):** ~32 GB used / 50 GB total\n"
+        "*   **/dev/sdb1:** ~180 GB used / 250 GB total\n"
+        "*   **/dev/sdc1:** ~40 GB used / 100 GB total"
+    )
+    v = check_grounded(answer, evidence)
+    assert v.verdict >= Verdict.FLAG
+    assert "32.0" in v.reason
+
+
+def test_check_grounded_allows_arithmetic_on_tool_values():
+    """A derived number is not a fabricated one. The same conversation's FIRST turn
+    was correct: system.info gave 163.7 used of 312.1, and '148 GB free' follows
+    from it while appearing in no tool result. Flagging that would train the model
+    out of doing arithmetic, so a lone untraced value must pass."""
+    from kai.memory.cerebellum import Verdict, check_grounded
+
+    evidence = '{"disk": "55.3% used (163.7/312.1 GB)"}'
+    answer = "You have about 148 GB of free space remaining out of a total capacity of 312 GB."
+    assert check_grounded(answer, evidence).verdict < Verdict.FLAG
+
+
+def test_check_grounded_ignores_prose_numbers_and_missing_evidence():
+    from kai.memory.cerebellum import Verdict, check_grounded
+
+    ev = "CPU: 44C  Load: 3%"
+    # ordinals/counts in ordinary prose must not read as fabricated data
+    assert check_grounded("There are 3 things to note, and 1 is urgent.", ev).verdict < Verdict.FLAG
+    # nothing to check against
+    assert check_grounded("Disk is 91% full.", "").verdict == Verdict.CLEAR
+    assert check_grounded("", ev).verdict == Verdict.CLEAR
+
+
+def test_fact_extraction_now_covers_single_tool_turns():
+    """The threshold was 2, so the strongest guard was off for exactly the turn
+    that fabricated — one tool, one bad answer."""
+    from kai.core.brain import _FACT_EXTRACT_THRESHOLD
+
+    assert _FACT_EXTRACT_THRESHOLD == 1
+
+
+def test_evidence_extraction_reads_successful_tool_output():
+    from kai.core.brain import _evidence_from
+
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "tool", "content": json.dumps({"success": True, "output": "disk 55.3% used"})},
+        {"role": "tool", "content": json.dumps({"success": False, "output": "boom"})},
+        {"role": "tool", "content": "not json"},
+    ]
+    ev = _evidence_from(msgs)
+    assert "55.3" in ev
+    assert "boom" not in ev, "failed tool output is not evidence"

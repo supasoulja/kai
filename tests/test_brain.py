@@ -227,6 +227,9 @@ def test_tool_rounds_use_selected_tool_model():
     mock_ollama.chat.side_effect = [
         _tool_call_response(),
         {"message": {"content": "tool-model prose — must be discarded"}},
+        # single-tool turns now run two-phase fact extraction before the final
+        # answer (_FACT_EXTRACT_THRESHOLD 2 -> 1), so chat() is called once more
+        {"message": {"content": "- time.now returned 2026-06-09 21:00"}},
     ]
     mock_ollama.chat_stream.side_effect = make_mock_stream("It is Tuesday.")
 
@@ -239,7 +242,13 @@ def test_tool_rounds_use_selected_tool_model():
     brain.apply_tool_level("light")
 
     result = brain.run("What time is it?")
-    for call in mock_ollama.chat.call_args_list:
+    # Only the TOOL ROUNDS use the small tool model. Two-phase fact extraction
+    # also calls chat(), but it reasons over the results rather than picking a
+    # tool, so it correctly runs on the chat model — identify rounds by the fact
+    # that they are the calls carrying a tool schema.
+    rounds = [c for c in mock_ollama.chat.call_args_list if c.kwargs.get("tools")]
+    assert rounds, "expected at least one tool round"
+    for call in rounds:
         assert call.kwargs["model"] == tool_model
         assert call.kwargs["think"] is False
     # The tool model's prose was discarded — the reply came from the streamed chat model
@@ -347,6 +356,9 @@ def test_duplicate_tool_calls_not_reexecuted():
         _tool_call_response(),
         _tool_call_response(),
         _tool_call_response(),
+        # 4th call is two-phase fact extraction, not a tool round
+        # (_FACT_EXTRACT_THRESHOLD 2 -> 1).
+        {"message": {"content": "- time.now returned 2026-06-09 21:00"}},
     ]
     mock_ollama.chat_stream.side_effect = make_mock_stream("CPU is at 47C.")
 
@@ -360,7 +372,8 @@ def test_duplicate_tool_calls_not_reexecuted():
 
     result = brain.run("What time is it?")
     mock_registry.execute.assert_called_once()  # ran once, not three times
-    assert mock_ollama.chat.call_count == 3  # two repeats, then rounds ended
+    rounds = [c for c in mock_ollama.chat.call_args_list if c.kwargs.get("tools")]
+    assert len(rounds) == 3  # two repeats, then rounds ended
     assert result == "CPU is at 47C."
 
 

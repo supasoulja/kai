@@ -50,7 +50,13 @@ if TYPE_CHECKING:
     from kai.tools.registry import ToolRegistry
 
 _HISTORY_HARD_CAP = 60  # safety ceiling — compression normally keeps history much smaller
-_FACT_EXTRACT_THRESHOLD = 2  # two-phase fact extraction fires when ≥ this many tools were called
+_FACT_EXTRACT_THRESHOLD = 1  # two-phase fact extraction fires when ≥ this many tools were called
+# Was 2, which switched the strongest anti-fabrication guard off for every
+# single-tool turn — including the one where Kai was handed folder sizes and
+# answered with three invented drives. Making the model list what the tools
+# actually returned BEFORE writing prose is exactly the fix for that failure,
+# so it now runs on any tool turn. Costs one extra model call on single-tool
+# turns; a fabricated answer costs more.
 
 # Last-resort placeholders the model emits nothing real for. They must never go
 # back into the conversation — otherwise the model sees them in history and
@@ -257,7 +263,9 @@ GROUNDING_RULE = (
     "Before stating ANY fact about this system, ask: did a tool result "
     "or [SEMANTIC] entry provide this data in THIS conversation? "
     'If not — call a tool first, or say "I\'d need to check that." '
-    "Never fabricate numbers, outputs, or success messages."
+    "Never fabricate numbers, outputs, or success messages.\n"
+    "Saying you do not know, or that no tool here can answer this, is a "
+    "CORRECT and complete answer. It is never a failure. Guessing is."
 )
 
 # Citation fence injected after tool calls — keeps the final answer pinned to
@@ -271,6 +279,18 @@ EVIDENCE_PROMPT = (
 # Injected when the post-answer grounding check flags a hedge (see
 # cerebellum.verify_answer): the turn ran tools but the draft answer said it
 # couldn't get the data or asked permission to retry. Nudge it to ACT, once.
+# Injected when check_grounded finds numbers in the draft that trace to no tool
+# result. The opposite failure to ANSWER_REVERIFY_NUDGE, and the more dangerous
+# one: a confident answer built from invented values reads exactly like a real
+# one. Names the offending numbers so the rewrite has something concrete to drop.
+FABRICATION_NUDGE = (
+    "Your draft states numbers that appear in NO tool result from this turn: "
+    "{stray}. You may only report values the tools actually returned. Rewrite "
+    "using those values alone. If the tools did not provide what the user asked "
+    "for, say plainly that you could not get it and what you would need — that "
+    "is a correct answer. Do not substitute plausible-looking values."
+)
+
 ANSWER_REVERIFY_NUDGE = (
     "Your draft reply says you couldn't get the information or asks the user "
     "whether to try — but you have the tools to get it yourself. Do NOT ask "
@@ -298,6 +318,29 @@ def _build_compress_messages(raw_text: str) -> list[dict]:
 
 
 # ── Brain ──────────────────────────────────────────────────────────────────────
+
+
+def _evidence_from(messages: list[dict]) -> str:
+    """The successful tool output from this turn, as the model was shown it.
+
+    Shared by _ground_evidence (which fences the answer to it) and the
+    post-answer check_grounded (which verifies the answer against it) — if the
+    two read evidence differently, the check would police text the model never
+    saw.
+    """
+    lines = []
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        try:
+            data = json.loads(m["content"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if data.get("success"):
+            out = str(data.get("output", ""))[:500]
+            if out:
+                lines.append(out)
+    return "\n---\n".join(lines)
 
 
 class Brain:
@@ -825,12 +868,14 @@ class Brain:
         # If the model answers directly in a tool round, the rounds return that
         # answer here and the turn finalizes immediately (single exit path).
         direct = None
+        took_fast_path = False
         # ── Pre-LLM fast-path: an exact, unambiguous command runs its tool
         # directly and skips the whole tool-round model call. Falls through to
         # the streamed answer with the result already grounded in `messages`.
         fast = _match_fast_path(user_input) if self.tool_registry else None
         if fast and fast[0] in set(self.tool_registry.list_tools()):
             fast_tool, fast_args = fast
+            took_fast_path = True
             flow_rec.record(trace_id, "fast_path_hit", name=fast_tool, args=fast_args)
             yield from self._engine._run_fast_path(
                 fast_tool,
@@ -883,7 +928,9 @@ class Brain:
             return
 
         # ── Ground the response in tool evidence ─────────────────────────────
-        self._ground_evidence(messages, tools_used, on_status, trace_id=trace_id)
+        self._ground_evidence(
+            messages, tools_used, on_status, trace_id=trace_id, fast_path=took_fast_path
+        )
 
         # ── Stream the final answer ───────────────────────────────────────────
         if tools_used:
@@ -914,11 +961,22 @@ class Brain:
         if verify and clean_text:
             from kai.memory import cerebellum as _cb
 
+            # Two deterministic checks, opposite failures. verify_answer catches
+            # hedging DESPITE evidence; check_grounded catches asserting numbers
+            # the evidence never contained. Only the first existed, so a turn
+            # could invent values wholesale and pass — and the one check that ran
+            # pushed toward asserting harder.
             v = _cb.verify_answer(clean_text, user_input, tools_used)
+            nudge = ANSWER_REVERIFY_NUDGE
+            reason_kind = "hedge"  # flow.record already takes "kind" positionally
+            if v.verdict < _cb.Verdict.FLAG:
+                v = _cb.check_grounded(clean_text, _evidence_from(messages))
+                nudge = FABRICATION_NUDGE.format(stray=v.reason)
+                reason_kind = "fabrication"
             _cb.log_result("answer", "verify", v, self.user_id, output_snippet=clean_text[:500])
             if v.verdict >= _cb.Verdict.FLAG:
-                flow_rec.record(trace_id, "answer_reverify", reason=v.reason)
-                messages.append({"role": "system", "content": ANSWER_REVERIFY_NUDGE})
+                flow_rec.record(trace_id, "answer_reverify", check=reason_kind, reason=v.reason)
+                messages.append({"role": "system", "content": nudge})
                 full_text, had_think = yield from self._stream_answer(
                     messages,
                     think=False,
@@ -1181,6 +1239,7 @@ class Brain:
         tools_used: list[str],
         on_status: "Callable[[str], None] | None" = None,
         trace_id: str = "",
+        fast_path: bool = False,
     ) -> None:
         """Pin the final answer to what the tools actually returned.
 
@@ -1191,22 +1250,16 @@ class Brain:
         """
         if not tools_used:
             return
-        evidence_lines = []
-        for m in messages:
-            if m["role"] == "tool":
-                try:
-                    data = json.loads(m["content"])
-                    if data.get("success"):
-                        out = str(data.get("output", ""))[:500]
-                        if out:
-                            evidence_lines.append(out)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        if not evidence_lines:
+        evidence_text = _evidence_from(messages)
+        if not evidence_text:
             return
-        evidence_text = "\n---\n".join(evidence_lines)
 
-        if len(set(tools_used)) >= _FACT_EXTRACT_THRESHOLD:
+        # The fast path matched a no-argument tool deterministically and its output
+        # IS the answer, so there is nothing to confabulate between evidence and
+        # reply — and it exists precisely to serve a turn without a model round.
+        # Spending one here would undo the thing it is for. check_grounded still
+        # runs afterwards, so the turn is not unchecked.
+        if not fast_path and len(set(tools_used)) >= _FACT_EXTRACT_THRESHOLD:
             if on_status:
                 on_status("Analyzing results...")
             messages.append(
