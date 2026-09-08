@@ -402,7 +402,9 @@ def test_system_info_returns_valid_json():
     data = json.loads(result)
     assert "cpu" in data
     assert "ram" in data
-    assert "disk" in data
+    # renamed from "disk": the figure covers the root filesystem only, and saying
+    # so in the key is what stops a partial read being answered as a whole one
+    assert "disk_root_filesystem_only" in data
     assert "top_processes" in data
 
 
@@ -812,3 +814,44 @@ def test_system_drives_is_reachable_from_disk_questions():
 
     assert "system.drives" in _TOOL_CATEGORIES["disk_analysis"]["tools"]
     assert registry._tools["system.drives"].get("risk") == "safe"
+
+
+# ── Partial views must say so in their OUTPUT ─────────────────────────────────
+
+
+def test_system_info_declares_that_disk_is_root_only():
+    """system.info reads psutil.disk_usage("/") — one mount. Reported as a bare
+    "disk" figure, a turn read it, was asked whether other drives existed, and had
+    no signal it was ever partial. The boundary belongs in the result: the
+    description is not what the model reasons over when it writes the answer."""
+    import json as _json
+
+    from kai.tools.system.system_info import get_system_info
+
+    data = _json.loads(get_system_info())
+    assert "disk" not in data, "a bare 'disk' key hides that this is one mount"
+    assert "disk_root_filesystem_only" in data
+    assert "system.drives" in data["other_mounts"]
+
+
+def test_disk_usage_says_it_is_not_reporting_drives():
+    """The tool whose name caused the fabrication. It returns folder sizes; the
+    output now says so and names the tool that does answer the drive question."""
+    from kai.tools.files.file_tools import _FOLDER_SIZES_CAVEAT
+
+    assert "FOLDER sizes" in _FOLDER_SIZES_CAVEAT
+    assert "not drives" in _FOLDER_SIZES_CAVEAT
+    assert "system.drives" in _FOLDER_SIZES_CAVEAT
+
+
+def test_partial_view_tools_point_at_their_complete_counterpart():
+    """The general rule, pinned so a future partial-view tool is not added without
+    it: if a tool reports a slice, its output must name what completes it."""
+    import json as _json
+
+    from kai.tools.files.file_tools import _FOLDER_SIZES_CAVEAT
+    from kai.tools.system.system_info import get_system_info
+
+    partials = [_json.dumps(_json.loads(get_system_info())), _FOLDER_SIZES_CAVEAT]
+    for text in partials:
+        assert "system.drives" in text, "a partial view must name the tool that completes it"

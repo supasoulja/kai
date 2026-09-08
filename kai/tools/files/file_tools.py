@@ -31,6 +31,17 @@ else:
     _ROOT_PARAM_HINT = "use '/' for the whole filesystem"
 
 
+# The name says disk_usage; the output is FOLDER sizes. A turn read this, was
+# asked what drives existed, and answered with three invented devices and their
+# capacities. Nothing in the result said "these are directories, not drives", so
+# the model had no way to tell it was holding the wrong kind of answer. Stated in
+# the RESULT because that is what survives into the final-answer context.
+_FOLDER_SIZES_CAVEAT = (
+    "\n(These are FOLDER sizes inside one filesystem — not drives, partitions, or "
+    "total capacity. For drives and free space call system.drives.)"
+)
+
+
 def _ps(cmd: str, timeout: int = 45) -> str | None:
     """
     Run a PowerShell command, return stdout or None on empty result.
@@ -195,6 +206,7 @@ def _disk_usage_linux(path: str, top_n: int = 12) -> str:
         lines.append(f"  {size_str:>10}  {folder}")
     if not results:
         lines.append("  (no subfolders)")
+    lines.append(_FOLDER_SIZES_CAVEAT)
     return "\n".join(lines)
 
 

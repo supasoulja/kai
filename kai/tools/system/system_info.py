@@ -42,7 +42,15 @@ def get_system_info() -> str:
     result = {
         "cpu": f"{cpu_pct:.1f}%",
         "ram": f"{ram.percent:.1f}% used ({_gb(ram.used)}/{_gb(ram.total)} GB)",
-        "disk": f"{disk.percent:.1f}% used ({_gb(disk.used)}/{_gb(disk.total)} GB)",
+        # The key says what this figure COVERS. Reporting a bare "disk" here is
+        # what let a turn read one mount and answer as if it had seen the machine:
+        # asked whether there were other drives, the model had no signal that this
+        # was ever partial, and invented three. A partial view must say so in the
+        # RESULT — the description is not what the model reasons over at answer time.
+        "disk_root_filesystem_only": (
+            f"{disk.percent:.1f}% used ({_gb(disk.used)}/{_gb(disk.total)} GB)"
+        ),
+        "other_mounts": "NOT included here — call system.drives to see every drive",
         "top_processes": procs,
         "note": "Ollama (AI inference) runs on the GPU — not visible in CPU process list.",
     }
