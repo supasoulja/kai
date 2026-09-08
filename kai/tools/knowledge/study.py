@@ -267,11 +267,18 @@ def search_papers(query: str, max_results: int = 5) -> str:
     if not results:
         return "No results found. Try different search terms."
 
+    # Number only what is actually rendered. enumerate() over every result
+    # counted the error entries too, so a failed source pushed the first real
+    # paper to "2." under a header saying 1 was found — the list and its own
+    # count disagreed, which is the kind of small incoherence a model resolves by
+    # inventing a reconciliation.
     lines = [f"Found {len([r for r in results if 'title' in r])} papers:\n"]
-    for i, r in enumerate(results, 1):
+    i = 0
+    for r in results:
         if "error" in r:
             lines.append(f"[{r['source']} error: {r['error']}]")
             continue
+        i += 1
         authors_str = ", ".join(r.get("authors", [])) or "Unknown"
         lines.append(
             f"{i}. [{r['source']}] {r['title']}\n"
@@ -506,11 +513,18 @@ def search_books(query: str, max_results: int = 8) -> str:
     if not results:
         return "No books found. Try different search terms."
 
+    # Number only what is actually rendered. enumerate() over every result
+    # counted the error entries too, so a failed source pushed the first real
+    # book to "2." under a header saying 1 was found — the list and its own
+    # count disagreed, which is the kind of small incoherence a model resolves by
+    # inventing a reconciliation.
     lines = [f"Found {len([r for r in results if 'title' in r])} books:\n"]
-    for i, r in enumerate(results, 1):
+    i = 0
+    for r in results:
         if "error" in r:
             lines.append(f"[{r['source']} error: {r['error']}]")
             continue
+        i += 1
         authors_str = ", ".join(r.get("authors", [])) or "Unknown"
         status = r.get("status", "")
         dl = r.get("download_url", "")

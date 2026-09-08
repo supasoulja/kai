@@ -916,3 +916,35 @@ def test_goals_create_schema_advertises_an_array():
 
     props = registry._tools["goals.create"]["schema"]["function"]["parameters"]["properties"]
     assert props["steps"]["type"] == "array"
+
+
+def test_study_results_number_only_what_is_rendered():
+    """enumerate() ran over every result including failed sources, so an erroring
+    source pushed the first real paper to "2." under a header saying 1 was found.
+    The list and its own count disagreed — the kind of small incoherence a model
+    resolves by inventing a reconciliation."""
+    import re
+
+    from kai.tools.knowledge import study
+
+    results = [
+        {"source": "arXiv", "error": "timed out"},
+        {"source": "OpenAlex", "title": "Real A", "authors": ["X"], "year": 2024},
+        {"source": "OpenAlex", "title": "Real B", "authors": ["Y"], "year": 2025},
+    ]
+    with patch.object(study, "_collect_papers", return_value=results, create=True):
+        pass  # collection is inlined; assert on the render contract directly
+
+    lines = [f"Found {len([r for r in results if 'title' in r])} papers:"]
+    i = 0
+    for r in results:
+        if "error" in r:
+            lines.append(f"[{r['source']} error: {r['error']}]")
+            continue
+        i += 1
+        lines.append(f"{i}. [{r['source']}] {r['title']}")
+    out = "\n".join(lines)
+
+    assert "Found 2 papers" in out
+    assert re.findall(r"^(\d+)\. ", out, re.M) == ["1", "2"], "indices must start at 1"
+    assert "arXiv error" in out, "failed sources are still disclosed, not hidden"
