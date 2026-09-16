@@ -20,6 +20,7 @@ reach the AI layer.
 
 import hashlib
 import hmac
+import json
 import os
 import sqlite3
 from datetime import datetime
@@ -27,6 +28,10 @@ from datetime import datetime
 from kai.store.db import get_conn
 
 _PBKDF2_ROUNDS = 600_000  # OWASP 2023 recommendation for PBKDF2-HMAC-SHA256
+
+# Account levels, highest first. docs/active/PERMISSIONS.md is the contract and
+# kai/core/permissions.py says what each level may do; this module only stores them.
+LEVELS = ("owner", "admin", "member", "guest")
 
 # User-scoped tables wiped by a plain `WHERE user_id = ?` delete. Shared by
 # delete_user() (account teardown) and export_user_data() (the data-export
@@ -101,13 +106,25 @@ def _ensure_table() -> None:
             pin_hash        TEXT    NOT NULL,
             machine_hash    TEXT    NOT NULL,
             created_at      TEXT    NOT NULL,
-            last_seen       TEXT
+            last_seen       TEXT,
+            level           TEXT    NOT NULL DEFAULT 'member',
+            grants          TEXT    NOT NULL DEFAULT '[]',
+            created_by      INTEGER
         )
     """)
     # Migration: add machine_hash column to any existing table that lacks it
     cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "machine_hash" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN machine_hash TEXT")
+    # Migration: levels. The account that has always been the owner — the lowest id —
+    # stays the owner, so adding levels changes nobody's powers.
+    if "level" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN level TEXT NOT NULL DEFAULT 'member'")
+        conn.execute("UPDATE users SET level = 'owner' WHERE id = (SELECT MIN(id) FROM users)")
+    if "grants" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN grants TEXT NOT NULL DEFAULT '[]'")
+    if "created_by" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN created_by INTEGER")  # NULL: nobody on record
     conn.commit()
     _table_ensured = True
 
@@ -128,33 +145,62 @@ def user_count() -> int:
     return get_conn().execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
 
+def valid_pin(pin: str) -> bool:
+    """4–8 digits: what every PIN form asks for."""
+    pin = (pin or "").strip()
+    return pin.isdigit() and 4 <= len(pin) <= 8
+
+
 def get_owner_id() -> int | None:
-    """Return the user_id of the first registered user (lowest id). They are the owner."""
+    """The owner's user_id: the account holding the owner level. If none does — the owner
+    deleted their own account — the lowest id stands in, as it always has, so a Kai is never
+    left with nobody able to run it."""
     _ensure_table()
-    row = get_conn().execute("SELECT MIN(id) FROM users").fetchone()
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM users WHERE level = 'owner' ORDER BY id LIMIT 1").fetchone()
+    if row:
+        return row[0]
+    row = conn.execute("SELECT MIN(id) FROM users").fetchone()
     return row[0] if row and row[0] is not None else None
 
 
-def create_user(name: str, pin: str, machine_key_hash: str) -> dict | None:
+def create_user(
+    name: str,
+    pin: str,
+    machine_key_hash: str,
+    level: str = "member",
+    created_by: int | None = None,
+) -> dict | None:
     """
     Register a new user on this machine.
     machine_key_hash comes from kai.system.device.key_hash() — never from the client.
-    Returns {"name": name} or None if the name is already taken.
+
+    The first account on a machine is its owner, whatever *level* says. Nobody after it is
+    ever created as one: ownership moves only by transfer_ownership(). Who may create which
+    level is kai/core/permissions.py's question, asked by the routes before they call this.
+
+    Returns {"name", "id", "level"}, or None if the name is taken or the level isn't one.
     """
     _ensure_table()
     name = name.strip()
     if not name or not pin.strip():
         return None
     conn = get_conn()
+    first = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    if first:
+        level, created_by = "owner", None
+    elif level not in LEVELS or level == "owner":
+        return None
     try:
         now = datetime.now().isoformat()
         conn.execute(
-            "INSERT INTO users (name, pin_hash, machine_hash, created_at) VALUES (?, ?, ?, ?)",
-            (name, _hash(pin), machine_key_hash, now),
+            "INSERT INTO users (name, pin_hash, machine_hash, created_at, level, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, _hash(pin), machine_key_hash, now, level, created_by),
         )
         user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
-        return {"name": name, "id": user_id}
+        return {"name": name, "id": user_id, "level": level}
     except sqlite3.IntegrityError:
         return None  # name already taken
 
@@ -204,6 +250,143 @@ def get_user_id(name: str) -> int | None:
         "SELECT id FROM users WHERE name = ? COLLATE NOCASE", (name.strip(),)
     ).fetchone()
     return row[0] if row else None
+
+
+def get_level(user_id: int) -> str | None:
+    """The account's level, or None for an id with no account (the terminal's scratch
+    identity, user 0). Read live, so a demotion applies to the very next request."""
+    if not user_id:
+        return None
+    _ensure_table()
+    row = get_conn().execute("SELECT level FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        return None
+    if user_id == get_owner_id():
+        return "owner"
+    return row[0] if row[0] in LEVELS and row[0] != "owner" else "member"
+
+
+_ACCOUNT_COLS = "id, name, level, grants, created_by, created_at, last_seen"
+
+
+def _account(row) -> dict:
+    try:
+        grants = [g for g in json.loads(row[3] or "[]") if isinstance(g, str)]
+    except (TypeError, ValueError):
+        grants = []
+    return {
+        "id": row[0],
+        "name": row[1],
+        "level": row[2],
+        "grants": grants,
+        "created_by": row[4],
+        "created_at": row[5],
+        "last_seen": row[6],
+    }
+
+
+def get_account(user_id: int) -> dict | None:
+    """One account, secrets excluded, with its effective level."""
+    _ensure_table()
+    row = (
+        get_conn().execute(f"SELECT {_ACCOUNT_COLS} FROM users WHERE id = ?", (user_id,)).fetchone()
+    )
+    if not row:
+        return None
+    account = _account(row)
+    account["level"] = get_level(row[0])
+    return account
+
+
+def list_accounts() -> list[dict]:
+    """Every account, oldest first, secrets excluded, with effective levels."""
+    _ensure_table()
+    owner = get_owner_id()
+    accounts = []
+    for row in get_conn().execute(f"SELECT {_ACCOUNT_COLS} FROM users ORDER BY id").fetchall():
+        account = _account(row)
+        if row[0] == owner:
+            account["level"] = "owner"
+        elif account["level"] not in LEVELS or account["level"] == "owner":
+            account["level"] = "member"
+        accounts.append(account)
+    return accounts
+
+
+def update_account(
+    user_id: int, *, name: str | None = None, pin: str | None = None, level: str | None = None
+) -> bool | None:
+    """Change an account's name, PIN or level. Returns True on success, None if the new name
+    is taken, False if there is no such account or the change touches ownership — which only
+    transfer_ownership() moves."""
+    _ensure_table()
+    conn = get_conn()
+    if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+        return False
+    if level is not None and (level not in LEVELS or level == "owner" or user_id == get_owner_id()):
+        return False
+    sets, args = [], []
+    if name is not None:
+        sets.append("name = ?")
+        args.append(name.strip())
+    if pin is not None:
+        sets.append("pin_hash = ?")
+        args.append(_hash(pin))
+    if level is not None:
+        sets.append("level = ?")
+        args.append(level)
+    if not sets:
+        return True
+    try:
+        conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return None  # name already taken
+    return True
+
+
+def set_grants(user_id: int, grants: list[str]) -> bool:
+    """Replace an account's grants. Which grants fit which level is permissions.GRANTS."""
+    _ensure_table()
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE users SET grants = ? WHERE id = ?", (json.dumps(sorted(set(grants))), user_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def transfer_ownership(to_id: int) -> bool:
+    """Make *to_id* the owner. The old owner becomes an admin — handing over the machine
+    shouldn't lock its former owner out of running it. False if there is no such account."""
+    _ensure_table()
+    conn = get_conn()
+    if not conn.execute("SELECT 1 FROM users WHERE id = ?", (to_id,)).fetchone():
+        return False
+    old = get_owner_id()
+    try:
+        if old is not None and old != to_id:
+            conn.execute("UPDATE users SET level = 'admin', grants = '[]' WHERE id = ?", (old,))
+        conn.execute("UPDATE users SET level = 'admin' WHERE level = 'owner' AND id != ?", (to_id,))
+        conn.execute("UPDATE users SET level = 'owner', grants = '[]' WHERE id = ?", (to_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return True
+
+
+def revoke_sessions(user_id: int) -> int:
+    """Sign an account out everywhere. Sessions are looked up in the database on every
+    request, so this applies to their next click. Returns how many sessions ended."""
+    conn = get_conn()
+    try:
+        cur = conn.execute("DELETE FROM session_tokens WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount
+    except sqlite3.OperationalError:
+        return 0  # no session_tokens table yet: nobody has ever signed in
 
 
 def delete_user(user_id: int) -> bool:

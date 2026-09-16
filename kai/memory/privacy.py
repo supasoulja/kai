@@ -36,12 +36,21 @@ def _enabled(key: str, default: bool, user_id: int) -> bool:
 
 
 def learning_enabled(user_id: int = 0) -> bool:
-    """Whether knowledge should be extracted from this user's conversations."""
+    """Whether knowledge should be extracted from this user's conversations. Never for a
+    guest: guests keep nothing (kai/core/permissions.py)."""
+    from kai.core.permissions import keeps_memory
+
+    if not keeps_memory(user_id):
+        return False
     return _enabled(_LEARN_KEY, cfg.LEARN_FROM_CONVERSATION, user_id)
 
 
 def patterns_enabled(user_id: int = 0) -> bool:
-    """Whether this user's tool-usage patterns should be recorded."""
+    """Whether this user's tool-usage patterns should be recorded. Never for a guest."""
+    from kai.core.permissions import keeps_memory
+
+    if not keeps_memory(user_id):
+        return False
     return _enabled(_PATTERN_KEY, cfg.PATTERN_ENABLED, user_id)
 
 

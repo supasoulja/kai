@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     message: str
+    confirm: str | None = None  # call_id of the approval card whose Go ahead sent this message
 
 
 class LoginRequest(BaseModel):
@@ -97,3 +98,27 @@ class StudyAskRequest(BaseModel):
 class NotesRepoRequest(BaseModel):
     path: str = ""
     message: str = ""
+
+
+class AccountCreateRequest(BaseModel):
+    name: str
+    pin: str
+    level: str = "member"
+
+
+class AccountUpdateRequest(BaseModel):
+    name: str | None = None
+    pin: str | None = None
+    level: str | None = None
+
+
+class AccountGrantsRequest(BaseModel):
+    grants: list[str]
+
+
+class KickRequest(BaseModel):
+    delete: bool = False  # False: end their sessions. True: remove the account and all its data.
+
+
+class TransferOwnerRequest(BaseModel):
+    to_id: int
