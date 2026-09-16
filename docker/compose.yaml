@@ -7,16 +7,26 @@
 # run — on this host, or on a beefier machine on your LAN. Adding it here would
 # make the stack the "real" way to run Kai and pull GPU passthrough into the
 # compose file. Set KAI_OLLAMA_URL to point wherever yours lives.
+#
+# Everything machine-specific comes from your shell or a docker/.env file
+# (gitignored, and outside the image's build context):
+#   KAI_OLLAMA_URL  KAI_PORT  KAI_IMAGE  KAI_TAG  KAI_VERSION  KAI_UID  KAI_GID
 
 services:
   kai:
     build:
       context: ..                    # the project root, not docker/
       dockerfile: docker/Dockerfile
-    image: kai:0.7.0
+      args:
+        KAI_VERSION: ${KAI_VERSION:-dev}
+        KAI_UID: ${KAI_UID:-1000}
+        KAI_GID: ${KAI_GID:-1000}
+    # The published name, so `compose pull` upgrades from GHCR and a local
+    # `up --build` tags its result the same way release.sh does.
+    image: ${KAI_IMAGE:-ghcr.io/supasoulja/kai}:${KAI_TAG:-latest}
     ports:
-      - "127.0.0.1:7860:7860"        # loopback only — Kai's auth is not built
-                                     # to face the open internet
+      - "127.0.0.1:${KAI_PORT:-7860}:7860"   # loopback only — Kai's auth is not
+                                             # built to face the open internet
     volumes:
       - kai-data:/data
     environment:

@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# The image name is independent of the GitHub repo name (which is still
-# "newb_agent" for historical reasons). Override to publish somewhere else.
+# The image shares its name with the GitHub repo (supasoulja/kai), but GHCR
+# package names are independent of repos. Override to publish somewhere else.
 REGISTRY="${KAI_REGISTRY:-ghcr.io/supasoulja}"
 IMAGE="${KAI_IMAGE:-kai}"
 

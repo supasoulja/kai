@@ -81,9 +81,9 @@ kai-web = "kai.apps.web:main"      # FastAPI + SSE server
 kai-app = "kai.apps.desktop:main"  # native desktop window
 
 [project.urls]
-Homepage = "https://github.com/supasoulja/newb_agent"
-Repository = "https://github.com/supasoulja/newb_agent"
-Issues = "https://github.com/supasoulja/newb_agent/issues"
+Homepage = "https://github.com/supasoulja/kai"
+Repository = "https://github.com/supasoulja/kai"
+Issues = "https://github.com/supasoulja/kai/issues"
 
 [tool.setuptools.dynamic]
 version = { attr = "kai.__version__" }

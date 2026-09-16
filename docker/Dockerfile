@@ -12,28 +12,47 @@
 # Kai is known to run. Point KAI_OLLAMA_URL at an Ollama you already have.
 #
 # Build from the repo root (the build context is the project, not this folder):
-#   docker build -f docker/Dockerfile -t kai:0.7.0 .
+#   docker build -f docker/Dockerfile -t kai:dev .
+#
+# Nothing environment-specific is baked in — no IPs, host paths, or secrets.
+# What varies between machines is a build arg or a runtime env var:
+#
+#   build arg        default                              what it changes
+#   PYTHON_VERSION   3.12                                 base image tag
+#   KAI_VERSION      dev                                  version label (release.sh stamps it)
+#   KAI_EXTRAS       voice,documents                      pip extras; "" installs core only
+#   KAI_UID/KAI_GID  1000/1000                            owner of /data — match your host
+#                                                         user when bind-mounting
+#   KAI_SOURCE_URL   https://github.com/supasoulja/kai    repo the GHCR package links to
+#
+#   runtime env      KAI_OLLAMA_URL (docker run -e ...)   where your Ollama listens
 
-FROM python:3.12-slim AS build
+ARG PYTHON_VERSION=3.12
+
+FROM python:${PYTHON_VERSION}-slim AS build
 
 WORKDIR /src
 RUN pip install --no-cache-dir build
 
 # Copy only what the wheel build reads, so edits to docs/tests don't bust the layer.
+# .dockerignore is an allowlist of exactly these, so nothing else can reach a layer.
 COPY pyproject.toml README.md LICENSE ./
 COPY kai/ ./kai/
 RUN python -m build --wheel -o /dist
 
 
-FROM python:3.12-slim
+FROM python:${PYTHON_VERSION}-slim
 
-# Stamped by scripts/release.sh so a pulled image can say what it is.
 ARG KAI_VERSION=dev
+ARG KAI_EXTRAS=voice,documents
+ARG KAI_UID=1000
+ARG KAI_GID=1000
+ARG KAI_SOURCE_URL=https://github.com/supasoulja/kai
 
 # org.opencontainers.image.source is what links this package to the GitHub repo
 # on GHCR — without it the package page is orphaned and inherits no permissions.
-LABEL org.opencontainers.image.source="https://github.com/supasoulja/newb_agent" \
-      org.opencontainers.image.description="Kai — a local AI agent. Python + Ollama + SQLite, no cloud calls." \
+LABEL org.opencontainers.image.source="${KAI_SOURCE_URL}" \
+      org.opencontainers.image.description="Kai — a local-first AI agent. Python + Ollama + SQLite; cloud brains are opt-in." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${KAI_VERSION}"
 
@@ -43,14 +62,15 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg curl \
  && rm -rf /var/lib/apt/lists/*
 
-# [voice,documents] but not [browser]: Playwright also needs ~400 MB of browser
+# The default extras skip [browser]: Playwright also needs ~400 MB of browser
 # binaries and a pile of system libs. Add it in your own layer if you want it.
 # The extras have to attach to the resolved filename: `/tmp/*.whl[voice,documents]`
 # is one glob pattern to the shell (the brackets read as a character class), so it
-# never expands and pip receives the literal string. Resolve it first.
+# never expands and pip receives the literal string. Resolve it first. An empty
+# KAI_EXTRAS drops the brackets entirely.
 COPY --from=build /dist/ /tmp/dist/
 RUN WHEEL="$(ls /tmp/dist/*.whl)" \
- && pip install --no-cache-dir "${WHEEL}[voice,documents]" \
+ && pip install --no-cache-dir "${WHEEL}${KAI_EXTRAS:+[${KAI_EXTRAS}]}" \
  && rm -rf /tmp/dist
 
 # Kai writes to its data dir and its workspace; it never needs to write anywhere
@@ -59,9 +79,10 @@ RUN WHEEL="$(ls /tmp/dist/*.whl)" \
 # /data must exist and be owned by kai BEFORE the VOLUME declaration: a named
 # volume inherits ownership from the image path it covers, and if the directory
 # is absent Docker creates it root-owned and the app cannot write to its own DB.
-# (A bind mount keeps the host's ownership instead — chown it yourself, or run
-# with --user "$(id -u):$(id -g)".)
-RUN useradd --create-home --uid 1000 kai \
+# (A bind mount keeps the host's ownership instead — build with KAI_UID/KAI_GID
+# set to your host user, or run with --user "$(id -u):$(id -g)".)
+RUN groupadd --gid "${KAI_GID}" kai \
+ && useradd --uid "${KAI_UID}" --gid kai --create-home kai \
  && mkdir -p /data \
  && chown -R kai:kai /data
 USER kai
@@ -72,7 +93,8 @@ USER kai
 # other install path could use, the code would have grown a Docker-shaped hole.
 #
 # host.docker.internal resolves on Docker Desktop and, on Linux, via the
-# --add-host flag that docker/compose.yaml sets.
+# --add-host flag that docker/compose.yaml sets. Override at run time with
+# `-e KAI_OLLAMA_URL=http://<your-ollama-host>:11434`.
 ENV KAI_VAR_DIR=/data \
     KAI_MODELS_DIR=/data/models \
     KAI_SKILLS_DIR=/data/user_skills \

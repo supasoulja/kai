@@ -1,28 +1,28 @@
-# Keeps the build context small and, more importantly, keeps private runtime
-# data out of any image layer.
-.git/
-.venv/
-venv/
-var/
-data/
-models/
-node_modules/
-docs/
-.claude/
-CLAUDE.md
-KaiFiles/
-experiments/
-tests/
-__pycache__/
-*.py[cod]
-*.db
-*.db-shm
-*.db-wal
-*.db-journal
-.env
-.env.*
-.pytest_cache/
-.ruff_cache/
-dist/
-build/
-*.egg-info/
+# An allowlist, not a denylist. The image build reads only pyproject.toml,
+# README.md, LICENSE and kai/ (see docker/Dockerfile), so everything else is out
+# by default — .git, var/, models/, docs/, audits/, CLAUDE.md, .claude/, .env
+# files, logs, keys and databases never enter the build context, let alone a
+# layer. A new file at the repo root stays out until it is added here on purpose.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!kai
+
+# Generated or local-only files that can still turn up inside kai/. Each needs
+# the **/ prefix: a bare `__pycache__/` only matches at the context root, which
+# is how nested .pyc files (carrying absolute host paths) used to get in.
+**/__pycache__
+**/*.py[cod]
+**/*.db
+**/*.db-*
+**/*.sqlite*
+**/.env
+**/.env.*
+**/*.log
+**/*.key
+**/*.pem
+**/*.crt
+**/*.bak
+**/.DS_Store
+**/node_modules

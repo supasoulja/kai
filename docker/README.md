@@ -59,13 +59,13 @@ OLLAMA_HOST=0.0.0.0 ollama serve
 
 ```bash
 # From the repo root — the build context is the project, not this folder.
-docker build -f docker/Dockerfile -t kai:0.7.0 .
+docker build -f docker/Dockerfile -t kai:dev .
 
 docker run -d --name kai \
   -p 127.0.0.1:7860:7860 \
   -v kai-data:/data \
   --add-host=host.docker.internal:host-gateway \
-  kai:0.7.0
+  kai:dev
 ```
 
 Or with compose:
@@ -76,9 +76,36 @@ docker compose -f docker/compose.yaml up --build
 
 Then open <http://127.0.0.1:7860>.
 
+## Build args and settings
+
+The image bakes in no IPs, host paths, or secrets. Anything that differs between
+machines is a build arg or a runtime env var.
+
+| Build arg | Default | Use it to |
+|---|---|---|
+| `PYTHON_VERSION` | `3.12` | pick the base image |
+| `KAI_VERSION` | `dev` | stamp the version label (`release.sh` sets it) |
+| `KAI_EXTRAS` | `voice,documents` | choose pip extras — `""` for core only; `browser` adds the Playwright package but not its browsers |
+| `KAI_UID` / `KAI_GID` | `1000` | match your host user when bind-mounting `/data` |
+| `KAI_SOURCE_URL` | `https://github.com/supasoulja/kai` | point the GHCR source label at a fork |
+
+At run time, `KAI_OLLAMA_URL` is the one setting you are likely to change
+(`docker run -e KAI_OLLAMA_URL=...`).
+
+`compose.yaml` reads `KAI_OLLAMA_URL`, `KAI_PORT`, `KAI_IMAGE`, `KAI_TAG`,
+`KAI_VERSION`, `KAI_UID` and `KAI_GID` from your shell or from `docker/.env`.
+That file is gitignored and outside the build context, so it is the place for
+your LAN addresses.
+
 ## What's in the image, and what isn't
 
-Included: core + `[voice,documents]`, plus `ffmpeg` for audio decode.
+Included: core + `[voice,documents]` (change with `KAI_EXTRAS`), plus `ffmpeg`
+for audio decode.
+
+Only `pyproject.toml`, `README.md`, `LICENSE` and `kai/` can enter the build
+context. `.dockerignore` is an allowlist, so `.git`, `var/`, `models/`, docs,
+`.env` files, keys, databases and logs never reach a layer — and a new file
+at the repo root stays out until someone adds it on purpose.
 
 Not included, on purpose:
 

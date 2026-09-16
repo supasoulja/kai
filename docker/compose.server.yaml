@@ -1,0 +1,40 @@
+# Kai on a LAN server, for a household of trusted accounts.
+#
+#   docker compose -f docker/compose.server.yaml up -d
+#
+# Differs from compose.yaml (the single-user, loopback-only wrapper) in three ways:
+#
+# 1. network_mode: host. Kai's --lan flag writes the machine's LAN IP into the
+#    self-signed certificate. Behind a bridge network it would detect the
+#    CONTAINER's address instead, and every browser on the LAN would reject the
+#    cert. Host networking also makes Ollama on this box plain 127.0.0.1.
+#    The trade-off: Kai's network tools can reach the rest of your LAN.
+# 2. --lan, so logins cross the network over TLS instead of in clear text. It is
+#    also what lets the session cookie be marked Secure.
+# 3. Its own healthcheck. The image's default probes http://, which fails once
+#    TLS is on; -k accepts the self-signed cert.
+#
+# Ollama is NOT a service here: it runs on the host with the GPU. Start it as
+# `OLLAMA_HOST=0.0.0.0 ollama serve` only if you move Kai off this box —
+# on host networking, loopback is enough.
+
+services:
+  kai:
+    image: ${KAI_IMAGE:-kai}:${KAI_TAG:-dev}
+    container_name: kai
+    network_mode: host
+    command: ["--host", "0.0.0.0", "--port", "${KAI_PORT:-7860}", "--no-browser", "--lan"]
+    environment:
+      KAI_OLLAMA_URL: ${KAI_OLLAMA_URL:-http://127.0.0.1:11434}
+    volumes:
+      - kai-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsSk", "https://127.0.0.1:${KAI_PORT:-7860}/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  kai-data:
