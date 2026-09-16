@@ -9,7 +9,7 @@ import re
 
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 from kai.tools._shell import run_argv
-from kai.tools.registry import registry
+from kai.tools.registry import ToolUnavailable, registry
 
 
 def _run(args: list[str], timeout: int = 60) -> str:
@@ -171,11 +171,21 @@ def traceroute(host: str) -> str:
         return "Invalid host."
     if _IS_WINDOWS:
         # -d = no DNS lookup (faster), -w 1000 = 1s timeout per hop, -h 20 = max 20 hops
-        cmd = ["tracert", "-d", "-w", "1000", "-h", "20", host]
+        cmds = [["tracert", "-d", "-w", "1000", "-h", "20", host]]
     else:
-        # Linux: traceroute -n (no DNS) -m 20 (max hops) -w 1 (1s timeout)
-        cmd = ["traceroute", "-n", "-m", "20", "-w", "1", host]
-    out, why = _why_empty(cmd, timeout=90)
+        # traceroute is often missing where tracepath or mtr is installed (T1-06): try each.
+        cmds = [
+            ["traceroute", "-n", "-m", "20", "-w", "1", host],
+            ["tracepath", "-n", "-m", "20", host],
+            ["mtr", "-n", "-r", "-c", "1", "-m", "20", host],
+        ]
+    for cmd in cmds:
+        out, why = _why_empty(cmd, timeout=90)
+        if out or "not installed" not in why:
+            break
+    if not out and "not installed" in why:
+        tried = ", ".join(c[0] for c in cmds)
+        raise ToolUnavailable(f"Traceroute to {host} unavailable — {tried}: not installed.")
     if not out:
         return f"Traceroute to {host} unavailable — {why or 'no output'}."
     # Trim the header/footer and limit output

@@ -979,13 +979,16 @@ def test_traceroute_says_missing_binary_instead_of_timed_out():
     anyone reading it to debug a healthy network. run_argv already knew the
     difference; the adapter was discarding it."""
     from kai.tools._shell import ShellResult
+    from kai.tools.registry import ToolUnavailable
     from kai.tools.web import network
 
     missing = ShellResult("", "[Errno 2] No such file or directory: 'traceroute'", False, False)
+    # D3a (T1-06): with no traceroute program at all this is now a raised "unavailable" failure,
+    # not a returned string. Still says why, and still isn't called a timeout.
     with patch.object(network, "run_argv", return_value=missing):
-        out = network.traceroute("1.1.1.1")
-    assert "not installed" in out
-    assert "timed out" not in out.lower()
+        with pytest.raises(ToolUnavailable, match="not installed") as info:
+            network.traceroute("1.1.1.1")
+    assert "timed out" not in str(info.value).lower()
 
     timed = ShellResult("", "Timed out", True, False)
     with patch.object(network, "run_argv", return_value=timed):

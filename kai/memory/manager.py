@@ -59,8 +59,8 @@ class MemoryManager:
     def delete_fact(self, key: str) -> None:
         semantic.delete_fact(key, user_id=self.user_id)
 
-    def list_facts(self) -> list[SemanticFact]:
-        return semantic.list_facts(user_id=self.user_id)
+    def list_facts(self, include_settings: bool = True) -> list[SemanticFact]:
+        return semantic.list_facts(user_id=self.user_id, include_settings=include_settings)
 
     # ── Procedural ─────────────────────────────────────────────────────────────
 

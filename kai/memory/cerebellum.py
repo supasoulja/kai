@@ -290,7 +290,9 @@ _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 # "148 GB free", a number appearing in no tool result — so a single stray value
 # must not trip this. The real failure looked nothing like that: six invented
 # capacities across three invented device names in one reply.
-_UNGROUNDED_LIMIT = 3
+# Two was measured to be enough: a probe answer with two invented values (91.4%,
+# 285.3 GB against a tool that said 55.3% / 163.7 GB) passed at three (P1-1b).
+_UNGROUNDED_LIMIT = 2
 
 
 def _numbers(text: str) -> list[float]:
@@ -301,6 +303,22 @@ def _numbers(text: str) -> list[float]:
         except ValueError:
             pass
     return out
+
+
+def number_trace(answer: str, evidence: str) -> tuple[int, list[float]]:
+    """(numbers checked, those tracing to no evidence number). Same 2% tolerance as
+    check_grounded; (0, []) when the evidence carries no numbers."""
+    have = _numbers(evidence)
+    if not have:
+        return 0, []
+    checked, stray = 0, []
+    for n in _numbers(answer):
+        if n in _FREE_NUMBERS:
+            continue
+        checked += 1
+        if not any(abs(n - h) <= max(0.05, abs(h) * 0.02) for h in have):
+            stray.append(n)
+    return checked, stray
 
 
 def check_grounded(answer: str, evidence: str) -> CerebellarResult:
@@ -322,16 +340,9 @@ def check_grounded(answer: str, evidence: str) -> CerebellarResult:
     """
     if not (answer or "").strip() or not (evidence or "").strip():
         return CerebellarResult(Verdict.CLEAR, "no-answer-or-evidence", 0.0)
-    have = _numbers(evidence)
-    if not have:
+    if not _numbers(evidence):
         return CerebellarResult(Verdict.CLEAR, "evidence carries no numbers", 0.0)
-    stray = []
-    for n in _numbers(answer):
-        if n in _FREE_NUMBERS:
-            continue
-        if any(abs(n - h) <= max(0.05, abs(h) * 0.02) for h in have):
-            continue
-        stray.append(n)
+    _, stray = number_trace(answer, evidence)
     if len(stray) >= _UNGROUNDED_LIMIT:
         return CerebellarResult(
             Verdict.FLAG,
@@ -339,6 +350,146 @@ def check_grounded(answer: str, evidence: str) -> CerebellarResult:
             1.0,
         )
     return CerebellarResult(Verdict.CLEAR, f"{len(stray)} untraced (under limit)", 0.0)
+
+
+# ── Claims of work done (the commitment check) ─────────────────────────────────
+# A reply may report an action as done only if a tool that performs it ran this turn
+# and its result says it happened. Backing comes from what executed and what it
+# returned, not from tool-name substrings: those let sandbox.propose_rename "back" a
+# rename that never happened, and flagged a real research.add_to_library as unbacked
+# (T1-21).
+
+COMPLETED_ACTION_RE = re.compile(
+    r"\bi(?:'ve|\s+have)?\s+(?:just\s+|now\s+|already\s+|successfully\s+)?"
+    r"(?:created|saved|written|wrote|made|added|appended|deleted|removed|renamed|moved|"
+    r"installed|configured|updated|generated|stored|placed|set\s+up|checked|scanned|"
+    r"searched|verified|trashed|filed|applied)\b"
+    r"|\b(?:has|have|was|were)\s+been?\s*(?:created|saved|written|added|updated|"
+    r"removed|deleted|moved|renamed|stored|trashed|applied)\b"
+    r"|\b(?:was|were)\s+(?:created|saved|written|added|updated|removed|deleted|moved|"
+    r"renamed|stored|trashed)\b"
+    r"|^\s*(?:done|saved|created|added)\b[.!:—-]"
+    r"|\b(?:saved|written|created|stored)\s+(?:it\s+)?(?:to|at|in|under)\s+[`'\"/~]",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_IN_PROGRESS_RE = re.compile(
+    r"\b(?:i am|i'm|i have started|i've started|now)\s+(?:executing|running|deleting|"
+    r"removing|moving|renaming|applying|starting|scanning|killing|clearing|cleaning|"
+    r"updating|installing)\b"
+    r"|\b(?:executing|running|doing)\s+(?:it|that|this|the\s+(?:action|operation|scan|"
+    r"deletion))\s+now\b"
+    r"|\breceived\s+(?:your\s+|the\s+)?(?:authori[sz]ation|approval|go-?ahead)\b"
+    r"|\b(?:is|are)\s+(?:now\s+)?(?:running|in\s+progress|underway)\b",
+    re.IGNORECASE,
+)
+
+_WRITE_TOOLS = frozenset(
+    {
+        "files.write",
+        "files.append",
+        "files.edit",
+        "notes.save",
+        "notes.commit",
+        "tree.save",
+        "goals.create",
+        "goals.update",
+        "research.add_to_library",
+        "sandbox.copy_to_workspace",
+        "browser.screenshot",
+        "memory.reflect",
+        "workspace.git_clone",
+        "self.apply_persona_update",
+    }
+)
+_DELETE_TOOLS = frozenset({"docs.delete", "goals.abandon"})
+# A result that says nothing happened backs nothing, whatever its success flag says.
+_NOT_DONE_RE = re.compile(
+    r"^\s*(?:this tool is only available|not found|source not found|already gone|"
+    r"proposal '[^']*' not found|blocked|rejected|error|could not|failed|"
+    r"operation failed|permission denied|unknown)",
+    re.IGNORECASE,
+)
+_CLAIM_KINDS = (
+    (
+        "rename",
+        re.compile(r"\bre-?named\b", re.IGNORECASE),
+        lambda name, out: name == "sandbox.approve" and out.startswith("Renamed"),
+    ),
+    (
+        "delete",
+        re.compile(r"\b(?:deleted|removed|erased|trashed)\b", re.IGNORECASE),
+        lambda name, out: (
+            (name == "sandbox.approve" and out.startswith("Moved to trash"))
+            or name in _DELETE_TOOLS
+        ),
+    ),
+    (
+        "move",
+        re.compile(r"\bmoved\b", re.IGNORECASE),
+        lambda name, out: name == "sandbox.approve" and out.startswith("Moved"),
+    ),
+    (
+        "write",
+        re.compile(
+            r"\b(?:created|saved|wrote|written|appended|stored|filed|added)\b", re.IGNORECASE
+        ),
+        lambda name, out: name in _WRITE_TOOLS,
+    ),
+)
+_GENERIC_DONE_RE = re.compile(
+    r"\b(?:done|completed|finished|killed|disabled|cleared|cleaned|repaired|terminated|applied)\b",
+    re.IGNORECASE,
+)
+# A sentence that negates, hedges, asks, or talks about the future is not a claim.
+_NOT_A_CLAIM_RE = re.compile(
+    r"\b(?:not|never|no|nothing|didn't|did not|haven't|hasn't|wasn't|weren't|won't|can't|"
+    r"cannot|couldn't|unable|will|would|can|could|should|once|if|when|to be|ready to|"
+    r"going to|about to|proposal|proposed|propose)\b|\?\s*$",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _claim_sentences(text: str) -> list[str]:
+    parts = (p.strip() for p in _SENTENCE_SPLIT_RE.split(text or ""))
+    return [p for p in parts if p and not _NOT_A_CLAIM_RE.search(p)]
+
+
+def claims_work(text: str) -> bool:
+    """True if a reply says something is running or done. Used where nothing has run."""
+    text = text or ""
+    if _IN_PROGRESS_RE.search(text) or COMPLETED_ACTION_RE.search(text):
+        return True
+    return any(pattern.search(s) for s in _claim_sentences(text) for _, pattern, _ in _CLAIM_KINDS)
+
+
+def check_claims_backed(answer: str, executed: list[tuple[str, str]]) -> CerebellarResult:
+    """Deterministic commitment check: work the answer reports as done must be backed by
+    a tool that performs it and actually ran this turn.
+
+    `executed` is [(tool name, output)] for calls that ran. An output that says nothing
+    happened ("not found", "only available on Windows") backs nothing.
+    """
+    sentences = _claim_sentences(answer)
+    if not sentences:
+        return CerebellarResult(Verdict.CLEAR, "no claims", 0.0)
+    real = [(n, o) for n, o in executed if not _NOT_DONE_RE.search(o or "")]
+    unbacked = [
+        kind
+        for kind, pattern, backs in _CLAIM_KINDS
+        if any(pattern.search(s) for s in sentences) and not any(backs(n, o) for n, o in real)
+    ]
+    if (
+        not unbacked
+        and executed
+        and not real
+        and any(_GENERIC_DONE_RE.search(s) for s in sentences)
+    ):
+        unbacked = ["work (every tool this turn reported that it did nothing)"]
+    if unbacked:
+        return CerebellarResult(Verdict.FLAG, ", ".join(unbacked), 1.0)
+    return CerebellarResult(Verdict.CLEAR, "claims backed", 0.0)
 
 
 def log_result(

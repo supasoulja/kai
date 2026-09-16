@@ -177,10 +177,12 @@ _VOLATILE_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("ram_pct", re.compile(r"\bram[:\s]+(\d+\.?\d*)\s*%\s*used", re.I)),
     # Disk: "disk: 78% used"
     ("disk_pct", re.compile(r"\bdisk[:\s]+(\d+\.?\d*)\s*%\s*used", re.I)),
-    # GPU core temp: "GPU Core: 72°C" / "gpu temp: 65C"
-    ("gpu_temp_c", re.compile(r"\bgpu(?:\s+core)?[:\s]+(\d+)\s*°?\s*c\b", re.I)),
-    # CPU temp: "CPU Package: 55°C" / "cpu temp: 48C"
-    ("cpu_temp_c", re.compile(r"\bcpu(?:\s+package)?[:\s]+(\d+)\s*°?\s*c\b", re.I)),
+    # Temps: "GPU Core: 72°C", "Your CPU temperature is 58°C.", "CPU: Temp: 54°C  Load: 10%".
+    # Words may sit between the device and the reading, but not digits, %, or a sentence or
+    # clause break. The old patterns wanted the number right after "cpu" and matched none of
+    # the phrasings Kai or its tools use (T1-27).
+    ("gpu_temp_c", re.compile(r"\bgpu\b[^\d\n%.,;]{0,30}?(\d{2,3}(?:\.\d)?)\s*°?\s*c\b", re.I)),
+    ("cpu_temp_c", re.compile(r"\bcpu\b[^\d\n%.,;]{0,30}?(\d{2,3}(?:\.\d)?)\s*°?\s*c\b", re.I)),
     # Startup count: "25 startup programs"
     ("startup_count", re.compile(r"(\d+)\s+startup\s+(?:programs?|entries?|items?)", re.I)),
     # Free disk: "14.2 GB free"

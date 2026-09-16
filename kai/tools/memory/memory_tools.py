@@ -77,7 +77,7 @@ def recent_sessions(limit: int = 3) -> str:
         try:
             from kai.memory.context import get_session_welcome_back
 
-            note = get_session_welcome_back().strip()
+            note = get_session_welcome_back(user_id).strip()
             if note:
                 header.append(f'Your note to yourself from last session: "{note}"\n')
         except Exception:
@@ -233,9 +233,9 @@ def reflect(thought: str, category: str = "observation") -> str:
     },
 )
 def sleep_notes(last_n: int = 3) -> str:
-    from kai.config import MEMORY_DIR
+    from kai.core.sleep import sleep_log_file
 
-    log_file = MEMORY_DIR / "sleep_log.txt"
+    log_file = sleep_log_file(get_current_user_id())
     if not log_file.exists():
         return "No sleep notes yet — I haven't gone to sleep since this feature was added."
 

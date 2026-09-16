@@ -88,6 +88,10 @@ def create_recipe(name: str, description: str, triggers: list[str], steps: list[
     name = (name or "").strip().lower()
     if not _NAME_RE.match(name):
         raise ValueError("Name must be lowercase letters, numbers, dots or hyphens (max 64 chars).")
+    from kai.skills.registry import builtin_skill_names
+
+    if name in builtin_skill_names():
+        raise ValueError(f"“{name}” is a built-in skill; pick another name.")
     steps = [s.strip() for s in (steps or []) if s and s.strip()]
     if not steps:
         raise ValueError("A recipe needs at least one step.")

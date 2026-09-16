@@ -18,7 +18,7 @@ from pathlib import Path
 
 import kai.config as cfg
 from kai.store.db import get_conn
-from kai.tools.registry import registry
+from kai.tools.registry import ToolUnavailable, registry
 from kai.util.ids import short_id
 
 # ── Protected paths (never touched, period) ──────────────────────────────────
@@ -106,6 +106,53 @@ def _clean_expired():
         del _pending[k]
 
 
+def _path_arg(value: str) -> Path:
+    """An absolute or ~ path as given; a bare or relative name means a file in KaiFiles, the way
+    the files.* tools read it. Resolved against the server's cwd, an existing file was reported
+    missing (T1-19)."""
+    raw = Path(value.strip().strip("'\"")).expanduser()
+    return (raw if raw.is_absolute() else cfg.WORKSPACE_DIR / raw).resolve()
+
+
+def _uid() -> int:
+    from kai.core._app_state import get_current_user_id
+
+    return get_current_user_id()
+
+
+def proposal_problem(proposal_id) -> str | None:
+    """Why approving this id would do nothing, or None if it is this account's live proposal."""
+    _clean_expired()
+    pid = str(proposal_id or "").strip()
+    uid = _uid()
+    if pid in _pending and _pending[pid].get("user_id") == uid:
+        return None
+    mine = [
+        f"{k} ({v['op']} {Path(v['source']).name})"
+        for k, v in _pending.items()
+        if v.get("user_id") == uid
+    ]
+    if not mine:
+        return f"No pending proposal '{pid}': nothing is waiting to be approved. Create the proposal first."
+    return (
+        f"Proposal '{pid}' does not exist. Pending proposals: {', '.join(mine)}. "
+        "Call sandbox.approve with one of those ids."
+    )
+
+
+def proposal_label(proposal_id) -> str | None:
+    """What approving this proposal does, for the approval prompt. None if it isn't live."""
+    p = _pending.get(str(proposal_id or "").strip())
+    if not p:
+        return None
+    src = Path(p["source"]).name
+    if p["op"] == "delete":
+        return f"Delete {src}"
+    if p["op"] == "rename":
+        return f"Rename {src} to {Path(p['dest']).name}"
+    return f"Move {src} to {p['dest']}"
+
+
 def _create_proposal(op: str, source: str, dest: str = "") -> dict:
     _clean_expired()
     pid = short_id(8)
@@ -114,6 +161,7 @@ def _create_proposal(op: str, source: str, dest: str = "") -> dict:
         "source": source,
         "dest": dest,
         "created": time.time(),
+        "user_id": _uid(),
     }
     _pending[pid] = entry
     return {"proposal_id": pid, **entry}
@@ -138,13 +186,13 @@ def _ensure_table():
     conn.commit()
 
 
-def _log_op(op: str, source: str, dest: str, status: str, user_id: int = 0):
+def _log_op(op: str, source: str, dest: str, status: str, user_id: int | None = None):
     _ensure_table()
     conn = get_conn()
     conn.execute(
         "INSERT INTO sandbox_log (id, timestamp, operation, source, dest, status, user_id) "
         "VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
-        (short_id(12), op, source, dest, status, user_id),
+        (short_id(12), op, source, dest, status, _uid() if user_id is None else user_id),
     )
     conn.commit()
 
@@ -175,7 +223,7 @@ def _log_op(op: str, source: str, dest: str, status: str, user_id: int = 0):
 def copy_to_workspace(source: str, dest_name: str = "") -> str:
     src = Path(source.strip().strip("'\"")).expanduser().resolve()
     if not src.exists():
-        return f"Source not found: {src}"
+        raise ToolUnavailable(f"Source not found: {src}")
 
     name = dest_name.strip().lstrip("/\\") if dest_name.strip() else src.name
     dest = (cfg.WORKSPACE_DIR / name).resolve()
@@ -211,8 +259,8 @@ def copy_to_workspace(source: str, dest_name: str = "") -> str:
 @registry.tool(
     name="sandbox.propose_move",
     description=(
-        "Propose moving a file or folder to a new location. "
-        "This does NOT execute the move — it creates a proposal that the user must approve. "
+        "THE way to move a file or folder — there is no other move tool. "
+        "Two steps: this creates a proposal, then sandbox.approve executes it. "
         "Show the proposal details to the user and ask for confirmation. "
         "Then call sandbox.approve with the proposal_id to execute it. "
         "Protected system files and directories cannot be moved."
@@ -231,11 +279,11 @@ def copy_to_workspace(source: str, dest_name: str = "") -> str:
     },
 )
 def propose_move(source: str, dest: str) -> str:
-    src = Path(source.strip().strip("'\"")).expanduser().resolve()
-    dst = Path(dest.strip().strip("'\"")).expanduser().resolve()
+    src = _path_arg(source)
+    dst = _path_arg(dest)
 
     if not src.exists():
-        return f"Source not found: {src}"
+        raise ToolUnavailable(f"Source not found: {src}")
 
     reason = _is_protected(src)
     if reason:
@@ -282,8 +330,8 @@ def propose_move(source: str, dest: str) -> str:
 @registry.tool(
     name="sandbox.propose_delete",
     description=(
-        "Propose deleting a file or folder. "
-        "This does NOT delete anything — it creates a proposal that the user must approve. "
+        "THE way to delete a file or folder — there is no other delete tool. "
+        "Two steps: this creates a proposal, then sandbox.approve executes it. "
         "Show the proposal details to the user and ask for confirmation. "
         "Then call sandbox.approve with the proposal_id to execute it. "
         "Deleted files are moved to a trash folder in KaiFiles, not permanently destroyed. "
@@ -298,10 +346,10 @@ def propose_move(source: str, dest: str) -> str:
     },
 )
 def propose_delete(source: str) -> str:
-    src = Path(source.strip().strip("'\"")).expanduser().resolve()
+    src = _path_arg(source)
 
     if not src.exists():
-        return f"Not found: {src}"
+        raise ToolUnavailable(f"Not found: {src}")
 
     reason = _is_protected(src)
     if reason:
@@ -340,8 +388,9 @@ def propose_delete(source: str) -> str:
 @registry.tool(
     name="sandbox.propose_rename",
     description=(
-        "Propose renaming a file or folder (same location, new name). "
-        "This does NOT rename anything — it creates a proposal that the user must approve. "
+        "THE way to rename a file or folder — there is no other rename tool. Use this "
+        "whenever asked to rename, relabel or retitle a file. Two steps: this creates "
+        "a proposal, then sandbox.approve executes it after the user agrees. "
         "Protected system files cannot be renamed."
     ),
     parameters={
@@ -358,11 +407,11 @@ def propose_delete(source: str) -> str:
     },
 )
 def propose_rename(source: str, new_name: str) -> str:
-    src = Path(source.strip().strip("'\"")).expanduser().resolve()
+    src = _path_arg(source)
     new_name = new_name.strip().strip("/\\")
 
     if not src.exists():
-        return f"Not found: {src}"
+        raise ToolUnavailable(f"Not found: {src}")
     if "/" in new_name or "\\" in new_name:
         return "new_name must be just a filename, not a path. Use sandbox.propose_move for moving."
 
@@ -407,9 +456,11 @@ def propose_rename(source: str, new_name: str) -> str:
 )
 def approve_proposal(proposal_id: str) -> str:
     _clean_expired()
-    pid = proposal_id.strip()
-    if pid not in _pending:
-        return (
+    pid = str(proposal_id).strip()
+    # Proposals belong to the account that made them: another user's id is as good as a
+    # made-up one (T1-22).
+    if pid not in _pending or _pending[pid].get("user_id") != _uid():
+        raise ToolUnavailable(
             f"Proposal '{pid}' not found or expired (proposals last 5 minutes). Create a new one."
         )
 
@@ -431,7 +482,7 @@ def approve_proposal(proposal_id: str) -> str:
     try:
         if op == "move":
             if not source.exists():
-                return f"Source no longer exists: {source}"
+                raise ToolUnavailable(f"Source no longer exists: {source}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source), str(dest))
             _log_op("move", str(source), str(dest), "ok")
@@ -439,7 +490,7 @@ def approve_proposal(proposal_id: str) -> str:
 
         elif op == "delete":
             if not source.exists():
-                return f"Already gone: {source}"
+                raise ToolUnavailable(f"Already gone: {source}")
             trash = cfg.WORKSPACE_DIR / ".trash"
             trash.mkdir(parents=True, exist_ok=True)
             trash_dest = trash / f"{source.name}_{int(time.time())}"
@@ -449,7 +500,7 @@ def approve_proposal(proposal_id: str) -> str:
 
         elif op == "rename":
             if not source.exists():
-                return f"Source no longer exists: {source}"
+                raise ToolUnavailable(f"Source no longer exists: {source}")
             source.rename(dest)
             _log_op("rename", str(source), str(dest), "ok")
             return f"Renamed: {source.name} → {dest.name}"
@@ -483,8 +534,8 @@ def sandbox_history(limit: int = 10) -> str:
     conn = get_conn()
     rows = conn.execute(
         "SELECT timestamp, operation, source, dest, status "
-        "FROM sandbox_log ORDER BY timestamp DESC LIMIT ?",
-        (max(1, min(int(limit), 50)),),
+        "FROM sandbox_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+        (_uid(), max(1, min(int(limit), 50))),
     ).fetchall()
     if not rows:
         return "No sandbox operations recorded yet."

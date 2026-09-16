@@ -709,13 +709,18 @@ def index_study_item(item_id: int, user_id: int, path: str, fmt: str) -> int:
             "type": "string",
             "description": "The question or search terms to look for in the saved library.",
         },
-        "user_id": {
-            "type": "integer",
-            "description": "User ID (passed automatically from context).",
-        },
     },
 )
-def ask_library(question: str, user_id: int = 0) -> str:
+def ask_library(question: str) -> str:
+    # The account comes from the turn, never from the model. As a parameter, the model (or
+    # text it had read) could search any account's library, and left out it searched user 0's (T1-05).
+    from kai.core._app_state import get_current_user_id
+
+    return search_library(question, get_current_user_id())
+
+
+def search_library(question: str, user_id: int) -> str:
+    """Keyword search over one account's indexed study library."""
     from kai.store.db import get_conn
 
     conn = get_conn()

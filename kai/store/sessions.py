@@ -6,6 +6,7 @@ Tables (in kai.db):
   session_messages — one row per message (user or assistant)
 """
 
+import json
 from datetime import datetime
 
 from kai.store.db import get_conn, like_escape
@@ -35,14 +36,26 @@ def append_message(
     turn_order: int,
     user_id: int = 0,
     latency_ms: int | None = None,
+    meta: dict | None = None,
 ) -> int:
-    """Persist one message and return its row id."""
+    """Persist one message and return its row id. `meta` holds an answer's tool receipts
+    and provenance, so a reopened chat still shows which answers were tool-backed (T2-28)."""
     now = datetime.now().isoformat()
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO session_messages (session_id, user_id, role, content, timestamp, turn_order, latency_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (session_id, user_id, role, content, now, turn_order, latency_ms),
+        "INSERT INTO session_messages "
+        "(session_id, user_id, role, content, timestamp, turn_order, latency_ms, meta) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            user_id,
+            role,
+            content,
+            now,
+            turn_order,
+            latency_ms,
+            json.dumps(meta) if meta else None,
+        ),
     )
     conn.execute(
         "UPDATE sessions SET message_count = message_count + 1, last_active = ? WHERE id = ?",
@@ -94,14 +107,30 @@ def get_messages(session_id: str, user_id: int = 0) -> list[dict]:
     conn = get_conn()
     # Verify session ownership via JOIN — returns nothing if user_id doesn't match
     rows = conn.execute(
-        "SELECT sm.role, sm.content, sm.timestamp, sm.latency_ms "
+        "SELECT sm.role, sm.content, sm.timestamp, sm.latency_ms, sm.meta "
         "FROM session_messages sm "
         "JOIN sessions s ON sm.session_id = s.id "
         "WHERE sm.session_id = ? AND s.user_id = ? "
         "ORDER BY sm.turn_order, sm.id",
         (session_id, user_id),
     ).fetchall()
-    return [{"role": r[0], "content": r[1], "timestamp": r[2], "latency_ms": r[3]} for r in rows]
+    return [
+        {
+            "role": r[0],
+            "content": r[1],
+            "timestamp": r[2],
+            "latency_ms": r[3],
+            "meta": _load_meta(r[4]),
+        }
+        for r in rows
+    ]
+
+
+def _load_meta(raw: str | None) -> dict | None:
+    try:
+        return json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
 
 
 def search_messages(query: str, limit: int = 10, user_id: int = 0) -> list[dict]:
@@ -138,3 +167,15 @@ def update_last_active(session_id: str) -> None:
         (datetime.now().isoformat(), session_id),
     )
     conn.commit()
+
+
+def session_owner(session_id: str) -> int | None:
+    """The account a session belongs to, or None if there is no such session."""
+    row = get_conn().execute("SELECT user_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return row[0] if row else None
+
+
+def session_ids(user_id: int) -> set[str]:
+    """Every session id owned by `user_id`."""
+    rows = get_conn().execute("SELECT id FROM sessions WHERE user_id = ?", (user_id,)).fetchall()
+    return {r[0] for r in rows}

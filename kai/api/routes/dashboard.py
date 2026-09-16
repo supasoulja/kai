@@ -6,7 +6,7 @@ import threading
 from fastapi import APIRouter, Request
 
 import kai.config as cfg
-from kai.api.deps import uid_for
+from kai.api.deps import get_user, uid_for
 from kai.api.state import brain_for, get_or_create_brain
 from kai.store.db import get_conn
 
@@ -25,7 +25,7 @@ _HIGHLIGHT_LABELS = {
 async def info(request: Request):
     brain = brain_for(request)
     memory = brain.memory
-    facts = memory.list_facts()
+    facts = memory.list_facts(include_settings=False)
     recents = memory.recent_episodes(limit=1)
 
     # Build memory highlights: stable user facts worth showing in sidebar
@@ -38,6 +38,7 @@ async def info(request: Request):
         if len(highlights) >= 4:
             break
 
+    from kai.core import permissions as _permissions
     from kai.store import users as _users
 
     uid = uid_for(request)
@@ -49,6 +50,10 @@ async def info(request: Request):
         "last_seen": recents[0].timestamp.strftime("%b %d") if recents else None,
         "highlights": highlights,
         "is_owner": uid != 0 and uid == _users.get_owner_id(),
+        "level": _permissions.level_of(uid) if uid else None,
+        "capabilities": _permissions.capabilities_of(uid) if uid else [],
+        "user": {"id": uid, "name": (get_user(request) or {}).get("name", "")},
+        "max_input_chars": cfg.MAX_INPUT_CHARS,
     }
 
 
@@ -60,7 +65,7 @@ async def dashboard_stats(request: Request):
     brain = get_or_create_brain(uid)
     memory = brain.memory
     conn = get_conn()
-    facts_count = len(memory.list_facts())
+    facts_count = len(memory.list_facts(include_settings=False))
     sessions_count = conn.execute(
         "SELECT COUNT(*) FROM sessions WHERE user_id = ?", (uid,)
     ).fetchone()[0]

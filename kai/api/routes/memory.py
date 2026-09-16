@@ -114,12 +114,18 @@ async def memory_search(q: str, request: Request):
     conn = get_conn()
 
     # Facts: simple substring match on key + value
+    from kai.memory.semantic import SETTING_KEYS
+
     fact_rows = conn.execute(
         "SELECT key, value, source, updated_at FROM semantic_facts "
-        "WHERE user_id = ? AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) LIMIT 20",
+        "WHERE user_id = ? AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) LIMIT 40",
         (uid, f"%{q}%", f"%{q}%"),
     ).fetchall()
-    facts = [{"key": r[0], "value": r[1], "source": r[2], "updated_at": r[3]} for r in fact_rows]
+    facts = [
+        {"key": r[0], "value": r[1], "source": r[2], "updated_at": r[3]}
+        for r in fact_rows
+        if r[0] not in SETTING_KEYS
+    ][:20]
 
     # Episodes: substring match on content
     ep_rows = conn.execute(
@@ -137,7 +143,7 @@ async def memory_search(q: str, request: Request):
 @router.get("/memory/facts")
 async def get_memory_facts(request: Request):
     memory = brain_for(request).memory
-    facts = memory.list_facts()
+    facts = memory.list_facts(include_settings=False)
     return [
         {
             "key": f.key,
@@ -149,8 +155,19 @@ async def get_memory_facts(request: Request):
     ]
 
 
+def _refuse_setting(key: str) -> None:
+    """A setting edited here changed what Settings showed but not what Kai did (T2-38)."""
+    from kai.memory.semantic import SETTING_KEYS
+
+    if key in SETTING_KEYS:
+        raise HTTPException(
+            status_code=400, detail=f"“{key}” is a setting, not a memory. Change it in Settings."
+        )
+
+
 @router.put("/memory/facts/{key}")
 async def update_memory_fact(key: str, req: FactUpdateRequest, request: Request):
+    _refuse_setting(key)
     memory = brain_for(request).memory
     value = req.value.strip()
     if not value:
@@ -161,6 +178,7 @@ async def update_memory_fact(key: str, req: FactUpdateRequest, request: Request)
 
 @router.delete("/memory/facts/{key}")
 async def delete_memory_fact(key: str, request: Request):
+    _refuse_setting(key)
     memory = brain_for(request).memory
     memory.delete_fact(key)
     return {"ok": True}

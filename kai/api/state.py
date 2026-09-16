@@ -63,6 +63,24 @@ user_brains: dict[int, Brain] = {}
 user_brains_lock = threading.Lock()
 
 
+def drain_idle_learning() -> int:
+    """Start a learning drain for each loaded account with queued exchanges. Returns how many.
+
+    A drain used to run only at the end of that account's own turn, so while one account chatted
+    the others never learned (T1-30). Each drain still yields to any turn in flight.
+    """
+    from kai.memory import pending
+
+    with user_brains_lock:
+        brains = list(user_brains.values())
+    started = 0
+    for brain in brains:
+        if pending.count(brain.user_id):
+            brain._bg_pool.submit(brain._drain_pending_learning)
+            started += 1
+    return started
+
+
 def custom_preset_temps(memory) -> dict[str, float]:
     """The user's saved Advanced preset temperatures (empty if none/invalid)."""
     raw = memory.get_fact("gen_preset_temps")

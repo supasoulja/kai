@@ -3,7 +3,7 @@ level, and model management.
 
 Presets and tool-level share one shape (validate against a cfg dict → apply →
 persist the fact), so they go through ``_apply_choice`` (M2). Response mode is
-kept bespoke: it persists a display *label* and also writes a procedural rule.
+kept bespoke: it writes a procedural rule and reads that rule back for display.
 """
 
 import json
@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import kai.config as cfg
 from kai.api import state as _state
+from kai.api.deps import require_capability
 from kai.api.models import (
     AddModelRequest,
     ModeRequest,
@@ -60,11 +61,16 @@ _MODE_RULES = {
 
 @router.get("/settings/mode")
 async def get_mode(request: Request):
+    """The mode whose rule is in force. A saved label said "Short answers" while the seed rule
+    applied (T2-10), and kept saying it after a Memory-panel edit changed nothing (T2-38)."""
     memory = brain_for(request).memory
-    label = memory.get_fact("response_mode") or "Short answers"
-    label_to_key = {v: k for k, v in _MODE_LABELS.items()}
-    mode = label_to_key.get(label, "short")
-    return {"mode": mode, "label": label}
+    from kai.memory import procedural as _proc
+
+    rule = _proc.get_rule("response_length", user_id=memory.user_id) or ""
+    mode = next((k for k, v in _MODE_RULES.items() if v == rule), None)
+    if mode is None:
+        return {"mode": "default", "label": "Default"}
+    return {"mode": mode, "label": _MODE_LABELS[mode]}
 
 
 @router.post("/settings/mode")
@@ -77,7 +83,6 @@ async def set_mode(req: ModeRequest, request: Request):
     from kai.memory import procedural as _proc
 
     _proc.set_rule("response_length", _MODE_RULES[req.mode], user_id=memory.user_id)
-    memory.set_fact("response_mode", _MODE_LABELS[req.mode], source="user_setting")
     return {"ok": True, "mode": req.mode, "label": _MODE_LABELS[req.mode]}
 
 
@@ -160,7 +165,9 @@ async def set_preset_temps(req: PresetTempsRequest, request: Request):
     active = brain.memory.get_fact("gen_preset") or cfg.DEFAULT_PRESET
     if active in cfg.GEN_PRESETS:
         brain.apply_preset(active, cleaned)
-    return {"ok": True, "presets": _preset_list(brain.memory)}
+    # Say when a value was pulled into range; it used to be saved silently (T2-19).
+    clamped = {k: v for k, v in cleaned.items() if v != float(req.temps[k])}
+    return {"ok": True, "presets": _preset_list(brain.memory), "clamped": clamped}
 
 
 # ── Tool-model level (which model runs tool-call rounds) ──────────────────────
@@ -172,16 +179,31 @@ def _tool_level_list() -> list[dict]:
         installed = set(_state.ollama.installed_models()) if _state.ollama else set()
     except Exception:
         installed = set()
-    return [
-        {
-            "key": key,
-            "label": lv["label"],
-            "model": lv["model"],
-            "blurb": lv["blurb"],
-            "installed": (lv["model"] is None) or (lv["model"] in installed),
-        }
-        for key, lv in cfg.TOOL_MODEL_LEVELS.items()
-    ]
+    from kai.llm.models import fits_beside
+
+    levels = []
+    for key, lv in cfg.TOOL_MODEL_LEVELS.items():
+        is_installed = (lv["model"] is None) or (lv["model"] in installed)
+        fit = (
+            fits_beside(_state.ollama, lv["model"], cfg.CHAT_MODEL)
+            if lv["model"] and is_installed and _state.ollama
+            else None
+        )
+        levels.append(
+            {
+                "key": key,
+                "label": lv["label"],
+                "model": lv["model"],
+                "blurb": lv["blurb"],
+                "installed": is_installed,
+                # Still selectable; the rounds then run on the chat model (T2-30).
+                "fits": fit is None or fit[0],
+                "note": ""
+                if fit is None or fit[0]
+                else f"{fit[1]}; tool rounds will use the chat model",
+            }
+        )
+    return levels
 
 
 @router.get("/settings/tool-level")
@@ -250,7 +272,15 @@ async def get_recipes(request: Request):
 @router.post("/settings/recipes")
 async def add_recipe(req: RecipeRequest, request: Request):
     """Create (or replace) a recipe from existing tools, then make it live."""
-    brain_for(request)  # auth gate
+    require_capability(
+        request, "recipes.manage"
+    )  # recipes are machine-wide: every account gets them
+    if not req.description.strip():
+        # Kai picks a recipe by its description; the form never asked for one (T2-33).
+        raise HTTPException(
+            status_code=400,
+            detail="Describe what the recipe does. Kai reads it to decide when to use it.",
+        )
     from kai.skills import recipes as _recipes
 
     try:
@@ -264,7 +294,7 @@ async def add_recipe(req: RecipeRequest, request: Request):
 @router.delete("/settings/recipes/{name}")
 async def delete_recipe(name: str, request: Request):
     """Delete a recipe and refresh the live skill set."""
-    brain_for(request)  # auth gate
+    require_capability(request, "recipes.manage")
     from kai.skills import recipes as _recipes
 
     removed = _recipes.delete_recipe(name)
@@ -282,9 +312,10 @@ async def get_models(request: Request):
 
     brain = brain_for(request)
     all_models = _models.list_models()
-    # Mark which one is currently active
+    # By entry name: two entries sharing an Ollama id were both marked active (T2-41).
+    active = brain.active_brain_name.lower()
     for m in all_models:
-        m["active"] = m["ollama_id"] == brain.model
+        m["active"] = m["name"].lower() == active
     return {"models": all_models}
 
 
@@ -302,6 +333,7 @@ async def get_available_models():
 
 @router.post("/settings/models")
 async def add_model(req: AddModelRequest, request: Request):
+    require_capability(request, "models.manage")  # models.json is machine-wide
     from kai.llm import models as _models
 
     name = req.name.strip()
@@ -319,8 +351,17 @@ async def add_model(req: AddModelRequest, request: Request):
 
 @router.delete("/settings/models/{name}")
 async def delete_model(name: str, request: Request):
+    require_capability(request, "models.manage")
     from kai.llm import models as _models
 
+    # Removing a model an account runs on left it on a model the list no longer showed (T2-43).
+    with _state.user_brains_lock:
+        brains = list(_state.user_brains.values())
+    if any(b.active_brain_name.lower() == name.lower() for b in brains):
+        raise HTTPException(
+            status_code=400,
+            detail=f"“{name}” is the active model. Switch to another model before removing it.",
+        )
     try:
         removed = _models.remove_model(name)
         if not removed:
@@ -354,4 +395,4 @@ async def set_active_model(request: Request):
             status_code=400,
             detail=f"No API key stored for '{name}'. Connect this provider first.",
         ) from None
-    return {"ok": True, "model": entry["ollama_id"], "think": entry.get("think", False), **resolved}
+    return {"ok": True, "model": entry["ollama_id"], **resolved}

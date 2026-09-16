@@ -277,7 +277,7 @@ HISTORY_COMPRESS_KEEP = 4  # keep last N user/assistant exchanges verbatim
 # Kai could not file the fact and narrated success instead (measured 2026-08-07).
 # A statement worth remembering has no topical signature; it needs the write tool
 # present unconditionally. Cost: ~310 tokens of the 32768 window.
-ALWAYS_AVAILABLE_TOOLS: list[str] = ["tree.save", "tree.find"]
+ALWAYS_AVAILABLE_TOOLS: list[str] = ["tree.save", "tree.find", "self.trace"]
 
 SEARCH_MAX_RESULTS = 5
 # Web reads come in two modes. SEARCH mode (fetch_url / browser.read_page) returns
@@ -285,6 +285,10 @@ SEARCH_MAX_RESULTS = 5
 # LIBRARY mode (research.add_to_library) reads the full document on the way into the
 # RAG store. Keep the excerpt small; the deep path has no cap.
 WEB_EXCERPT_CHARS = 6000
+
+# Longest chat message /chat accepts. /info exposes it so the web UI can refuse an
+# over-long message before sending, instead of echoing a bubble the server rejects.
+MAX_INPUT_CHARS = 8000
 
 # ── Document RAG ───────────────────────────────────────────────────────────────
 RAG_TOP_K = 3  # max chunks auto-injected into context per query

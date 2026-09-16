@@ -425,6 +425,23 @@ def _linux_updates() -> str:
             )
             lines = r.stdout.splitlines()
             upgraded = next((line for line in lines if "upgraded," in line), "")
+            import re
+
+            m = re.search(
+                r"(\d+) upgraded, (\d+) newly installed, (\d+) to remove and (\d+) not upgraded",
+                upgraded,
+            )
+            if m:
+                # The simulation's past tense ("15 upgraded") was read as "up to date" 3/3 (T1-17).
+                n, new, remove, held = (int(g) for g in m.groups())
+                if n == 0 and new == 0:
+                    return "System is up to date (apt): no updates pending." + (
+                        f" {held} package(s) held back." if held else ""
+                    )
+                return (
+                    f"{n} update(s) available, not installed yet (apt: {n} to upgrade, "
+                    f"{new} new, {remove} to remove, {held} held back)."
+                )
             if upgraded:
                 return f"apt: {upgraded.strip()}"
             # Fallback: apt list --upgradable

@@ -464,6 +464,8 @@ def test_dependent_step_skipped_when_dependency_fails(tmp_path):
 
 
 def test_reference_cycle_runs_nothing(tmp_path):
+    """A cycle is now refused up front (T1-39). It used to be accepted and fail at run
+    time as "unresolved dependency". Either way nothing may run."""
     skill = _md(
         tmp_path,
         "cyclic",
@@ -477,7 +479,7 @@ def test_reference_cycle_runs_nothing(tmp_path):
 
     result = skill.execute({})
     assert not result.success
-    assert "unresolved dependency" in result.output
+    assert "dependency cycle" in result.output
     mock_reg.execute.assert_not_called()
 
 
@@ -593,7 +595,10 @@ def test_brain_run_skill():
     result = brain.run_skill("pc-health-check")
     assert result["success"]
     assert result["output"] == "health ok"
-    mock_skill_reg.run.assert_called_once_with("pc-health-check", {})
+    mock_skill_reg.run.assert_called_once()
+    args, kwargs = mock_skill_reg.run.call_args
+    assert args == ("pc-health-check", {})
+    assert callable(kwargs["guard"])  # per-step permission check (D2a)
 
 
 def test_brain_run_skill_no_registry():

@@ -15,6 +15,69 @@ _MODELS_PATH = cfg.MEMORY_DIR / "models.json"
 # rest are cloud and resolved via kai/llm/client.py adapters (Phase 1+).
 PROVIDERS = ("ollama", "openai", "anthropic", "gemini")
 
+BUILTIN_MODEL_NAME = "Kai"
+
+_VRAM_HEADROOM = 1 << 30  # context, compute buffers and the desktop need room too
+
+
+def _vram_total_bytes() -> int | None:
+    """VRAM of the largest GPU, from AMD sysfs or nvidia-smi. None if neither can be read."""
+    import glob
+    import pathlib
+    import shutil
+    import subprocess
+
+    totals = []
+    for path in glob.glob("/sys/class/drm/card*/device/mem_info_vram_total"):
+        try:
+            totals.append(int(pathlib.Path(path).read_text().strip()))
+        except (OSError, ValueError):
+            pass
+    if not totals and shutil.which("nvidia-smi"):
+        try:
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            totals = [int(x) << 20 for x in res.stdout.split() if x.isdigit()]
+        except Exception:
+            pass
+    return max(totals) if totals else None
+
+
+def fits_beside(ollama, model: str, resident: str) -> tuple[bool, str] | None:
+    """Whether `model` fits in VRAM next to the resident chat model, and if not, why.
+
+    None when sizes or VRAM can't be read; callers then only check that it's installed. The
+    Light level put an 8.9 GB model beside the 7.6 GB chat model on a 16 GB card, and every
+    turn timed out after 300 s (T2-30, T1-36).
+    """
+    if model == resident:
+        return True, ""
+    total = _vram_total_bytes()
+    try:
+        sizes = ollama.model_sizes()
+        loaded = ollama.loaded_models()
+    except Exception:
+        return None
+    if not total or not isinstance(sizes, dict) or model not in sizes:
+        return None
+    resident_bytes = (loaded.get(resident) if isinstance(loaded, dict) else 0) or sizes.get(
+        resident, 0
+    )
+    if sizes[model] + resident_bytes + _VRAM_HEADROOM <= total:
+        return True, ""
+
+    def gb(b: int) -> str:
+        return f"{b / 2**30:.1f} GB"
+
+    return False, (
+        f"{model} ({gb(sizes[model])}) won't fit next to {resident} ({gb(resident_bytes)}) "
+        f"in {gb(total)} of VRAM"
+    )
+
 
 def _default_caps(provider: str) -> dict:
     """Sensible per-provider capability defaults (overridable per model).
@@ -53,7 +116,7 @@ def _defaults() -> list[dict]:
     return [
         _normalize(
             {
-                "name": "Kai",
+                "name": BUILTIN_MODEL_NAME,
                 "ollama_id": cfg.CHAT_MODEL,
                 "think": False,
                 "builtin": True,

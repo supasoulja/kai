@@ -20,20 +20,24 @@ import json
 import re
 import time
 from collections.abc import Callable, Generator
+from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 import kai.config as cfg
 from kai.config import CHAT_MODEL
 from kai.core import events
 from kai.core import flow as flow_rec
+from kai.memory.cerebellum import COMPLETED_ACTION_RE
 from kai.memory.privacy import patterns_enabled
 from kai.tools.registry import (
     TOOL_LABELS as _TOOL_LABELS,
 )
+from kai.tools.registry import ToolUnavailable
 from kai.tools.registry import (
     confirm_tool_names as _confirm_tool_names,
 )
 from kai.util import log
+from kai.util.ids import short_id
 from kai.util.text import strip_thinking as _strip_thinking
 
 if TYPE_CHECKING:
@@ -66,6 +70,71 @@ _KAI_RETRY_SIGNALS = re.compile(
     re.IGNORECASE,
 )
 
+# Zero-tool replies that talk as if work, a check, or an approval already happened. While
+# the tools are still on offer the model is sent back once to do the work instead of
+# describing it. Once a tool has run, Brain grounds and checks the final answer instead
+# (cerebellum.check_claims_backed), so these apply only to turns where nothing ran.
+# On 2026-09-10 Kai claimed a folder, a saved file and its path with zero tool calls,
+# and listed eight invented startup apps.
+_SYSTEM_CLAIM_RE = re.compile(
+    r"\byour\s+(?:system|pc|computer|machine|laptop|drives?|disks?|ssd|gpu|cpu|ram|network|"
+    r"wi-?fi|startup(?:\s+programs?)?|boot|updates?|packages?|processes|temps?|temperatures?|"
+    r"fans?|logs?|files?|folders?|workspace)\b[^.?!\n]{0,60}\b(?:is|are|was|were|has|have|had|"
+    r"shows?|looks?|runs?|reads?|includes?|contains?|lists?|reports?|indicates?|uses?|"
+    r"currently|running|healthy|stable|at\s+\d)"
+    r"|\b(?:no|zero|there (?:are|is|were|was|have been|has been) no)\b[^.?!\n]{0,30}"
+    r"\b(?:crash(?:es)?|errors?|updates?|issues?|failures?|resets?)\b[^.?!\n]{0,40}"
+    r"\b(?:found|detected|pending|reported|available|logged|recorded|in the (?:last|past))\b"
+    r"|\b(?:is|are)\s+(?:currently\s+|fully\s+)?up to date\b"
+    r"|\b(?:scan|check|search|diagnostic)\s+(?:is|was|has)\s+(?:been\s+)?"
+    r"(?:complete|completed|finished|done)\b",
+    re.IGNORECASE,
+)
+_APPROVAL_ASK_RE = re.compile(
+    r"\b(?:shall|should)\s+i\s+(?:proceed|go ahead|run|start|continue)\b"
+    r"|\b(?:need|want|require)s?\s+your\s+(?:approval|permission|ok|confirmation|go-?ahead)\b"
+    r"|\bdo you (?:approve|want me to (?:proceed|run it|go ahead))\b",
+    re.IGNORECASE,
+)
+_ZERO_TOOL_NUDGES = (
+    (
+        COMPLETED_ACTION_RE,
+        "claim",
+        "You described work as already done, but no tool ran this turn, so it did not happen. "
+        "Call the tool that does it now, or say plainly that you did not do it and why. Do "
+        "not state a path you have not read back.",
+    ),
+    (
+        _SYSTEM_CLAIM_RE,
+        "system_fact",
+        "You stated facts about this machine, but no tool ran this turn. Call the tool that "
+        "checks it, or say plainly that you have not checked. Do not answer from memory or "
+        "guesswork.",
+    ),
+    (
+        _APPROVAL_ASK_RE,
+        "approval_ask",
+        "Nothing is waiting for approval: no tool was called. If the user asked for an "
+        "action, call its tool now; the system asks the user for approval itself when it is "
+        "needed. If you need a clarification, ask it plainly.",
+    ),
+)
+# Left for the final answer when the model still answers that way after one send-back.
+NO_TOOL_RAN_NOTE = (
+    "No tool ran this turn. Do not present anything about this machine as checked or done. "
+    "If the user needs live information or an action, say plainly that you have not checked "
+    "or not done it."
+)
+
+
+def _zero_tool_nudge(text: str) -> tuple[str, str] | None:
+    """(kind, corrective) for a reply that claims work, checks or approval with nothing run."""
+    for pattern, kind, corrective in _ZERO_TOOL_NUDGES:
+        if pattern.search(text):
+            return kind, corrective
+    return None
+
+
 _BROKEN_TOOL_CALL_RE = re.compile(
     r'"name"\s*:\s*"([a-z][a-z0-9_.]+)".*?"arguments"\s*:\s*(\{[^}]*\})',
     re.DOTALL,
@@ -96,6 +165,51 @@ _NARRATED_INTENTS: list[tuple[re.Pattern, str, str]] = [
 ]
 
 
+_SECRET_ARG_RE = re.compile(r"pass|secret|token|api[_-]?key|auth|credential", re.I)
+
+
+def tool_receipt(name: str, args: dict, result: dict, duration_ms: int) -> dict:
+    """What the UI shows for a call that ran. Built from the call and its result, never from a
+    status label, so an answer can only show tools that executed (T2-23, T2-28)."""
+    shown = {}
+    for key, value in (args or {}).items():
+        if _SECRET_ARG_RE.search(str(key)):
+            value = "•••"
+        elif not isinstance(value, (int, float, bool)):
+            value = str(value)
+            if len(value) > 120:
+                value = value[:117] + "…"
+        shown[key] = value
+    ok = bool(result.get("success"))
+    return {
+        "name": name,
+        "args": shown,
+        "ok": ok,
+        "error": "" if ok else str(result.get("error") or "")[:300],
+        "kind": result.get("kind", ""),
+        "duration_ms": duration_ms,
+        "output": str(result.get("output") or "")[:600] if ok else "",
+    }
+
+
+def _proposal_problem(tool_args: dict) -> str | None:
+    """Why a sandbox.approve call would approve nothing, or None if its proposal is live."""
+    try:
+        from kai.tools.compute.sandbox import proposal_problem
+    except Exception:
+        return None
+    return proposal_problem((tool_args or {}).get("proposal_id"))
+
+
+def _proposal_label(tool_args: dict) -> str | None:
+    """What approving this proposal does ("Delete notes.txt"), or None if it isn't live."""
+    try:
+        from kai.tools.compute.sandbox import proposal_label
+    except Exception:
+        return None
+    return proposal_label((tool_args or {}).get("proposal_id"))
+
+
 def _match_narrated_intent(clean: str, known_tools: set[str]) -> dict | None:
     """Match a natural-language promised action and build a call WITH its arg.
 
@@ -113,7 +227,9 @@ def _match_narrated_intent(clean: str, known_tools: set[str]) -> dict | None:
     return None
 
 
-def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
+def _try_recover_tool_call(
+    content: str, known_tools: set[str], needs_args: set[str] | frozenset[str] = frozenset()
+) -> dict | None:
     """
     Attempt to extract a tool call from plain-text content the model emitted
     when Ollama failed to parse it as a structured tool_call.
@@ -123,7 +239,8 @@ def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
       2. Narrated intent — natural phrasing ("searching the web for X"),
          matched against a deterministic map that also extracts the argument
       3. Narrated call — the model wrote "Running `pc.deep_scan` now" instead of
-         calling it (tool named verbatim, fired with empty args)
+         calling it (tool named verbatim, fired with empty args, so only for tools in
+         known_tools that aren't in needs_args)
 
     Returns a synthetic tool_call dict matching Ollama's format, or None.
     """
@@ -165,6 +282,8 @@ def _try_recover_tool_call(content: str, known_tools: set[str]) -> dict | None:
     if not clean or len(clean) > 500:
         return None
     for tool_name in known_tools:
+        if tool_name in needs_args:
+            continue  # fired with {}, it could only fail, then escalate to every tool (T1-14)
         idx = clean.find(tool_name)
         if idx == -1:
             continue
@@ -290,12 +409,18 @@ class TurnEngine:
         resolved: str | None = None
         if wanted:
             try:
-                if wanted in self.ollama.installed_models():
-                    resolved = wanted
-                else:
+                if wanted not in self.ollama.installed_models():
                     log.debug(
                         f"[tool model] {wanted} not installed — rounds fall back to {self.model}"
                     )
+                else:
+                    from kai.llm.models import fits_beside
+
+                    fit = fits_beside(self.ollama, wanted, self.model)
+                    if fit is None or fit[0]:
+                        resolved = wanted
+                    else:
+                        log.warn(f"[tool model] {fit[1]} — rounds run on {self.model}")
             except Exception:
                 pass  # Ollama unreachable — fall back; apply_tool_level re-checks
         self._tool_model = resolved
@@ -434,11 +559,11 @@ class TurnEngine:
         _try_recover_tool_call) — so we keep tool-calling reliable without paying
         the per-round reasoning latency that used to band-aid the 06-09 regression.
 
-        Returns (raw_content, clean_text) when the chat model answers
-        directly without calling tools — the caller finalizes the turn with
-        that text. Returns None when the turn should continue to the streamed
-        final answer (tools ran, the confirm gate fired, a safety stop hit,
-        or rounds were exhausted).
+        Returns (raw_content, clean_text) when the model answers in prose instead of
+        calling a tool. Brain never ships that prose as the reply (it grounds, checks
+        and streams its own); crew specialists keep it as their findings. Returns None
+        when the rounds end any other way (the confirm gate fired, a safety stop hit,
+        duplicates piled up, or rounds were exhausted).
         """
         from kai.memory.cerebellum import call_signature as _sig_of
 
@@ -460,6 +585,7 @@ class TurnEngine:
         rounds_think = False
         _call_sigs: list[str] = []  # executed (tool, args) signatures for dedup + loop detection
         _dup_count = 0  # repeats of an already-executed identical call
+        _corrective_used = 0  # zero-tool replies sent back for claiming work, checks or approval
         for round_num in range(MAX_TOOL_ROUNDS):
             if not tools_schema:
                 break  # no tools → skip to streaming final answer
@@ -478,13 +604,29 @@ class TurnEngine:
             else:
                 # The opt-in tool model is secondary — unload it right after
                 # so it never holds a second runner beside the warm chat model.
-                resp = self.ollama.chat(
-                    messages,
-                    tools=tools_schema,
-                    model=tool_model,
-                    think=rounds_think,
-                    keep_alive=0,
-                )
+                try:
+                    resp = self.ollama.chat(
+                        messages,
+                        tools=tools_schema,
+                        model=tool_model,
+                        think=rounds_think,
+                        keep_alive=0,
+                    )
+                except Exception as exc:
+                    # A tool model that errors or times out mustn't end the turn (T2-30): finish on
+                    # the chat model, and don't try the tool model again until the level changes.
+                    log.warn(
+                        f"[tool model] {tool_model} failed ({exc}); rounds run on the chat model"
+                    )
+                    flow_rec.record(trace_id, "tool_model_failed", model=tool_model, error=str(exc))
+                    self._tool_model, self._tool_model_resolved = None, True
+                    tool_model, rounds_model = None, self._chat_model
+                    resp = self._chat(
+                        messages,
+                        tools=tools_schema,
+                        think=rounds_think,
+                        temperature=cfg.TEMPERATURE_TOOL,
+                    )
             msg = resp.get("message", {})
             try:
                 _tc_names = [
@@ -529,7 +671,8 @@ class TurnEngine:
                 # structured JSON.  Try to salvage before giving up on the round.
                 if self.tool_registry and content:
                     known = set(self.tool_registry.list_tools())
-                    recovered = _try_recover_tool_call(content, known)
+                    needs = {n for n in known if self.tool_registry.required_params(n)}
+                    recovered = _try_recover_tool_call(content, known, needs)
                     if recovered:
                         log.debug(
                             f"[{trace_id}] recovered broken tool call: "
@@ -574,8 +717,27 @@ class TurnEngine:
                         )
                         continue
 
-                    # Model chose not to use tools — hand the answer back so
-                    # run_stream finalizes it (single end-of-turn path).
+                    # ── Commitment gate (nothing has run yet) ────────────
+                    # A reply that reports work, a check, or a pending approval when no
+                    # tool ran is a false statement about the system. Sent back once while
+                    # the tools are still on offer; past that the model won't be argued
+                    # into it, so a note steers the final answer instead.
+                    if not tools_used:
+                        caught = _zero_tool_nudge(clean)
+                        if caught and _corrective_used < 1:
+                            _corrective_used += 1
+                            flow_rec.record(
+                                trace_id, "unbacked_claim", check=caught[0], text=clean[:400]
+                            )
+                            log.debug(f"[{trace_id}] commitment gate ({caught[0]}): nothing ran")
+                            messages.append({"role": "assistant", "content": final})
+                            messages.append({"role": "user", "content": caught[1]})
+                            continue
+                        if caught:
+                            messages.append({"role": "system", "content": NO_TOOL_RAN_NOTE})
+
+                    # Prose instead of a tool call. Brain discards it and streams a
+                    # grounded, checked reply; crew specialists keep it as findings.
                     return content, final
 
             # Execute tool calls
@@ -718,7 +880,6 @@ class TurnEngine:
             fn = tc.get("function", {})
             tool_name = fn.get("name") or ""
             tool_args = fn.get("arguments", {})
-            tools_used.append(tool_name)
 
             # Duplicate-call guard: small tool models sometimes re-issue the exact
             # same call instead of writing a final answer. The result is already
@@ -748,13 +909,30 @@ class TurnEngine:
                 continue
 
             # ── Confirm gate: pause and ask the user before running ──────────
-            if tool_name in _CONFIRM_TOOLS:
+            confirm_label = self._needs_confirm(tool_name)
+            if confirm_label and tool_name == "sandbox.approve":
+                # Say what approving does, not "Executing approved operation".
+                confirm_label = _proposal_label(tool_args) or confirm_label
+            # A parked approval must point at a proposal that exists. The model invented
+            # the id twice, and the user's "go ahead" then approved nothing (T1-15).
+            bad_proposal = _proposal_problem(tool_args) if tool_name == "sandbox.approve" else None
+            if bad_proposal:
+                flow_rec.record(trace_id, "rejected_call", name=tool_name, reason=bad_proposal)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": json.dumps({"success": False, "error": bad_proposal}),
+                    }
+                )
+                continue
+            if confirm_label:
                 log.info(f"[confirm] intercepted {tool_name} — waiting for user OK")
                 self._pending_confirm = {
                     "name": tool_name,
                     "args": tool_args,
                     "trace_id": trace_id,
-                    "label": _TOOL_LABELS.get(tool_name, tool_name),
+                    "label": confirm_label,
+                    "call_id": short_id(8),  # the approval card names this call
                 }
                 result = {
                     "output": (
@@ -762,12 +940,15 @@ class TurnEngine:
                         "Describe what you want to do and ask the user to confirm."
                     ),
                     "success": True,
+                    "pending": True,  # not evidence: see brain._evidence_from
                 }
                 messages.append({"role": "tool", "content": json.dumps(result)})
                 confirm_event = {
                     "confirm_tool": True,
                     "name": tool_name,
                     "label": self._pending_confirm["label"],
+                    "args": tool_args,
+                    "call_id": self._pending_confirm["call_id"],
                 }
                 # Self-edits to persona.md carry the exact diff so the UI can
                 # render a reviewable before/after modal — the user approves
@@ -793,9 +974,16 @@ class TurnEngine:
                 chain_stopped = True
                 break
 
+            # Only calls that execute count as used. A parked, duplicate or safety-stopped
+            # call must not back a claim, feed grounding, or reach the trace log that
+            # self.trace reads back as "what you actually ran".
+            tools_used.append(tool_name)
             if on_status:
                 on_status(_TOOL_LABELS.get(tool_name, tool_name))
+            started = time.monotonic()
             result = self._execute_tool_traced(tool_name, tool_args, trace_id)
+            ran_ms = int((time.monotonic() - started) * 1000)
+            yield "", False, {"tool_result": tool_receipt(tool_name, tool_args, result, ran_ms)}
             call_sigs.append(sig)
 
             # ── Pattern tracking ──────────────────────────────────────────────
@@ -909,17 +1097,38 @@ class TurnEngine:
         to key a cross-platform escalation off of.
         """
         if not result.get("success", True):
+            # Can't act here, or wrong argument names: the model hears it failed, but a wider
+            # tool set won't fix either (D3a).
+            if result.get("kind") in ("unavailable", "bad_args"):
+                return False, False
             return True, False
         if re.search(r"\b0x[0-9a-fA-F]{4,}\b", result.get("output", "")):
             return False, True
         return False, False
 
-    def _execute_tool_traced(self, tool_name: str, tool_args: dict, trace_id: str) -> dict:
+    def _needs_confirm(self, tool_name: str) -> str | None:
+        """UI label for a call that must pause for approval, or None.
+
+        Destructive tools pause, and so does a recipe with a destructive step. A recipe
+        runs its steps directly, so without this it ran docs.delete unasked (T1-24).
+        """
+        if tool_name in _CONFIRM_TOOLS:
+            return _TOOL_LABELS.get(tool_name, tool_name)
+        if tool_name.startswith("skill.") and self.skill_registry:
+            recipe = tool_name.removeprefix("skill.")
+            risky = [t for t in self.skill_registry.step_tools(recipe) if t in _CONFIRM_TOOLS]
+            if risky:
+                return f"Recipe {recipe} (runs {', '.join(dict.fromkeys(risky))})"
+        return None
+
+    def _execute_tool_traced(
+        self, tool_name: str, tool_args: dict, trace_id: str, confirmed: bool = False
+    ) -> dict:
         """Execute one tool wrapped in TOOL_START/TOOL_END events + debug log."""
         if self.session_id:
             events.emit(events.EVENT_TOOL_START, self.session_id, name=tool_name, args=tool_args)
         _tool_t0 = time.monotonic()
-        result = self._execute_tool(tool_name, tool_args, trace_id)
+        result = self._execute_tool(tool_name, tool_args, trace_id, confirmed=confirmed)
         _tool_dur = round(time.monotonic() - _tool_t0, 3)
         if self.session_id:
             # Truncate output for the event bus (keeps SQLite lean)
@@ -950,17 +1159,52 @@ class TurnEngine:
             error=result.get("error"),
             output=str(result.get("output", "")),
         )
+        # Provenance rides with the result so the model can cite WHERE a fact came
+        # from, not just what it was. Without it a stale third-party feed is
+        # indistinguishable from a fabrication: on 2026-09-09 weather.current
+        # relayed wttr.in faithfully, the user's own source disagreed, and with no
+        # way to say "this is wttr.in as of 13:21" the reply read as invented — and
+        # was then confessed to as invented. A tool that cannot name its source
+        # cannot defend a correct answer.
+        if isinstance(result, dict) and "_source" not in result:
+            try:
+                shown = json.dumps(tool_args, default=str)
+                if len(shown) > 200:
+                    shown = shown[:200] + "…"
+                result["_source"] = (
+                    f"{tool_name} · run {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"· args {shown}"
+                )
+            except Exception:  # never let provenance break a working tool call
+                pass
         return result
 
-    def _execute_tool(self, name: str, args: dict, trace_id: str) -> dict:
+    def _execute_tool(self, name: str, args: dict, trace_id: str, confirmed: bool = False) -> dict:
         # Skill delegation — tool names starting with "skill." route to the skill registry
         if name.startswith("skill.") and self.skill_registry:
             skill_name = name.removeprefix("skill.")
             # Validate skill name — reject anything that isn't a safe identifier
             if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", skill_name):
                 return {"success": False, "error": f"Invalid skill name: {skill_name!r}"}
+            skill_name = self.skill_registry.resolve(skill_name)
+            # A recipe runs its steps directly, so the per-user tool switch is checked here
+            # too: turned-off tools used to run through a recipe (T1-23, T2-32).
+            disabled = self.disabled_tools or set()
+            off = [
+                t
+                for t in self.skill_registry.step_tools(skill_name)
+                if (self.tool_registry.resolve_name(t) if self.tool_registry else t) in disabled
+            ]
+            if off:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Recipe '{skill_name}' uses {', '.join(off)}, which is turned off in "
+                        "Settings. Nothing ran."
+                    ),
+                }
             log.debug(f"[brain] skill delegation: {name!r} → skill {skill_name!r}")
-            return self.run_skill(skill_name, args)
+            return self.run_skill(skill_name, args, allow_destructive=confirmed)
 
         if not self.tool_registry:
             return {"success": False, "error": f"No tool registry — cannot run '{name}'"}
@@ -1000,7 +1244,18 @@ class TurnEngine:
                     output = self.tool_registry.execute(target, args)
                     return {"success": True, "output": output}
                 except Exception as e:
-                    return {"success": False, "error": str(e)}
+                    return self._failed_call(target, e)
             return {"success": False, "error": f"Unknown tool: {name!r} — no similar tool found"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return self._failed_call(name, e)
+
+    def _failed_call(self, name: str, exc: Exception) -> dict:
+        """Result for a tool call that raised. Two kinds of failure don't widen the tool set:
+        the tool can't act here (T1-06), or the call used argument names the tool doesn't take
+        (T1-34), where the real ones are handed back."""
+        if isinstance(exc, ToolUnavailable):
+            return {"success": False, "error": str(exc), "kind": "unavailable"}
+        if isinstance(exc, TypeError) and self.tool_registry.is_arg_error(name, exc):
+            hint = self.tool_registry.args_hint(name)
+            return {"success": False, "error": f"{exc}. {name} takes: {hint}", "kind": "bad_args"}
+        return {"success": False, "error": str(exc)}

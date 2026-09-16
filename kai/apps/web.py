@@ -51,7 +51,7 @@ from kai.tools import registry as tool_registry
 from kai.util import log as _klog
 
 # Maximum input length — prevents accidental context blowout
-_MAX_INPUT_CHARS = 8000
+_MAX_INPUT_CHARS = cfg.MAX_INPUT_CHARS
 
 
 # ── Session auth ──────────────────────────────────────────────────────────────
@@ -143,9 +143,16 @@ _LOGIN_WINDOW = 900  # 15 minutes in seconds
 _LOGIN_MAX_TRIES = 5
 
 
+def _valid_pin(pin: str) -> bool:
+    """4–8 digits: what the login, register and add-user forms ask for."""
+    from kai.store.users import valid_pin
+
+    return valid_pin(pin)
+
+
 def _check_login_rate(ip: str) -> bool:
     """Return True if this IP is allowed to attempt login, False if rate-limited.
-    Writes an attempt record and prunes expired ones on each call."""
+    Prunes expired attempts; failures are recorded by _record_failed_login."""
     from kai.store.db import get_conn
 
     now = _time.time()
@@ -157,12 +164,18 @@ def _check_login_rate(ip: str) -> bool:
         "SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND ts > ?",
         (ip, window_start),
     ).fetchone()[0]
-    if count >= _LOGIN_MAX_TRIES:
-        conn.commit()
-        return False
-    conn.execute("INSERT INTO login_attempts (ip, ts) VALUES (?, ?)", (ip, now))
     conn.commit()
-    return True
+    return count < _LOGIN_MAX_TRIES
+
+
+def _record_failed_login(ip: str) -> None:
+    """Only failures count toward the lockout. Counting successful sign-ins locked every
+    account on a shared machine out after five logins in 15 minutes (T1-12, T2-55)."""
+    from kai.store.db import get_conn
+
+    conn = get_conn()
+    conn.execute("INSERT INTO login_attempts (ip, ts) VALUES (?, ?)", (ip, _time.time()))
+    conn.commit()
 
 
 class _AuthGuard:
@@ -235,7 +248,8 @@ class _SecurityHeaders:
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),
         (b"referrer-policy", b"strict-origin-when-cross-origin"),
-        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+        # microphone=(self): the composer records in-page; () blocked it in every browser.
+        (b"permissions-policy", b"camera=(), microphone=(self), geolocation=()"),
     ]
 
     def __init__(self, app):
@@ -299,6 +313,9 @@ from kai.api import admin as _admin_router
 from kai.api import study as _study_router
 from kai.api import voice as _voice_router
 from kai.api.routes import (
+    accounts as _accounts_router,
+)
+from kai.api.routes import (
     dashboard as _dashboard_router,
 )
 from kai.api.routes import (
@@ -343,6 +360,7 @@ for _r in (
     _documents_router,
     _system_router,
     _notes_router,
+    _accounts_router,
 ):
     app.include_router(_r.router)
 
@@ -395,6 +413,7 @@ async def login_user(req: LoginRequest, response: Response, request: Request = N
 
     user = _users.authenticate(req.name.strip(), req.pin.strip(), key_hash())
     if not user:
+        _record_failed_login(client_ip)
         raise HTTPException(status_code=401, detail="Invalid name or PIN")
 
     # Issue session token
@@ -432,11 +451,21 @@ async def register_user(req: LoginRequest, response: Response):
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
-    if len(req.pin.strip()) < 4:
-        raise HTTPException(status_code=400, detail="PIN must be at least 4 digits")
+    if not _valid_pin(req.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4–8 digits")
     user = _users.create_user(name, req.pin.strip(), key_hash())
     if not user:
         raise HTTPException(status_code=409, detail="That name is already taken")
+    from kai.store import audit
+
+    audit.record(
+        "account.create",
+        actor_id=user["id"],
+        actor_name=name,
+        target_id=user["id"],
+        target_name=name,
+        detail={"level": user["level"], "via": "first-run setup"},
+    )
 
     # Issue session token (auto-login)
     token = _issue_token({"name": name, "user_id": user["id"]})
@@ -458,24 +487,35 @@ async def register_user(req: LoginRequest, response: Response):
 @app.post("/users/add")
 async def add_user(req: LoginRequest, request: Request):
     """
-    Owner-only: create a new account on this machine for someone else.
+    Owner or admin: create a Member account on this machine for someone else.
     Unlike /users/register, this doesn't touch the caller's session — the
-    owner stays logged in as themselves and the new user logs in separately.
+    creator stays logged in as themselves and the new user logs in separately.
+    Choosing a level (Guest, or Admin for the owner) is POST /accounts.
     """
+    from kai.core import permissions
+    from kai.store import audit
     from kai.store import users as _users
     from kai.system.device import key_hash
 
     user = _get_user(request)
-    if not user or user["user_id"] != _users.get_owner_id():
-        raise HTTPException(status_code=403, detail="Only the owner can add users.")
+    if not user or not permissions.can(user["user_id"], "accounts.create"):
+        raise HTTPException(status_code=403, detail="Only the owner or an admin can add accounts.")
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name is required")
-    if len(req.pin.strip()) < 4:
-        raise HTTPException(status_code=400, detail="PIN must be at least 4 digits")
-    new_user = _users.create_user(name, req.pin.strip(), key_hash())
+    if not _valid_pin(req.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4–8 digits")
+    new_user = _users.create_user(name, req.pin.strip(), key_hash(), created_by=user["user_id"])
     if not new_user:
         raise HTTPException(status_code=409, detail="That name is already taken")
+    audit.record(
+        "account.create",
+        actor_id=user["user_id"],
+        actor_name=user.get("name"),
+        target_id=new_user["id"],
+        target_name=name,
+        detail={"level": new_user["level"]},
+    )
     return {"ok": True, "user": new_user}
 
 
@@ -567,6 +607,16 @@ async def delete_account(request: Request, response: Response):
     deleted = _users.delete_user(uid)
     if not deleted:
         raise HTTPException(status_code=404, detail="Account not found")
+    from kai.store import audit
+
+    audit.record(
+        "account.delete",
+        actor_id=uid,
+        actor_name=user.get("name"),
+        target_id=uid,
+        target_name=user.get("name"),
+        detail={"by": "themselves"},
+    )
 
     # Clear the session cookie
     token = request.cookies.get("kai_session")
@@ -606,10 +656,11 @@ async def chat(req: ChatRequest, request: Request):
         def on_status(text: str) -> None:
             asyncio.run_coroutine_threadsafe(q.put({"type": "status", "text": text}), loop)
 
+        extra = {"confirm_call_id": req.confirm} if req.confirm else {}
         for attempt in range(2):
             emitted = False
             try:
-                for token, done, meta in brain.run_stream(user_input, on_status=on_status):
+                for token, done, meta in brain.run_stream(user_input, on_status=on_status, **extra):
                     emitted = True
                     if done:
                         event = {"type": "done"}
@@ -617,11 +668,19 @@ async def chat(req: ChatRequest, request: Request):
                             event["message_id"] = meta["message_id"]
                         if meta.get("latency_ms") is not None:
                             event["latency_ms"] = meta["latency_ms"]
+                        if meta.get("grounding"):
+                            event["grounding"] = meta["grounding"]
+                            event["receipts"] = meta.get("receipts", [])
+                    elif meta.get("tool_result"):
+                        # Must be mapped: an unknown meta falls through to an empty token event.
+                        event = {"type": "tool_result", **meta["tool_result"]}
                     elif meta.get("confirm_tool"):
                         event = {
                             "type": "confirm_tool",
                             "name": meta["name"],
                             "label": meta["label"],
+                            "args": meta.get("args", {}),
+                            "call_id": meta.get("call_id"),
                         }
                         if meta.get("diff"):
                             event["diff"] = meta["diff"]
@@ -689,6 +748,36 @@ async def chat_stop(request: Request):
     return {"ok": True}
 
 
+@app.post("/chat/confirm/cancel")
+async def chat_confirm_cancel(request: Request):
+    """The confirm bar's Skip: drop the parked tool call so a later reply can't run it. With a
+    call_id only that call is dropped, so Skip on an older card leaves a newer one alone."""
+    brain = _brain_for(request)
+    try:
+        call_id = (await request.json()).get("call_id")
+    except Exception:
+        call_id = None
+    if not call_id:
+        return {"ok": True, "cancelled": brain.cancel_pending_confirm()}
+    cancelled = brain.cancel_pending_confirm(call_id)
+    if not cancelled:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "cancelled": None,
+                "detail": "That approval is no longer waiting.",
+            },
+        )
+    return {"ok": True, "cancelled": cancelled}
+
+
+@app.get("/chat/pending")
+async def chat_pending(request: Request):
+    """The approval still waiting in this chat, so a reloaded page can show its card again."""
+    return _brain_for(request).pending_confirm_summary() or {}
+
+
 @app.post("/chat/greeting")
 async def chat_greeting(req: GreetingRequest, request: Request):
     """Kai opens the conversation with a greeting of her own (SSE, like /chat)."""
@@ -742,7 +831,11 @@ async def ws_activity(ws: WebSocket, session_id: str):
     # client receives a proper WebSocket close frame (code 1008 = Policy Violation).
     token = ws.cookies.get("kai_session")
     user = _get_session(token) if token else None
-    if not user:
+    from kai.store import sessions as _sessions
+
+    # Activity carries tool args and outputs: only the session's owner may watch it (T1-10).
+    owner = _sessions.session_owner(session_id) if user else None
+    if not user or (owner is not None and owner != user["user_id"]):
         await ws.accept()
         await ws.close(code=1008)
         return
@@ -772,16 +865,29 @@ async def ws_activity(ws: WebSocket, session_id: str):
 
 @app.get("/api/events/{session_id}")
 async def get_events(session_id: str, request: Request, since: float = 0, limit: int = 500):
-    """Fetch persisted events for replay / history. Requires an active session."""
-    if not _get_user(request):
+    """Fetch persisted events for replay / history. Only the session's owner may read them:
+    they carry tool arguments and outputs (T1-10)."""
+    user = _get_user(request)
+    if not user:
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    from kai.store import sessions as _sessions
+
+    owner = _sessions.session_owner(session_id)
+    if owner is not None and owner != user["user_id"]:
+        return JSONResponse(status_code=404, content={"detail": "No such session"})
     return _events.get_events(session_id, since_ts=since, limit=limit)
 
 
 @app.get("/api/events")
-async def list_event_sessions():
-    """List all session IDs that have events."""
-    return _events.get_session_ids()
+async def list_event_sessions(request: Request):
+    """Session ids that have events: the caller's own sessions only."""
+    user = _get_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    from kai.store import sessions as _sessions
+
+    mine = _sessions.session_ids(user["user_id"])
+    return [sid for sid in _events.get_session_ids() if sid in mine]
 
 
 # Voice endpoints moved to kai/api/voice.py (mounted via include_router).
@@ -940,6 +1046,7 @@ def _init() -> None:
 
     sched = get_scheduler()
     sched.add_daily(cfg.BRIEFING_TIME, lambda: _gen_briefing(user_id=0), name="morning-briefing")
+    sched.add_every(60, _state.drain_idle_learning, name="learn-drain")
     sched.start()
     _klog.ok(f"Scheduler started — daily briefing at {cfg.BRIEFING_TIME}")
 

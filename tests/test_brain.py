@@ -12,6 +12,8 @@ from unittest.mock import MagicMock
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
+import pytest
+
 import kai.config as cfg
 
 _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -36,6 +38,21 @@ def make_mock_stream(response_text: str):
         yield "", True, {}
 
     return _stream
+
+
+@pytest.fixture(autouse=True)
+def _no_background_learning(monkeypatch):
+    """Brains here share one test DB and user id 0. A turn's post-turn job queues a
+    learning row, and any Brain built afterwards drains it through ITS chat mock, so a
+    test could lose its scripted model reply to another test's leftovers (seen twice:
+    test_brain_handles_no_tool_registry, test_cerebellum_stop_ends_rounds_without_escalation).
+    Learning itself is tested directly below (_extract_knowledge, pending), not via run()."""
+    from kai.core import brain as brain_module
+    from kai.memory import pending
+
+    monkeypatch.setattr(brain_module, "learning_enabled", lambda user_id: False)
+    for row_id, *_ in pending.peek(0, limit=1000):
+        pending.delete(row_id)
 
 
 def make_mock_ollama(response_text: str = "Hello from Kai.", tool_calls: list | None = None):
@@ -157,19 +174,25 @@ def test_brain_context_injected_into_system_prompt():
 
 
 def test_brain_executes_tool_and_finalizes():
-    """Round 1: chat() returns tool_calls → tool executed. Round 2: chat() returns final answer."""
+    """Round 1: chat() returns tool_calls → tool executed. Round 2: chat() answers in prose.
+    That prose is NOT the reply — the answer is grounded, checked and streamed instead.
+
+    This test used to assert the round-2 prose came back verbatim, which pinned the
+    unchecked direct-answer path the 2026-09-10 hardening pass removed (P1-1).
+    """
     tool_call_response = {
         "message": {
             "content": "",
             "tool_calls": [{"function": {"name": "time.now", "arguments": {}}}],
         }
     }
-    # Round 2: no tool_calls → early-exit with this content
-    final_response = {"message": {"content": "It is Tuesday."}}
+    round_prose = {"message": {"content": "round prose - must be discarded"}}
+    facts = {"message": {"content": "- time.now returned 2026-02-20 14:00"}}
 
     mock_ollama = MagicMock(spec=OllamaClient)
     mock_ollama.embed.return_value = [0.0] * 2560
-    mock_ollama.chat.side_effect = [tool_call_response, final_response]
+    mock_ollama.chat.side_effect = [tool_call_response, round_prose, facts]
+    mock_ollama.chat_stream.side_effect = make_mock_stream("It is Tuesday.")
 
     mock_registry = MagicMock()
     mock_registry.get_schema.return_value = [{"type": "function", "function": {"name": "time.now"}}]
@@ -265,8 +288,10 @@ def test_tool_rounds_fall_back_to_chat_model_no_thinking():
     mock_ollama.installed_models.return_value = [cfg.CHAT_MODEL]
     mock_ollama.chat.side_effect = [
         _tool_call_response(),
-        {"message": {"content": "It is Tuesday."}},
+        {"message": {"content": "round prose - discarded"}},
+        {"message": {"content": "- time.now returned 2026-06-09 21:00"}},
     ]
+    mock_ollama.chat_stream.side_effect = make_mock_stream("It is Tuesday.")
     mock_registry = MagicMock()
     mock_registry.get_schema.return_value = [{"type": "function", "function": {"name": "time.now"}}]
     mock_registry.execute.return_value = "2026-06-09 21:00"
@@ -279,8 +304,10 @@ def test_tool_rounds_fall_back_to_chat_model_no_thinking():
     for call in mock_ollama.chat.call_args_list:
         assert call.kwargs["model"] == brain.model
         assert call.kwargs["think"] is False
-    # Fallback rounds keep the direct-answer path (it IS the chat model's voice)
+    # The round's own prose is discarded even on the chat model: the reply is the
+    # grounded, checked, streamed answer (the direct-answer path was P1-1).
     assert result == "It is Tuesday."
+    assert mock_ollama.chat_stream.call_args.kwargs["model"] == brain.model
 
 
 def test_fast_path_matches_exact_commands_only():

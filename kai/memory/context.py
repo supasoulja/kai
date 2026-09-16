@@ -64,8 +64,11 @@ def build(
     # Confidence gate: keep low-trust regex guesses and decayed facts out of
     # recall. The extractor still sees the full set (it needs them for its
     # overwrite guard) — this filter applies only to what gets injected.
+    # Settings share the table but aren't things Kai knows about the user (P1-5).
     all_facts = [
-        f for f in semantic.list_facts(user_id=user_id) if f.confidence >= RECALL_CONFIDENCE_MIN
+        f
+        for f in semantic.list_facts(user_id=user_id, include_settings=False)
+        if f.confidence >= RECALL_CONFIDENCE_MIN
     ]
     doc_inv = _fetch_doc_inventory(user_id=user_id)
     tool_index = _render_tool_index(user_id=user_id)
@@ -123,7 +126,7 @@ def build(
 
     # Welcome-back message — injected once on first turn, then cleared.
     # New-chat greetings opt out so they don't consume/show the morning note.
-    welcome_back = _get_and_clear_welcome_back() if include_welcome_back else ""
+    welcome_back = _get_and_clear_welcome_back(user_id) if include_welcome_back else ""
     if include_welcome_back:
         briefing = _get_and_clear_briefing(user_id=user_id)
         if briefing:
@@ -203,41 +206,41 @@ def _warn_static_over_budget(static_len: int, budget: int) -> None:
     )
 
 
-_welcome_back_used = False
-_session_welcome_back = ""  # retained for the whole session (survives past turn 1)
+# Per account: a process-wide flag let the first account to open Kai use up every other
+# account's one-shot note (T1-40).
+_welcome_back_used: set[int] = set()
+_session_welcome_back: dict[int, str] = {}  # retained for the whole session (survives past turn 1)
 
 
-def _get_and_clear_welcome_back() -> str:
+def _get_and_clear_welcome_back(user_id: int = 0) -> str:
     """Load welcome-back message on first call, return empty string after.
     Does NOT clear the file — call mark_welcome_back_delivered() after a
     successful response so the note survives timeouts and crashes."""
-    global _welcome_back_used, _session_welcome_back
-    if _welcome_back_used:
+    if user_id in _welcome_back_used:
         return ""
-    _welcome_back_used = True
-    _session_welcome_back = load_welcome_back() or ""
+    _welcome_back_used.add(user_id)
+    _session_welcome_back[user_id] = load_welcome_back(user_id) or ""
     # NOTE: no persona "gap" check here. Tools are auto-documented in the memory
     # tree (tool_docs.sync_tool_docs) and injected as the [TOOLS] block every turn
     # — persona.md is identity/voice, not a tool catalog. New capabilities are
     # surfaced as an awareness bubble (see kai/memory/capabilities.py), not nagged
     # into the cold-open greeting.
-    return _session_welcome_back
+    return _session_welcome_back[user_id]
 
 
-def get_session_welcome_back() -> str:
+def get_session_welcome_back(user_id: int = 0) -> str:
     """The welcome-back note Kai wrote itself last session, retained for the whole
     current session — survives past turn 1 (after the file is cleared) so tools
     like memory.recent_sessions can still surface it. Falls back to the on-disk
     note if it hasn't been consumed yet this session."""
-    return _session_welcome_back or (load_welcome_back() or "")
+    return _session_welcome_back.get(user_id) or (load_welcome_back(user_id) or "")
 
 
-def mark_welcome_back_delivered():
+def mark_welcome_back_delivered(user_id: int = 0):
     """Clear the welcome-back file after a successful first response."""
     try:
-        msg = load_welcome_back()
-        if msg:
-            clear_welcome_back()
+        if load_welcome_back(user_id):
+            clear_welcome_back(user_id)
     except Exception:
         pass
 
@@ -344,15 +347,14 @@ def _fetch_doc_inventory(user_id: int = 0) -> list[dict]:
         return []
 
 
-_briefing_used = False
+_briefing_used: set[int] = set()
 
 
 def _get_and_clear_briefing(user_id: int = 0) -> str:
     """Load the pending daily briefing once per session."""
-    global _briefing_used
-    if _briefing_used:
+    if user_id in _briefing_used:
         return ""
-    _briefing_used = True
+    _briefing_used.add(user_id)
     try:
         from kai.memory.briefing import get_pending
 

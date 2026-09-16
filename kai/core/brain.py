@@ -34,8 +34,8 @@ from kai.core import events
 from kai.core import flow as flow_rec
 from kai.core import trace as trace_log
 from kai.core.crew_runner import CrewRunner
-from kai.core.engine import TurnEngine
-from kai.core.history import HistoryManager
+from kai.core.engine import TurnEngine, tool_receipt
+from kai.core.history import HistoryManager, is_summary
 from kai.core.tool_gate import _TOOL_SIGNALS, _query_needs_thinking, _query_needs_tools
 from kai.llm.ollama import OllamaClient
 from kai.memory import pending
@@ -62,15 +62,23 @@ _FACT_EXTRACT_THRESHOLD = 1  # two-phase fact extraction fires when ≥ this man
 # back into the conversation — otherwise the model sees them in history and
 # parrots them, turning one empty turn into a "[no response]" death spiral.
 _FAILURE_MARKERS = {"[no response]", "[stopped]"}
+# Prefix of the tools-ran-but-no-answer fallback. It names the tools, so it can't be
+# an exact marker — but it must stay out of replayed history all the same.
+_NO_REPLY_PREFIX = "⚠ No reply:"
 
-# Detects a user's short "yes, go ahead" confirmation after a confirm-gated tool
-# has been offered (see _run_confirmed_tool). The confirm-tool set + the gate
-# itself now live in kai/core/engine.py alongside the tool loop.
+
+def _is_failure_marker(text: str) -> bool:
+    text = text.strip()
+    return text in _FAILURE_MARKERS or text.startswith(_NO_REPLY_PREFIX)
+
+
+# Explicit consent to run a parked confirm-gated tool (see _run_confirmed_tool).
+# Deliberately narrow: "ok", "sure", "right" and "please" used to count, and a
+# destructive call parked in an old chat ran on a new chat's "ok". Any other reply
+# clears the parked call. The web UI's approve button sends "go ahead".
 _CONFIRM_RE = re.compile(
-    r"^(go\s*ahead|ye[spa]h?|yup|ok(ay)?|sure|do\s*it|confirm(ed)?|"
-    r"run\s*it|scan|proceed|go\s*for\s*it|let'?s?\s*go|approved?|"
-    r"y|bet|send\s*it|mhm|uh\s*huh|absolutely|please|pls|def(initely)?|"
-    r"fo\s*sho|for\s*sure|aight|alright|right|dew\s*it|hit\s*it)\s*[.!]?\s*$",
+    r"^(?:yes(?:,?\s+(?:please|go\s*ahead|do\s*it))?|go\s*ahead(?:\s+please)?|do\s*it|"
+    r"confirm(?:ed)?|approved?|run\s*it)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -234,6 +242,8 @@ def foreground_busy() -> bool:
 COMPRESS_PROMPT = (
     "Compress this conversation into a single concise paragraph. "
     "Preserve: facts shared, decisions made, topics discussed, preferences stated. "
+    "Keep every specific the user gave (names, numbers, amounts, places, dates) word for word, "
+    "including those in an [earlier summary], because what you write replaces it. "
     "Write in past tense. Be specific. No filler."
 )
 
@@ -300,6 +310,33 @@ ANSWER_REVERIFY_NUDGE = (
     "directly. Only say you can't if no tool can do it."
 )
 
+# Injected when a destructive tool is parked at the confirm gate. The placeholder tool
+# message used to be read as evidence, and the answer reported the work as done.
+CONFIRM_PENDING_PROMPT = (
+    "{label} ({name}) is waiting for the user's approval and has NOT run. In one or two "
+    "sentences say what it will do and ask them to approve it. Do not describe it as "
+    "started or finished, and do not report any result from it."
+)
+
+# Shown instead of the model's text when a parked tool's reply still claims it is
+# running or done: the one message on that path that is certainly true.
+STALE_APPROVAL_TEXT = (
+    "That approval is no longer waiting, so nothing ran. If you still want it, ask again and "
+    "approve the new request."
+)
+
+CONFIRM_WAITING_TEXT = (
+    "This needs your approval before it runs, and nothing has run yet: {label} ({name}). "
+    "Say \u201cgo ahead\u201d or use the button to run it, or tell me to skip it."
+)
+
+# Injected when check_claims_backed finds work reported that no tool did this turn.
+COMMITMENT_NUDGE = (
+    "Your draft reports work that no tool did this turn: {unbacked}. Rewrite it to report "
+    "only what the tool results above show actually happened. If something was not done, "
+    "say so plainly. Do not state a path or a result you have not seen in a tool result."
+)
+
 
 # Friendly tool-status labels (_TOOL_LABELS) now live in kai/core/engine.py with
 # the tool loop that uses them — sourced from the registry (single source of truth).
@@ -328,6 +365,34 @@ def _build_compress_messages(raw_text: str) -> list[dict]:
 _FENCE_EXCERPT = 500
 
 
+def _executed_results(messages: list[dict]) -> list[tuple[str, str]]:
+    """(tool name, output) for each call that actually ran and succeeded this turn.
+
+    Recipe output is split per step ("[tool.name] output"), so a delete a recipe really
+    did backs a claim about it: T1-21 flagged exactly that as unbacked. Crew findings
+    carry no tool name and so contribute nothing here.
+    """
+    results: list[tuple[str, str]] = []
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        try:
+            data = json.loads(m["content"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not data.get("success") or data.get("pending"):
+            continue
+        name = str(data.get("_source", "")).split(" · ", 1)[0].strip()
+        output = str(data.get("output", ""))
+        if name.startswith("skill."):
+            for step in re.finditer(r"^\[([a-z0-9_.]+)\] (.*)$", output, re.MULTILINE):
+                if not step.group(2).startswith("ERROR"):
+                    results.append((step.group(1), step.group(2)))
+        if name:
+            results.append((name, output))
+    return results
+
+
 def _evidence_from(messages: list[dict], limit: int | None = _FENCE_EXCERPT) -> str:
     """Successful tool output from this turn. limit=None returns it in full.
 
@@ -343,7 +408,7 @@ def _evidence_from(messages: list[dict], limit: int | None = _FENCE_EXCERPT) -> 
             data = json.loads(m["content"])
         except (json.JSONDecodeError, TypeError):
             continue
-        if data.get("success"):
+        if data.get("success") and not data.get("pending"):
             out = str(data.get("output", ""))
             if limit is not None:
                 out = out[:limit]
@@ -389,12 +454,16 @@ class Brain:
         self._tool_model: str | None = None  # resolved lazily, availability-checked
         self._tool_model_resolved: bool = False
         self._bg_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="kai-bg")
+        self._drain_lock = threading.Lock()  # post-turn and the scheduler can both start a drain
 
         # Active chat brain — defaults to local Ollama + CHAT_MODEL. set_active_brain()
         # can point the chat role at a connected cloud brain; _chat/_chat_stream wrap
         # the call with a fail→local fallback. The tool-round model always stays local.
         self._chat_client = self.ollama
         self._chat_model = self.model
+        from kai.llm.models import BUILTIN_MODEL_NAME
+
+        self._active_brain_name = BUILTIN_MODEL_NAME  # the models.json entry the chat role runs on
 
         # The shared tool-calling mechanism (tool rounds, execution, cerebellum,
         # chat/tool-model primitives). Brain drives it as the generalist; the crew
@@ -524,8 +593,9 @@ class Brain:
             self._chat_client = resolve_client(entry, self.user_id)
         self._chat_model = model_id
         self.model = model_id
-        if "think" in entry:
-            self._think = bool(entry["think"])
+        self._active_brain_name = entry.get("name", "")
+        # Thinking belongs to the preset. The entry's flag used to override it, switching thinking
+        # off while Settings still said "Thinking" (T2-40).
         if persist:
             try:
                 self.memory.set_fact("active_brain", entry.get("name", ""), source="user_setting")
@@ -533,11 +603,18 @@ class Brain:
                 pass
         return {"name": entry.get("name", ""), "provider": provider, "model": model_id}
 
+    @property
+    def active_brain_name(self) -> str:
+        """Name of the models.json entry in use. Matched by name, not model id: two entries can
+        share an Ollama id (T2-41)."""
+        return self._active_brain_name
+
     def _restore_active_brain(self) -> None:
         """Re-apply the persisted active brain on construction (best-effort).
 
-        Only cloud entries need restoring — local is already the default. A
-        missing key or any failure leaves the chat role on local Ollama.
+        Local entries too: restoring only cloud ones silently dropped a chosen local model on
+        restart while the setting still named it (P1-8). A missing entry or key, or any failure,
+        leaves the chat role on the built-in model.
         """
         try:
             name = self.memory.get_fact("active_brain")
@@ -546,7 +623,7 @@ class Brain:
             from kai.llm import models as _models
 
             entry = _models.get_model(name)
-            if entry and entry.get("provider", "ollama") != "ollama":
+            if entry:
                 self.set_active_brain(entry, persist=False)
         except Exception:
             if cfg.DEBUG:
@@ -593,6 +670,25 @@ class Brain:
         """Signal the in-flight turn to stop — breaks tool-round and streaming loops.
         Whatever has been generated so far is kept and finalized."""
         self._cancel.set()
+
+    def cancel_pending_confirm(self, call_id: str | None = None) -> str | None:
+        """Drop a parked confirm-gated tool call without running it. Returns its name.
+
+        With a call_id only that call is dropped: Skip on an older card must not cancel a
+        newer one.
+        """
+        pending = self._pending_confirm
+        if not pending or (call_id is not None and pending.get("call_id") != call_id):
+            return None
+        self._pending_confirm = None
+        return pending["name"]
+
+    def pending_confirm_summary(self) -> dict | None:
+        """The approval still waiting, so a reloaded page can show its card again."""
+        pending = self._pending_confirm
+        if not pending:
+            return None
+        return {key: pending.get(key) for key in ("call_id", "name", "label", "args")}
 
     def generate_greeting(
         self, fresh: bool = False
@@ -687,7 +783,26 @@ class Brain:
             )
         return schemas
 
-    def run_skill(self, name: str, args: dict | None = None) -> dict:
+    def _skill_step_guard(self, allow_destructive: bool):
+        """Per-step check for skills that call tools from code (they can't be scanned up
+        front): a turned-off tool never runs, and a destructive one runs only when the
+        whole skill was approved."""
+        from kai.tools.registry import confirm_tool_names
+
+        disabled, needs_ok = set(self._disabled_tools), confirm_tool_names()
+
+        def guard(tool_name: str) -> None:
+            real = self.tool_registry.resolve_name(tool_name) if self.tool_registry else tool_name
+            if real in disabled:
+                raise PermissionError(f"{real} is turned off in Settings")
+            if real in needs_ok and not allow_destructive:
+                raise PermissionError(f"{real} needs your approval first")
+
+        return guard
+
+    def run_skill(
+        self, name: str, args: dict | None = None, allow_destructive: bool = False
+    ) -> dict:
         """
         Execute a skill by name. Returns a tool-result-shaped dict
         so it can slot into tool-call rounds seamlessly.
@@ -695,7 +810,9 @@ class Brain:
         if not self.skill_registry:
             return {"success": False, "error": "No skill registry configured"}
         try:
-            result = self.skill_registry.run(name, args or {})
+            result = self.skill_registry.run(
+                name, args or {}, guard=self._skill_step_guard(allow_destructive)
+            )
             return {
                 "success": result.success,
                 "output": result.output,
@@ -710,6 +827,7 @@ class Brain:
         """Clear in-memory conversation history (call on /clear)."""
         self._history.clear()
         self.session_id = None
+        self._pending_confirm = None  # a parked tool must never carry into a new chat
 
     def snapshot_history(self) -> list[dict]:
         """Thread-safe snapshot of current history for archiving."""
@@ -744,6 +862,7 @@ class Brain:
         """Replace in-memory history with a saved session. Returns message count."""
         count = self._history.replace(messages)
         self.session_id = session_id
+        self._pending_confirm = None
         return count
 
     def run(self, user_input: str, trace_id: str | None = None) -> str:
@@ -764,12 +883,13 @@ class Brain:
         user_input: str,
         trace_id: str | None = None,
         on_status: "Callable[[str], None] | None" = None,
+        confirm_call_id: str | None = None,
     ) -> Generator[tuple[str, bool, dict], None, None]:
         """Public streaming entry. Marks a turn in flight (so background work
         yields to it) then delegates to the implementation."""
         _begin_turn()
         try:
-            yield from self._run_stream_impl(user_input, trace_id, on_status)
+            yield from self._run_stream_impl(user_input, trace_id, on_status, confirm_call_id)
         finally:
             _end_turn()
 
@@ -778,6 +898,7 @@ class Brain:
         user_input: str,
         trace_id: str | None = None,
         on_status: "Callable[[str], None] | None" = None,
+        confirm_call_id: str | None = None,
     ) -> Generator[tuple[str, bool, dict], None, None]:
         """
         Streaming turn. Yields (token, done, {}) until done=True.
@@ -789,6 +910,7 @@ class Brain:
         turn_start = time.monotonic()
         tools_used: list[str] = []
         self._cancel.clear()  # fresh turn — clear any prior stop request
+        self._turn_receipts: list[dict] = []  # tools that ran this turn, for receipts
 
         # Bind this turn's user/session to the thread up front so flow records
         # (route, rounds, etc.) are user-scoped — not just calls made after the
@@ -797,6 +919,19 @@ class Brain:
 
         set_current_user_id(self.user_id)
         set_current_session_id(self.session_id)
+
+        # ── Approval from a card ──────────────────────────────────────────────
+        # A card's Go ahead names the call it was shown for. Without that, Go ahead on an
+        # older card would run whatever happens to be parked now.
+        if confirm_call_id is not None:
+            pending = self._pending_confirm
+            if not pending or pending.get("call_id") != confirm_call_id:
+                flow_rec.record(trace_id, "stale_approval", call_id=confirm_call_id)
+                yield from self._reply_without_running(user_input, trace_id, turn_start)
+                return
+            log.info(f"[confirm] approved on its card — executing {pending['name']}")
+            yield from self._run_confirmed_tool(user_input, trace_id, turn_start, on_status)
+            return
 
         # ── Pending tool confirmation ────────────────────────────────────────
         # If a confirm-gated tool is waiting and the user just said "go ahead",
@@ -843,9 +978,7 @@ class Brain:
         history = [
             m
             for m in history
-            if not (
-                m.get("role") == "assistant" and m.get("content", "").strip() in _FAILURE_MARKERS
-            )
+            if not (m.get("role") == "assistant" and _is_failure_marker(m.get("content", "")))
         ]
         messages: list[dict] = [
             {"role": "system", "content": context},
@@ -874,8 +1007,8 @@ class Brain:
         )
 
         # ── Tool-call rounds (non-streaming) ──────────────────────────────────
-        # If the model answers directly in a tool round, the rounds return that
-        # answer here and the turn finalizes immediately (single exit path).
+        # Rounds pick and run tools. If the model answers in prose instead, that prose
+        # comes back as `direct` and is discarded below. It is never the reply.
         direct = None
         took_fast_path = False
         # ── Pre-LLM fast-path: an exact, unambiguous command runs its tool
@@ -886,55 +1019,64 @@ class Brain:
             fast_tool, fast_args = fast
             took_fast_path = True
             flow_rec.record(trace_id, "fast_path_hit", name=fast_tool, args=fast_args)
-            yield from self._engine._run_fast_path(
-                fast_tool,
-                messages,
-                tools_used,
-                args=fast_args,
-                query_emb=query_emb,
-                user_input=user_input,
-                trace_id=trace_id,
-                on_status=on_status,
+            yield from self._watch(
+                self._engine._run_fast_path(
+                    fast_tool,
+                    messages,
+                    tools_used,
+                    args=fast_args,
+                    query_emb=query_emb,
+                    user_input=user_input,
+                    trace_id=trace_id,
+                    on_status=on_status,
+                )
             )
         elif cfg.CREW_ENABLED and self.tool_registry:
             # Crew path (Part C/3b): triage → specialist(s); findings injected as
             # evidence, then Kai's voice synthesizes (unchanged). The generalist
             # _run_tool_rounds loop is bypassed entirely on this branch.
             # run_turn returns the triage think decision for the streamed answer.
-            use_think = yield from self._crew.run_turn(
-                user_input,
-                messages,
-                tools_used,
-                query_emb=query_emb,
-                handoff_mode=handoff_mode,
-                tools_open=bool(tools_schema),
-                trace_id=trace_id,
-                on_status=on_status,
+            use_think = yield from self._watch(
+                self._crew.run_turn(
+                    user_input,
+                    messages,
+                    tools_used,
+                    query_emb=query_emb,
+                    handoff_mode=handoff_mode,
+                    tools_open=bool(tools_schema),
+                    trace_id=trace_id,
+                    on_status=on_status,
+                )
             )
         elif tools_schema:
-            direct = yield from self._engine._run_tool_rounds(
-                messages,
-                tools_schema,
-                tools_used,
-                query_emb=query_emb,
-                user_input=user_input,
-                trace_id=trace_id,
-                on_status=on_status,
+            direct = yield from self._watch(
+                self._engine._run_tool_rounds(
+                    messages,
+                    tools_schema,
+                    tools_used,
+                    query_emb=query_emb,
+                    user_input=user_input,
+                    trace_id=trace_id,
+                    on_status=on_status,
+                )
             )
         if direct is not None:
-            raw_text, clean = direct
-            msg_id, latency_ms = self._finalize_turn(
-                user_input=user_input,
-                clean_text=clean,
-                raw_text=raw_text,
-                trace_id=trace_id,
-                context=context,
-                tools_used=tools_used,
-                turn_start=turn_start,
+            # A tool round's own prose is never the reply. It is written at tool temperature
+            # with no thinking, arrives in one piece, and skipped grounding and every answer
+            # check: invented startup apps and "up to date" with 15 updates pending both
+            # shipped this way (P1-1). The path below grounds and checks the answer when a
+            # tool ran, and streams it with the preset's thinking when none did.
+            flow_rec.record(trace_id, "discarded_prose", text=direct[1][:400])
+
+        if self._pending_confirm:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": CONFIRM_PENDING_PROMPT.format(
+                        label=self._pending_confirm["label"], name=self._pending_confirm["name"]
+                    ),
+                }
             )
-            yield clean, False, {}
-            yield "", True, self._done_meta(msg_id, latency_ms)
-            return
 
         # ── Ground the response in tool evidence ─────────────────────────────
         self._ground_evidence(
@@ -950,13 +1092,11 @@ class Brain:
         # swallowed into <think> tags, producing "[no response]".
         final_think = use_think and not tools_used
 
-        # Post-answer grounding check (Part 3). A tool turn can still hedge/deny
-        # despite the evidence ("I don't have that, want me to check?"). Buffer the
-        # answer (generate without streaming), verify it, silently retry once on a
-        # flag, THEN reveal — so the user never sees the hedge. Chat turns have no
-        # evidence to contradict and stream live as before. The check is
-        # deterministic (cerebellum.verify_answer) — no second model per turn.
-        verify = bool(tools_used) and not self._cancel.is_set()
+        # Buffer, check, then reveal whenever the answer could misstate what happened: a
+        # tool ran (unbacked claims, hedging despite evidence, invented numbers) or a tool
+        # is parked for approval (claims that it is running or done). Chat streams live.
+        parked = self._pending_confirm is not None
+        verify = (bool(tools_used) or parked) and not self._cancel.is_set()
         streamed_live = not verify
 
         full_text, had_think = yield from self._stream_answer(
@@ -970,29 +1110,19 @@ class Brain:
         if verify and clean_text:
             from kai.memory import cerebellum as _cb
 
-            # Two deterministic checks, opposite failures. verify_answer catches
-            # hedging DESPITE evidence; check_grounded catches asserting numbers
-            # the evidence never contained. Only the first existed, so a turn
-            # could invent values wholesale and pass — and the one check that ran
-            # pushed toward asserting harder.
-            v = _cb.verify_answer(clean_text, user_input, tools_used)
-            nudge = ANSWER_REVERIFY_NUDGE
-            reason_kind = "hedge"  # flow.record already takes "kind" positionally
-            if v.verdict < _cb.Verdict.FLAG:
-                v = _cb.check_grounded(clean_text, _evidence_from(messages, limit=None))
-                nudge = FABRICATION_NUDGE.format(stray=v.reason)
-                reason_kind = "fabrication"
-            _cb.log_result("answer", "verify", v, self.user_id, output_snippet=clean_text[:500])
-            if v.verdict >= _cb.Verdict.FLAG:
-                flow_rec.record(trace_id, "answer_reverify", check=reason_kind, reason=v.reason)
-                messages.append({"role": "system", "content": nudge})
-                full_text, had_think = yield from self._stream_answer(
-                    messages,
-                    think=False,
-                    forward_thinking=False,
-                    forward_tokens=False,
+            if parked and _cb.claims_work(clean_text):
+                # Told to ask for approval, the model kept saying it was executing (T1-15).
+                # Say the true thing deterministically instead.
+                flow_rec.record(
+                    trace_id, "answer_replaced", check="parked_claim", text=clean_text[:400]
                 )
-                _, clean_text = _strip_thinking(full_text)
+                clean_text = full_text = CONFIRM_WAITING_TEXT.format(
+                    label=self._pending_confirm["label"], name=self._pending_confirm["name"]
+                )
+            elif tools_used:
+                full_text, clean_text = yield from self._checked_answer(
+                    messages, full_text, clean_text, user_input, tools_used, trace_id
+                )
 
         flow_rec.record(
             trace_id, "final_answer", think=final_think, had_think=had_think, text=full_text
@@ -1031,6 +1161,10 @@ class Brain:
                 events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
             yield clean_text, False, {}
 
+        turn_meta = {
+            "receipts": self._turn_receipts,
+            "grounding": self._grounding_for(messages, clean_text, parked),
+        }
         msg_id, latency_ms = self._finalize_turn(
             user_input=user_input,
             clean_text=clean_text,
@@ -1039,8 +1173,59 @@ class Brain:
             context=context,
             tools_used=tools_used,
             turn_start=turn_start,
+            turn_meta=turn_meta,
         )
-        yield "", True, self._done_meta(msg_id, latency_ms)
+        yield "", True, self._done_meta(msg_id, latency_ms, turn_meta)
+
+    def _reply_without_running(self, user_input: str, trace_id: str, turn_start: float):
+        """Answer an approval whose call is no longer waiting. Nothing runs."""
+        yield STALE_APPROVAL_TEXT, False, {}
+        turn_meta = {"receipts": []}
+        msg_id, latency_ms = self._finalize_turn(
+            user_input=user_input,
+            clean_text=STALE_APPROVAL_TEXT,
+            raw_text=STALE_APPROVAL_TEXT,
+            trace_id=trace_id,
+            context="",
+            tools_used=[],
+            turn_start=turn_start,
+            turn_meta=turn_meta,
+        )
+        yield "", True, self._done_meta(msg_id, latency_ms, turn_meta)
+
+    def _watch(self, gen):
+        """Pass an engine generator's yields through, keeping each tool receipt for this
+        turn's done event and saved message. Returns what the generator returns."""
+        try:
+            item = next(gen)
+            while True:
+                if item[2].get("tool_result"):
+                    self._turn_receipts.append(item[2]["tool_result"])
+                sent = yield item
+                item = gen.send(sent)
+        except StopIteration as stop:
+            return stop.value
+
+    def _grounding_for(self, messages: list[dict], answer: str, parked: bool) -> dict:
+        """How far the final answer is backed by what ran this turn: the UI's provenance line."""
+        from kai.memory import cerebellum as _cb
+
+        receipts = self._turn_receipts
+        if parked:
+            return {"state": "waiting"}
+        if not receipts:
+            return {"state": "unchecked"}
+        if not any(r["ok"] for r in receipts):
+            return {"state": "tool_failed", "failed": [r["name"] for r in receipts]}
+        executed = _executed_results(messages)
+        if executed and _cb.check_claims_backed(answer, executed).verdict >= _cb.Verdict.FLAG:
+            return {"state": "unbacked"}
+        checked, untraced = _cb.number_trace(answer, _evidence_from(messages, limit=None))
+        if not checked:
+            return {"state": "ran"}
+        if untraced:
+            return {"state": "partial", "checked": checked, "untraced": untraced[:6]}
+        return {"state": "grounded", "checked": checked, "traced": checked}
 
     # ── Turn phases ──────────────────────────────────────────────────────────
     # run_stream is the orchestrator; each method below is one phase with one
@@ -1302,6 +1487,45 @@ class Brain:
             flow_rec.record(trace_id, "grounding", mode="light", evidence_chars=len(evidence_text))
             messages.append({"role": "system", "content": EVIDENCE_PROMPT + evidence_text})
 
+    def _checked_answer(
+        self,
+        messages: list[dict],
+        full_text: str,
+        clean_text: str,
+        user_input: str,
+        tools_used: list[str],
+        trace_id: str,
+    ) -> Generator[tuple[str, bool, dict], None, tuple[str, str]]:
+        """Deterministic checks on a buffered tool-turn answer; one silent retry on a flag.
+
+        Ordered by damage: work reported that no tool did, then hedging despite the
+        evidence, then numbers no tool returned. Returns (full_text, clean_text).
+        """
+        from kai.memory import cerebellum as _cb
+
+        v = _cb.CerebellarResult(_cb.Verdict.CLEAR, "no per-tool results (crew)", 0.0)
+        nudge, kind = "", ""
+        executed = _executed_results(messages)
+        if executed:
+            v = _cb.check_claims_backed(clean_text, executed)
+            nudge, kind = COMMITMENT_NUDGE.format(unbacked=v.reason), "unbacked_claim"
+        if v.verdict < _cb.Verdict.FLAG:
+            v = _cb.verify_answer(clean_text, user_input, tools_used)
+            nudge, kind = ANSWER_REVERIFY_NUDGE, "hedge"
+        if v.verdict < _cb.Verdict.FLAG:
+            v = _cb.check_grounded(clean_text, _evidence_from(messages, limit=None))
+            nudge, kind = FABRICATION_NUDGE.format(stray=v.reason), "fabrication"
+        _cb.log_result("answer", "verify", v, self.user_id, output_snippet=clean_text[:500])
+        if v.verdict < _cb.Verdict.FLAG:
+            return full_text, clean_text
+        flow_rec.record(trace_id, "answer_reverify", check=kind, reason=v.reason)
+        messages.append({"role": "system", "content": nudge})
+        full_text, _ = yield from self._stream_answer(
+            messages, think=False, forward_thinking=False, forward_tokens=False
+        )
+        _, clean_text = _strip_thinking(full_text)
+        return full_text, clean_text
+
     def _stream_answer(
         self,
         messages: list[dict],
@@ -1361,7 +1585,11 @@ class Brain:
         if self._cancel.is_set():
             return "[stopped]"
         if tools_used:
-            return f"Done — used {', '.join(dict.fromkeys(tools_used))}."
+            ran = ", ".join(dict.fromkeys(tools_used))
+            return (
+                f"{_NO_REPLY_PREFIX} I ran {ran} but couldn't turn the result into an answer. "
+                "Ask again, or open the activity log to see what came back."
+            )
         return "[no response]"
 
     def _finalize_turn(
@@ -1374,6 +1602,7 @@ class Brain:
         context: str,
         tools_used: list[str],
         turn_start: float,
+        turn_meta: dict | None = None,
     ) -> tuple[int | None, int]:
         """Commit a finished turn — the single end-of-turn path for every exit.
 
@@ -1389,10 +1618,10 @@ class Brain:
         turns = [{"role": "user", "content": user_input}]
         # Don't keep a pure failure placeholder in replayed history — it would
         # be mimicked next turn. The user turn stays so context isn't lost.
-        if clean_text.strip() not in _FAILURE_MARKERS:
+        if not _is_failure_marker(clean_text):
             turns.append({"role": "assistant", "content": clean_text})
         self._history.extend(turns)
-        msg_id = self._persist_turn(user_input, clean_text, latency_ms)
+        msg_id = self._persist_turn(user_input, clean_text, latency_ms, turn_meta)
         # The first reply of a session delivers the welcome-back note /
         # briefing — mark them consumed so they aren't re-injected next time.
         if self._history.turn_count <= 1:
@@ -1409,11 +1638,12 @@ class Brain:
         return msg_id, latency_ms
 
     @staticmethod
-    def _done_meta(msg_id: int | None, latency_ms: int) -> dict:
+    def _done_meta(msg_id: int | None, latency_ms: int, turn_meta: dict | None = None) -> dict:
         """Build the meta payload for the terminal done=True yield."""
-        if not msg_id:
-            return {}
-        return {"message_id": msg_id, "latency_ms": latency_ms}
+        meta = dict(turn_meta or {})
+        if msg_id:
+            meta.update({"message_id": msg_id, "latency_ms": latency_ms})
+        return meta
 
     def _emit_status(self, label: str, on_status: "Callable[[str], None] | None" = None) -> None:
         """Send a status label to both UIs: CLI callback + web event bus."""
@@ -1431,7 +1661,7 @@ class Brain:
                 mark_welcome_back_delivered,
             )
 
-            mark_welcome_back_delivered()
+            mark_welcome_back_delivered(user_id=self.user_id)
             mark_briefing_delivered(user_id=self.user_id)
         except Exception:
             pass
@@ -1451,7 +1681,14 @@ class Brain:
         tools_used = [tool_name]
 
         self._emit_status(pending["label"], on_status)
-        result = self._engine._execute_tool_traced(tool_name, tool_args, trace_id)
+        started = time.monotonic()
+        result = self._engine._execute_tool_traced(tool_name, tool_args, trace_id, confirmed=True)
+        receipt = tool_receipt(
+            tool_name, tool_args, result, int((time.monotonic() - started) * 1000)
+        )
+        receipt["call_id"] = pending.get("call_id")  # the card that approved it shows done/failed
+        self._turn_receipts.append(receipt)
+        yield "", False, {"tool_result": receipt}
 
         # Build messages with the tool result injected
         context = (
@@ -1477,21 +1714,31 @@ class Brain:
         ]
 
         self._emit_status("Responding...", on_status)
+        # Buffered and checked like any tool turn. This path used to stream unchecked,
+        # and "The update is applied" shipped for a persona edit that wrote nothing (T1-43).
         full_text, _ = yield from self._stream_answer(
             messages,
             think=False,
             forward_thinking=False,
+            forward_tokens=False,
         )
-        flow_rec.record(trace_id, "final_answer", confirmed_tool=tool_name, text=full_text)
         _, clean_text = _strip_thinking(full_text)
+        if clean_text and not self._cancel.is_set():
+            full_text, clean_text = yield from self._checked_answer(
+                messages, full_text, clean_text, user_input, tools_used, trace_id
+            )
+        flow_rec.record(trace_id, "final_answer", confirmed_tool=tool_name, text=full_text)
         if not clean_text:
             clean_text = self._fallback_text(tools_used)
             flow_rec.record(trace_id, "fallback", text=clean_text)
-            # Never leave the UI bubble empty — stream the recovered text.
-            if self.session_id:
-                events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
-            yield clean_text, False, {}
+        if self.session_id:
+            events.emit(events.EVENT_STREAM_TOKEN, self.session_id, token=clean_text)
+        yield clean_text, False, {}
 
+        turn_meta = {
+            "receipts": self._turn_receipts,
+            "grounding": self._grounding_for(messages, clean_text, parked=False),
+        }
         msg_id, latency_ms = self._finalize_turn(
             user_input=user_input,
             clean_text=clean_text,
@@ -1500,11 +1747,16 @@ class Brain:
             context=context,
             tools_used=tools_used,
             turn_start=turn_start,
+            turn_meta=turn_meta,
         )
-        yield "", True, self._done_meta(msg_id, latency_ms)
+        yield "", True, self._done_meta(msg_id, latency_ms, turn_meta)
 
     def _persist_turn(
-        self, user_input: str, response: str, latency_ms: int | None = None
+        self,
+        user_input: str,
+        response: str,
+        latency_ms: int | None = None,
+        meta: dict | None = None,
     ) -> int | None:
         """Persist user+assistant messages to the sessions DB. Returns assistant message id."""
         try:
@@ -1528,6 +1780,7 @@ class Brain:
                 self._history.turn_order + 1,
                 user_id=self.user_id,
                 latency_ms=latency_ms,
+                meta=meta,
             )
             self._history.advance_turn_order(2)
             return msg_id
@@ -1631,6 +1884,15 @@ class Brain:
         """
         if foreground_busy():
             return
+        # One drain at a time per account: two would extract the same queued row twice.
+        if not self._drain_lock.acquire(blocking=False):
+            return
+        try:
+            self._drain_queue()
+        finally:
+            self._drain_lock.release()
+
+    def _drain_queue(self) -> None:
         while not foreground_busy():
             batch = pending.peek(self.user_id, limit=5)
             if not batch:
@@ -1694,7 +1956,7 @@ class Brain:
         try:
             from kai.core.sleep import checkpoint_session
 
-            checkpoint_session(self._history.snapshot())
+            checkpoint_session(self._history.snapshot(), user_id=self.user_id)
         except Exception:
             pass
 
@@ -1770,7 +2032,13 @@ class Brain:
         formatting (and the 800-char-per-message cap) can't drift apart.
         Returns "" on any failure — callers treat that as "skip, keep history".
         """
-        raw = "\n\n".join(f"[{m['role']}]: {m.get('content', '')[:800]}" for m in msgs)
+        # An earlier summary is already compact and is replaced by this one: pass it whole.
+        raw = "\n\n".join(
+            f"[earlier summary]: {m['content']}"
+            if is_summary(m)
+            else f"[{m['role']}]: {m.get('content', '')[:800]}"
+            for m in msgs
+        )
         try:
             resp = self._chat_local(
                 _build_compress_messages(raw), think=False, temperature=TEMPERATURE_REASON

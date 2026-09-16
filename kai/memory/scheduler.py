@@ -28,11 +28,15 @@ class Scheduler:
         self._jobs: list[dict] = []
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self._last_run: dict[str, str] = {}  # name → "YYYY-MM-DD"
+        self._last_run: dict[str, object] = {}  # name → "YYYY-MM-DD" (daily) or datetime (every)
 
     def add_daily(self, time_str: str, fn: Callable, name: str) -> None:
         """Register a function to run once per day at HH:MM local time."""
         self._jobs.append({"time": time_str, "fn": fn, "name": name})
+
+    def add_every(self, seconds: int, fn: Callable, name: str) -> None:
+        """Register a function to run every `seconds` (the loop checks once a minute)."""
+        self._jobs.append({"every": seconds, "fn": fn, "name": name})
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -44,20 +48,27 @@ class Scheduler:
     def stop(self) -> None:
         self._stop.set()
 
+    def _run_due(self, now: datetime) -> None:
+        today = now.strftime("%Y-%m-%d")
+        for job in self._jobs:
+            last = self._last_run.get(job["name"])
+            if "every" in job:
+                if isinstance(last, datetime) and (now - last).total_seconds() < job["every"]:
+                    continue
+                self._last_run[job["name"]] = now
+            else:
+                h, m = map(int, job["time"].split(":"))
+                if last == today or not (now.hour > h or (now.hour == h and now.minute >= m)):
+                    continue
+                self._last_run[job["name"]] = today
+            try:
+                job["fn"]()
+            except Exception as exc:
+                log.warn(f"[scheduler] {job['name']} failed: {exc}")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
-            now = datetime.now()
-            today = now.strftime("%Y-%m-%d")
-            for job in self._jobs:
-                if self._last_run.get(job["name"]) == today:
-                    continue
-                h, m = map(int, job["time"].split(":"))
-                if now.hour > h or (now.hour == h and now.minute >= m):
-                    try:
-                        job["fn"]()
-                    except Exception as exc:
-                        log.warn(f"[scheduler] {job['name']} failed: {exc}")
-                    self._last_run[job["name"]] = today
+            self._run_due(datetime.now())
             self._stop.wait(60)  # check once per minute
 
 

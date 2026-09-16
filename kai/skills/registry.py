@@ -116,6 +116,16 @@ def _parse_steps(raw_steps: list[str]) -> list[_RecipeStep]:
         unknown = s.deps - ids
         if unknown:
             raise ValueError(f"{s.label} references unknown step {sorted(unknown)[0]!r}")
+    # A dependency cycle can never run: every step in it waits on another (T1-39).
+    done: set[str] = set()
+    while True:
+        ready = {s.step_id for s in steps if s.step_id not in done and s.deps <= done}
+        if not ready:
+            break
+        done |= ready
+    stuck = [s for s in steps if s.step_id not in done]
+    if stuck:
+        raise ValueError(f"{stuck[0].label} is part of a dependency cycle")
     return steps
 
 
@@ -322,6 +332,28 @@ class SkillRegistry:
         """Look up a skill by exact name."""
         return self._skills.get(name)
 
+    def resolve(self, name: str) -> str:
+        """The registered name for `name`, tolerating _ for - and back: the model wrote
+        skill.qa_sysinfo for skill.qa-sysinfo every time (T2-33). Unknown names come back
+        unchanged."""
+        if name in self._skills:
+            return name
+        for candidate in (name.replace("_", "-"), name.replace("-", "_")):
+            if candidate in self._skills:
+                return candidate
+        return name
+
+    def step_tools(self, name: str) -> list[str]:
+        """Tool names a recipe's steps call. [] for Python skills (they call tools from
+        code, so the per-step guard covers them) and for unknown names."""
+        steps = getattr(self._skills.get(self.resolve(name)), "_steps", None)
+        if not steps:
+            return []
+        try:
+            return [s.tool_name for s in _parse_steps(steps)]
+        except ValueError:
+            return []
+
     def match(self, text: str) -> Skill | None:
         """
         Find the best-matching skill for a user query by checking trigger keywords.
@@ -339,12 +371,15 @@ class SkillRegistry:
 
         return best_skill
 
-    def run(self, name: str, args: dict | None = None) -> SkillResult:
-        """Execute a skill by name. Raises KeyError if not found."""
-        skill = self._skills.get(name)
+    def run(self, name: str, args: dict | None = None, guard=None) -> SkillResult:
+        """Execute a skill by name. Raises KeyError if not found.
+
+        `guard(tool_name)` is called before every step and raises to block it.
+        """
+        skill = self._skills.get(self.resolve(name))
         if not skill:
             raise KeyError(f"Unknown skill: {name!r}")
-        skill.bind(self._tool_registry)
+        skill.bind(self._tool_registry, guard)
         return skill.execute(args or {})
 
     def list_skills(self) -> list[dict[str, Any]]:
@@ -418,6 +453,11 @@ class SkillRegistry:
                         and getattr(obj, "name", "")
                     ):
                         instance = obj()
+                        if package is None and instance.name in self._skills:
+                            log.warn(
+                                f"[skills] {py_file.name} skipped — '{instance.name}' is built in"
+                            )
+                            continue
                         self.register(instance)
                         count += 1
             except Exception:
@@ -438,6 +478,10 @@ class SkillRegistry:
                     log.warn(f"[skills] skipping {md_file} — resolves outside {real_dir}")
                 continue
             skill = _parse_md_skill(md_file)
+            if skill and skill.name in self._skills:
+                # A recipe must not silently replace a built-in skill for every account (T1-38).
+                log.warn(f"[skills] {md_file.name} skipped — '{skill.name}' is built in")
+                continue
             if skill:
                 try:
                     self.register(skill)
@@ -469,3 +513,10 @@ class SkillRegistry:
         sys.modules[module_name] = mod
         spec.loader.exec_module(mod)
         return mod
+
+
+def builtin_skill_names() -> set[str]:
+    """Names of the Python skills shipped in kai/skills. A recipe may not take one."""
+    reg = SkillRegistry()
+    reg._scan_python_dir(Path(__file__).parent, package="kai.skills")
+    return set(reg._skills)

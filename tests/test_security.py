@@ -684,3 +684,430 @@ def teardown_module(module):
         os.unlink(_tmp_main.name)
     except Exception:
         pass
+
+
+# ── Hardening pass 2026-09-10: small web fixes ────────────────────────────────
+
+
+class TestHardeningWebFixes:
+    def test_microphone_allowed_for_the_page(self):
+        """T2-26: Permissions-Policy microphone=() made the mic fail in every browser."""
+        from kai.apps.web import _SecurityHeaders
+
+        policy = dict(_SecurityHeaders._BASE)[b"permissions-policy"]
+        assert b"microphone=(self)" in policy
+        assert b"camera=()" in policy
+
+    @pytest.mark.parametrize("pin", ["ab12", "123456789", "12 34"])
+    def test_pin_must_be_4_to_8_digits(self, pin):
+        """T2-37: the form says 4-8 digits but 'ab12' was accepted."""
+        _clear_users()
+        with patch("kai.system.device.key_hash", return_value=_MACHINE_HASH):
+            r = client.post("/users/register", json={"name": "pinuser", "pin": pin})
+        assert r.status_code == 400
+
+    def test_info_names_the_signed_in_account(self):
+        """T2-01: the app showed "User" for every account."""
+        from types import SimpleNamespace
+
+        uid = _create_user(_unique_name("infouser"))
+        token = _make_session(uid, "Info Person")
+        stub = SimpleNamespace(
+            model="m",
+            memory=SimpleNamespace(list_facts=lambda **kw: [], recent_episodes=lambda limit=1: []),
+        )
+        with patch("kai.api.routes.dashboard.brain_for", return_value=stub):
+            r = _fresh_client(token).get("/info")
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["name"] == "Info Person"
+        assert r.json()["max_input_chars"] == cfg.MAX_INPUT_CHARS
+
+    def test_confirm_cancel_route_drops_the_parked_call(self):
+        """T1-11 / T2-24: Skip now cancels on the server."""
+        from types import SimpleNamespace
+
+        uid = _create_user(_unique_name("skipper"))
+        token = _make_session(uid, "skipper")
+        state = {"pending": {"name": "pc.deep_scan"}}
+
+        def cancel():
+            pending, state["pending"] = state["pending"], None
+            return pending["name"] if pending else None
+
+        stub = SimpleNamespace(cancel_pending_confirm=cancel)
+        with patch("kai.apps.web._brain_for", return_value=stub):
+            r = _fresh_client(token).post(
+                "/chat/confirm/cancel", headers={"Origin": "http://127.0.0.1:7860"}
+            )
+        assert r.status_code == 200, r.text
+        assert r.json() == {"ok": True, "cancelled": "pc.deep_scan"}
+        assert state["pending"] is None
+
+
+class TestHardeningIsolation:
+    @staticmethod
+    def _session_row(sid, uid):
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO sessions (id, user_id, title, started_at, last_active, message_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (sid, uid, "t", datetime.now().isoformat(), datetime.now().isoformat(), 0),
+        )
+        conn.commit()
+
+    def test_events_of_another_accounts_session_are_not_readable(self):
+        """T1-10: any signed-in account could read another's tool args and outputs."""
+        a = _create_user(_unique_name("evta"))
+        b = _create_user(_unique_name("evtb"))
+        sid = secrets.token_hex(16)
+        self._session_row(sid, a)
+        r = _fresh_client(_make_session(b, "evtb")).get(f"/api/events/{sid}")
+        assert r.status_code == 404
+
+    def test_event_session_list_only_shows_your_own(self):
+        a = _create_user(_unique_name("lista"))
+        b = _create_user(_unique_name("listb"))
+        sid_a, sid_b = secrets.token_hex(16), secrets.token_hex(16)
+        self._session_row(sid_a, a)
+        self._session_row(sid_b, b)
+        with patch("kai.core.events.get_session_ids", return_value=[sid_a, sid_b]):
+            r = _fresh_client(_make_session(b, "listb")).get("/api/events")
+        assert r.status_code == 200 and r.json() == [sid_b]
+
+    def test_non_owner_cannot_change_machine_wide_settings(self):
+        """T2-54: a guest account created recipes and deleted the owner's models."""
+        from kai.store import users as u
+
+        if u.get_owner_id() is None:
+            _create_user(_unique_name("owner"))
+        guest = _create_user(_unique_name("guest"))
+        c = _fresh_client(_make_session(guest, "guest"))
+        hdr = {"Origin": "http://127.0.0.1:7860"}
+        recipe = {"name": "guest-made", "description": "", "triggers": [], "steps": ["time.now"]}
+        assert c.post("/settings/recipes", json=recipe, headers=hdr).status_code == 403
+        assert c.delete("/settings/models/anything", headers=hdr).status_code == 403
+
+    def test_successful_logins_do_not_lock_the_machine(self):
+        """T1-12 / T2-55: five correct sign-ins in 15 minutes locked every account out."""
+        _clear_login_attempts()
+        name = _unique_name("frequent")
+        _create_user(name, pin="2468")
+        with (
+            patch("kai.system.device.key_hash", return_value=_MACHINE_HASH),
+            patch("kai.apps.web._get_or_create_brain"),
+        ):
+            for _ in range(7):
+                r = client.post("/users/login", json={"name": name, "pin": "2468"})
+                assert r.status_code == 200, r.text
+
+
+class TestHardeningSettingsTruth:
+    HDR = {"Origin": "http://127.0.0.1:7860"}
+
+    @staticmethod
+    def _stub_brain(uid):
+        from types import SimpleNamespace
+
+        from kai.memory.manager import MemoryManager
+
+        memory = MemoryManager(embed_fn=lambda t: [0.0] * 384, user_id=uid)
+        return SimpleNamespace(
+            memory=memory, active_brain_name="Kai", apply_preset=lambda k, t=None: {}
+        )
+
+    def test_settings_are_not_memories_in_the_memory_panel(self):
+        """T2-38: settings were listed, searchable, editable and deletable as memories."""
+        from kai.memory import semantic
+
+        uid = _create_user(_unique_name("facts"))
+        semantic.set_fact("tool_level", "balanced", source="user_setting", user_id=uid)
+        semantic.set_fact("favorite_color", "teal", source="stated", user_id=uid)
+        c = _fresh_client(_make_session(uid, "facts"))
+        with patch("kai.api.routes.memory.brain_for", return_value=self._stub_brain(uid)):
+            keys = {f["key"] for f in c.get("/memory/facts").json()}
+            found = {f["key"] for f in c.get("/memory/search?q=l").json()["facts"]}
+            put = c.put("/memory/facts/tool_level", json={"value": "off"}, headers=self.HDR)
+            delete = c.delete("/memory/facts/tool_level", headers=self.HDR)
+        assert "favorite_color" in keys and "tool_level" not in keys
+        assert "tool_level" not in found
+        assert put.status_code == 400 and delete.status_code == 400
+        assert semantic.get_fact("tool_level", user_id=uid) == "balanced"
+
+    def test_active_model_is_matched_by_name(self):
+        """T2-41: two entries with the same Ollama id were both marked active."""
+        from types import SimpleNamespace
+
+        uid = _create_user(_unique_name("models"))
+        entries = [
+            {"name": "Kai", "ollama_id": cfg.CHAT_MODEL, "think": False, "builtin": True},
+            {"name": "kai_think", "ollama_id": cfg.CHAT_MODEL, "think": True, "builtin": False},
+        ]
+        brain = SimpleNamespace(active_brain_name="kai_think", model=cfg.CHAT_MODEL)
+        c = _fresh_client(_make_session(uid, "models"))
+        with (
+            patch("kai.api.routes.settings.brain_for", return_value=brain),
+            patch("kai.llm.models.list_models", return_value=entries),
+        ):
+            models = c.get("/settings/models").json()["models"]
+        assert [m["name"] for m in models if m["active"]] == ["kai_think"]
+
+    def test_the_active_model_cannot_be_removed(self):
+        """T2-43: removing the active model left Kai on a model the list no longer showed."""
+        from types import SimpleNamespace
+
+        from kai.api import state
+        from kai.store import users as u
+
+        owner = u.get_owner_id() or _create_user(_unique_name("owner"))
+        c = _fresh_client(_make_session(owner, "owner"))
+        with (
+            patch.dict(
+                state.user_brains, {987654: SimpleNamespace(active_brain_name="tmp_granite")}
+            ),
+            patch("kai.llm.models.remove_model") as remove,
+        ):
+            r = c.delete("/settings/models/tmp_granite", headers=self.HDR)
+        assert r.status_code == 400 and "active model" in r.json()["detail"]
+        remove.assert_not_called()
+
+    def test_mode_shows_the_rule_actually_in_force(self):
+        """T2-10: a fresh account showed "Short answers" while the seed rule applied."""
+        from types import SimpleNamespace
+
+        from kai.api.routes.settings import _MODE_RULES
+        from kai.memory import procedural
+
+        uid = _create_user(_unique_name("mode"))
+        procedural.seed_defaults(user_id=uid)
+        c = _fresh_client(_make_session(uid, "mode"))
+        brain = SimpleNamespace(memory=SimpleNamespace(user_id=uid))
+        with patch("kai.api.routes.settings.brain_for", return_value=brain):
+            fresh = c.get("/settings/mode").json()
+            procedural.set_rule("response_length", _MODE_RULES["long"], user_id=uid)
+            chosen = c.get("/settings/mode").json()
+        assert fresh == {"mode": "default", "label": "Default"}
+        assert chosen["mode"] == "long"
+
+    def test_clamped_temperatures_are_reported(self):
+        """T2-19: typing 5 saved 2.0 without a word."""
+        uid = _create_user(_unique_name("temps"))
+        c = _fresh_client(_make_session(uid, "temps"))
+        with patch("kai.api.routes.settings.brain_for", return_value=self._stub_brain(uid)):
+            r = c.post(
+                "/settings/preset-temps",
+                json={"temps": {"creative": 5, "normal": 0.3}},
+                headers=self.HDR,
+            )
+        assert r.status_code == 200
+        assert r.json()["clamped"] == {"creative": cfg.TEMP_MAX}
+
+
+class TestHardeningToolContracts:
+    def test_a_recipe_needs_a_description(self):
+        """T2-33: the recipe form saved recipes with no description for Kai to choose by."""
+        from kai.store import users as u
+
+        owner = u.get_owner_id() or _create_user(_unique_name("owner"))
+        c = _fresh_client(_make_session(owner, "owner"))
+        r = c.post(
+            "/settings/recipes",
+            json={"name": "qa-nodesc", "description": " ", "triggers": [], "steps": ["time.now"]},
+            headers={"Origin": "http://127.0.0.1:7860"},
+        )
+        assert r.status_code == 400 and "Describe" in r.json()["detail"]
+
+
+class TestRedesignReceipts:
+    def test_chat_stream_carries_receipts_and_provenance(self):
+        """UI redesign step 2: an unmapped meta used to become an empty token event."""
+        import json
+        from types import SimpleNamespace
+
+        receipt = {
+            "name": "time.now",
+            "args": {},
+            "ok": True,
+            "error": "",
+            "kind": "",
+            "duration_ms": 3,
+            "output": "12:00",
+        }
+
+        def run_stream(user_input, on_status=None):
+            yield "", False, {"tool_result": receipt}
+            yield "It's noon.", False, {}
+            yield (
+                "",
+                True,
+                {
+                    "message_id": 7,
+                    "latency_ms": 10,
+                    "receipts": [receipt],
+                    "grounding": {"state": "ran"},
+                },
+            )
+
+        uid = _create_user(_unique_name("receipts"))
+        c = _fresh_client(_make_session(uid, "receipts"))
+        with patch("kai.apps.web._brain_for", return_value=SimpleNamespace(run_stream=run_stream)):
+            body = c.post(
+                "/chat",
+                json={"message": "what time is it"},
+                headers={"Origin": "http://127.0.0.1:7860"},
+            ).text
+        events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
+        assert {"type": "tool_result", **receipt} in events
+        assert not any(e["type"] == "token" and e["text"] == "" for e in events)
+        done = next(e for e in events if e["type"] == "done")
+        assert done["grounding"] == {"state": "ran"} and done["receipts"] == [receipt]
+
+
+class TestRedesignApprovalCard:
+    HDR = {"Origin": "http://127.0.0.1:7860"}
+
+    @staticmethod
+    def _client(name):
+        uid = _create_user(_unique_name(name))
+        return _fresh_client(_make_session(uid, name))
+
+    def test_pending_route_needs_a_signed_in_user(self):
+        assert _fresh_client().get("/chat/pending").status_code == 401
+
+    def test_pending_route_returns_the_waiting_call(self):
+        from types import SimpleNamespace
+
+        waiting = {"call_id": "c1", "name": "system.kill_process", "label": "Stop", "args": {}}
+        stub = SimpleNamespace(pending_confirm_summary=lambda: waiting)
+        with patch("kai.apps.web._brain_for", return_value=stub):
+            r = self._client("pending").get("/chat/pending")
+        assert r.status_code == 200 and r.json() == waiting
+
+    def test_skip_with_a_stale_call_id_is_refused(self):
+        from types import SimpleNamespace
+
+        stub = SimpleNamespace(cancel_pending_confirm=lambda call_id=None: None)
+        with patch("kai.apps.web._brain_for", return_value=stub):
+            r = self._client("staleskip").post(
+                "/chat/confirm/cancel", json={"call_id": "old"}, headers=self.HDR
+            )
+        assert r.status_code == 409
+
+    def test_chat_passes_the_cards_call_id(self):
+        from types import SimpleNamespace
+
+        seen = {}
+
+        def run_stream(user_input, on_status=None, confirm_call_id=None):
+            seen["id"] = confirm_call_id
+            yield "", True, {}
+
+        with patch("kai.apps.web._brain_for", return_value=SimpleNamespace(run_stream=run_stream)):
+            self._client("cardgo").post(
+                "/chat", json={"message": "go ahead", "confirm": "c9"}, headers=self.HDR
+            )
+        assert seen["id"] == "c9"
+
+
+class TestAccountsAndLevels:
+    """docs/active/PERMISSIONS.md increment 1: levels, the accounts API and the audit log."""
+
+    HDR = {"Origin": "http://127.0.0.1:7860"}
+
+    def setup_method(self):
+        from kai.store import users as u
+
+        _clear_users()
+        self.owner = _create_user(_unique_name("owner"))
+        self.admin = _create_user(_unique_name("admin"))
+        u.update_account(self.admin, level="admin")
+        self.member = _create_user(_unique_name("member"))
+        self.tok = {
+            "owner": _make_session(self.owner, "owner"),
+            "admin": _make_session(self.admin, "admin"),
+            "member": _make_session(self.member, "member"),
+        }
+
+    def _as(self, who):
+        return _fresh_client(self.tok[who])
+
+    def test_admins_now_hold_server_control(self):
+        with patch("kai.core.lifecycle.request_restart") as m:
+            r = self._as("admin").post(
+                "/api/admin/restart", json={"mode": "soft"}, headers=self.HDR
+            )
+        assert r.status_code == 200, r.text
+        m.assert_called_once_with("soft")
+        with patch("kai.core.lifecycle.request_restart") as m:
+            r = self._as("member").post(
+                "/api/admin/restart", json={"mode": "soft"}, headers=self.HDR
+            )
+        assert r.status_code == 403
+        m.assert_not_called()
+
+    def test_only_owner_and_admins_see_accounts(self):
+        assert self._as("member").get("/accounts").status_code == 403
+        r = self._as("admin").get("/accounts")
+        assert r.status_code == 200, r.text
+        by_id = {a["id"]: a for a in r.json()["accounts"]}
+        assert {self.owner, self.admin, self.member} <= set(by_id)
+        assert by_id[self.owner]["level"] == "owner" and not by_id[self.owner]["can_edit"]
+        assert r.json()["assignable_levels"] == ["member", "guest"]
+
+    def test_admins_create_members_and_guests_but_never_admins(self):
+        from kai.store import audit
+
+        c = self._as("admin")
+        body = {"name": _unique_name("new"), "pin": "1234", "level": "guest"}
+        r = c.post("/accounts", json=body, headers=self.HDR)
+        assert r.status_code == 200, r.text
+        assert r.json()["account"]["created_by"] == self.admin
+        assert r.json()["account"]["level"] == "guest"
+
+        body = {"name": _unique_name("sneaky"), "pin": "1234", "level": "admin"}
+        assert c.post("/accounts", json=body, headers=self.HDR).status_code == 403
+        refused = [
+            e for e in audit.list_entries() if e["action"] == "account.create" and not e["ok"]
+        ]
+        assert refused and refused[0]["actor_id"] == self.admin
+
+    def test_admins_edit_only_what_they_created(self):
+        c = self._as("admin")
+        rename = {"name": _unique_name("renamed")}
+        assert c.patch(f"/accounts/{self.member}", json=rename, headers=self.HDR).status_code == 403
+        body = {"name": _unique_name("mine"), "pin": "1234"}
+        mine = c.post("/accounts", json=body, headers=self.HDR).json()["account"]["id"]
+        r = c.patch(f"/accounts/{mine}", json={"level": "guest"}, headers=self.HDR)
+        assert r.status_code == 200 and r.json()["account"]["level"] == "guest"
+        assert (
+            c.patch(f"/accounts/{mine}", json={"level": "admin"}, headers=self.HDR).status_code
+            == 403
+        )
+
+    def test_only_the_owner_kicks_and_a_kick_signs_them_out_at_once(self):
+        kick = f"/accounts/{self.member}/kick"
+        assert self._as("admin").post(kick, json={}, headers=self.HDR).status_code == 403
+        assert self._as("member").get("/accounts").status_code == 403  # signed in, not allowed
+        r = self._as("owner").post(kick, json={}, headers=self.HDR)
+        assert r.status_code == 200 and r.json()["sessions_ended"] >= 1
+        assert self._as("member").get("/accounts").status_code == 401  # signed out
+
+    def test_only_the_owner_grants_and_a_grant_must_fit_the_level(self):
+        body = {"grants": ["tools.destructive"]}
+        url = f"/accounts/{self.member}/grants"
+        assert self._as("admin").put(url, json=body, headers=self.HDR).status_code == 403
+        r = self._as("owner").put(url, json=body, headers=self.HDR)
+        assert r.status_code == 200 and r.json()["account"]["grants"] == ["tools.destructive"]
+        url = f"/accounts/{self.admin}/grants"
+        assert self._as("owner").put(url, json=body, headers=self.HDR).status_code == 400
+
+    def test_ownership_transfer_and_the_audit_trail(self):
+        from kai.store import users as u
+
+        r = self._as("owner").post(
+            "/accounts/transfer-owner", json={"to_id": self.admin}, headers=self.HDR
+        )
+        assert r.status_code == 200, r.text
+        assert u.get_owner_id() == self.admin and u.get_level(self.owner) == "admin"
+        entries = self._as("admin").get("/accounts/audit").json()["entries"]
+        assert entries[0]["action"] == "account.transfer_owner"
+        assert entries[0]["actor_id"] == self.owner

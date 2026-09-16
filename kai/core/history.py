@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import threading
 
+SUMMARY_PREFIX = "[Earlier in this conversation: "
+
+
+def is_summary(message: dict) -> bool:
+    """True for the system message a compression leaves in place of older turns."""
+    return message.get("role") == "system" and (message.get("content") or "").startswith(
+        SUMMARY_PREFIX
+    )
+
 
 class HistoryManager:
     def __init__(self) -> None:
@@ -102,8 +111,12 @@ class HistoryManager:
                 return None
             self._compressing = True
             self._compress_split_idx = hist_len - keep_n
+            # The previous summary rides along. Cutting the prefix drops it, so leaving it out of
+            # the new summary lost every fact only it still held (T1-44: the $460 budget).
             return [
-                m for m in self._messages[: self._compress_split_idx] if m.get("role") != "system"
+                m
+                for m in self._messages[: self._compress_split_idx]
+                if m.get("role") != "system" or is_summary(m)
             ]
 
     def commit_compression(self, summary: str) -> None:
@@ -119,7 +132,7 @@ class HistoryManager:
                     0,
                     {
                         "role": "system",
-                        "content": f"[Earlier in this conversation: {summary}]",
+                        "content": f"{SUMMARY_PREFIX}{summary}]",
                     },
                 )
             finally:

@@ -374,10 +374,10 @@ async def study_ask(req: StudyAskRequest, request: Request):
     if not user:
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     uid = user["user_id"]
-    from kai.tools.knowledge.study import ask_library
+    from kai.tools.knowledge.study import search_library
 
     # Embeds the question + scans library chunks — offload the CPU/IO work.
-    result = await asyncio.to_thread(ask_library, question=req.question, user_id=uid)
+    result = await asyncio.to_thread(search_library, req.question, uid)
     return {"result": result}
 
 

@@ -51,15 +51,18 @@ class Skill:
 
     def __init__(self) -> None:
         self._tool_registry: Any | None = None
+        self._guard = None  # optional per-step check; raises to block a tool call
         # Ensure each instance gets its own triggers list (avoid shared mutable default)
         if type(self).triggers is Skill.triggers:
             self.triggers = []
         else:
             self.triggers = list(type(self).triggers)
 
-    def bind(self, tool_registry: Any) -> None:
-        """Inject the tool registry. Called by SkillRegistry before execute()."""
+    def bind(self, tool_registry: Any, guard=None) -> None:
+        """Inject the tool registry, plus an optional guard(tool_name) that raises to
+        block a step. Called by SkillRegistry before execute()."""
         self._tool_registry = tool_registry
+        self._guard = guard
 
     def call_tool(self, tool_name: str, args: dict | None = None) -> Any:
         """
@@ -68,6 +71,9 @@ class Skill:
         """
         if not self._tool_registry:
             raise RuntimeError("Skill has no tool registry — was bind() called?")
+        guard = getattr(self, "_guard", None)
+        if guard:
+            guard(tool_name)
         result = self._tool_registry.execute(tool_name, args or {})
         return result
 

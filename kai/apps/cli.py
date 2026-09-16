@@ -60,7 +60,7 @@ def startup_report(memory: MemoryManager, model: str) -> str:
     )
 
     # Show welcome-back message if Kai left herself a note
-    wb = load_welcome_back()
+    wb = load_welcome_back(memory.user_id)
     if wb:
         report += f"\n\n  [Kai's note to herself]\n  {wb[:200]}{'...' if len(wb) > 200 else ''}"
 
@@ -110,7 +110,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         _show_memory(memory)
 
     elif command == ":facts":
-        facts = memory.list_facts()
+        facts = memory.list_facts(include_settings=False)
         if facts:
             for f in facts:
                 print(f"  {f.key} = {f.value}  [{f.source}]")
@@ -275,14 +275,13 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
         _show_vector_stats()
 
     elif command == ":sleep":
-        from kai.config import MEMORY_DIR
-        from kai.core.sleep import load_welcome_back
+        from kai.core.sleep import load_welcome_back, sleep_log_file
 
-        wb = load_welcome_back()
+        wb = load_welcome_back(memory.user_id)
         if wb:
             print(f"\n  [Pending welcome-back note]\n  {wb}\n")
         else:
-            log_file = MEMORY_DIR / "sleep_log.txt"
+            log_file = sleep_log_file(memory.user_id)
             if log_file.exists():
                 lines = log_file.read_text(encoding="utf-8").strip().split("\n---")
                 last = lines[-1].strip() if lines else ""
@@ -307,7 +306,7 @@ def handle_command(cmd: str, brain: Brain, memory: MemoryManager) -> bool:
 
 
 def _show_memory(memory: MemoryManager) -> None:
-    facts = memory.list_facts()
+    facts = memory.list_facts(include_settings=False)
     rules = memory.list_rules()
     recent = memory.recent_episodes(limit=5)
 
@@ -496,6 +495,40 @@ def _resolve_user_id(requested: str | None) -> tuple[int, str]:
     sys.exit(2)
 
 
+def _set_owner(name: str) -> int:
+    """Make NAME the owner of this Kai. Returns a process exit code.
+
+    The terminal is the trust anchor: anyone at a shell here can already read the database,
+    so this grants nothing new. It exists to fix a Kai whose owner is the wrong account without
+    needing that account's PIN (docs/active/PERMISSIONS.md). The old owner becomes an admin.
+    """
+    from kai.store import audit
+    from kai.store import users as _users
+
+    uid = _users.get_user_id(name)
+    if uid is None:
+        names = _users.list_users()
+        print(f"[!] No account named {name!r}. Registered: {', '.join(names) or 'none'}")
+        return 2
+    account = _users.get_account(uid)
+    current = _users.get_owner_id()
+    if uid == current:
+        print(f"[~] {account['name']} is already the owner.")
+        return 0
+    old = _users.get_account(current) if current else None
+    _users.transfer_ownership(uid)
+    audit.record(
+        "account.transfer_owner",
+        actor_name="terminal",
+        target_id=uid,
+        target_name=account["name"],
+        detail={"from": old["name"] if old else None, "via": "kai --set-owner"},
+    )
+    suffix = f" {old['name']} is now an admin." if old else ""
+    print(f"[+] {account['name']} is now the owner.{suffix}")
+    return 0
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 
@@ -514,11 +547,20 @@ def main() -> None:
         default=os.getenv("KAI_USER"),
         help="Account to speak as (defaults to KAI_USER, then the remembered choice)",
     )
+    parser.add_argument(
+        "--set-owner",
+        metavar="NAME",
+        help="Make NAME the owner of this Kai, then exit. Works from a terminal on this machine "
+        "without the current owner's PIN; the old owner becomes an admin.",
+    )
     args = parser.parse_args()
 
     # Lay out var/ before anything opens a DB. Deliberately after parse_args so
     # `--help` and a bad flag stay side-effect free.
     cfg.ensure_dirs()
+
+    if args.set_owner:
+        sys.exit(_set_owner(args.set_owner))
 
     if args.debug:
         cfg.DEBUG = True

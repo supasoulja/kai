@@ -8,6 +8,23 @@ from datetime import datetime
 from kai.store.db import get_conn
 from kai.store.schema import SemanticFact
 
+# Settings and system state kept in this table. They aren't things Kai learned about the user,
+# so they stay out of recall, the memory panels and memory edits (P1-5, T2-38).
+SETTING_KEYS = frozenset(
+    {
+        "active_brain",
+        "disabled_tools",
+        "gen_preset",
+        "gen_preset_temps",
+        "kai_version",
+        "notes_repo",
+        "privacy_learn_from_conversation",
+        "privacy_usage_patterns",
+        "response_mode",
+        "tool_level",
+    }
+)
+
 
 def set_fact(
     key: str, value: str, source: str = "conversation", confidence: float = 1.0, user_id: int = 0
@@ -51,7 +68,7 @@ def migrate(user_id: int = 0) -> None:
     conn.commit()
 
 
-def list_facts(user_id: int = 0) -> list[SemanticFact]:
+def list_facts(user_id: int = 0, include_settings: bool = True) -> list[SemanticFact]:
     conn = get_conn()
     rows = conn.execute(
         "SELECT key, value, source, confidence, updated_at "
@@ -67,6 +84,7 @@ def list_facts(user_id: int = 0) -> list[SemanticFact]:
             updated_at=datetime.fromisoformat(row[4]),
         )
         for row in rows
+        if include_settings or row[0] not in SETTING_KEYS
     ]
 
 

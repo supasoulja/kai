@@ -182,6 +182,7 @@ def _ensure_schema(conn: sqlite3.Connection, db_path: Path) -> None:
         _maybe_migrate_embed_dim(conn)
         _create_all_tables(conn)
         _maybe_add_latency_column(conn)
+        _maybe_add_message_meta_column(conn)
         _schema_initialized.add(db_path)
 
 
@@ -194,6 +195,18 @@ def _maybe_add_latency_column(conn: sqlite3.Connection) -> None:
     if "latency_ms" in cols:
         return
     conn.execute("ALTER TABLE session_messages ADD COLUMN latency_ms INTEGER")
+    conn.commit()
+
+
+def _maybe_add_message_meta_column(conn: sqlite3.Connection) -> None:
+    """Add session_messages.meta (tool receipts and provenance, JSON) to older DBs."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(session_messages)").fetchall()}
+    except Exception:
+        return
+    if not cols or "meta" in cols:
+        return
+    conn.execute("ALTER TABLE session_messages ADD COLUMN meta TEXT")
     conn.commit()
 
 
@@ -365,7 +378,8 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
             timestamp   TEXT    NOT NULL,
             turn_order  INTEGER NOT NULL,
             feedback    INTEGER DEFAULT NULL,
-            latency_ms  INTEGER DEFAULT NULL
+            latency_ms  INTEGER DEFAULT NULL,
+            meta        TEXT    DEFAULT NULL
         );
 
         -- Tool aliases (global — shared across users)

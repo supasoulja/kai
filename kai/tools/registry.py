@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import copy
 import difflib
+import inspect
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -25,10 +27,17 @@ from kai.llm.vecmath import cosine as _cosine
 from kai.util import log
 
 
+class ToolUnavailable(Exception):
+    """The call can't do anything here: not supported on this OS, the target doesn't exist, or a
+    program it needs isn't installed. The engine reports it as a failure, so nothing claims it
+    worked, but doesn't widen to the full tool set: another tool won't help (T1-06, D3a)."""
+
+
 class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, dict] = {}  # name → {fn, schema}
         self._aliases: dict[str, str] = {}  # alias → real tool name
+        self._code_aliases: set[str] = set()  # declared in code: resolve, but never offered
         self._aliases_loaded: bool = False  # lazy-loaded after tools register
 
     # ── Alias persistence ─────────────────────────────────────────────────────
@@ -155,6 +164,8 @@ class ToolRegistry:
         for alias, target in self._aliases.items():
             if target not in self._tools:
                 continue  # stale alias, target was removed
+            if alias in self._code_aliases:
+                continue  # an old name kept for callers; offering it duplicated the tool (T1-07)
             if for_names is not None and target not in for_names:
                 continue
             if exclude and target in exclude:
@@ -344,6 +355,51 @@ class ToolRegistry:
         old name, kept so callers using the old name still resolve. Distinct from
         learned aliases (which come from the DB when the model misspells a name)."""
         self._aliases[alias] = target
+        self._code_aliases.add(alias)
+
+    def required_params(self, name: str) -> list[str]:
+        """Arguments the tool can't run without: required in its schema, or without a default
+        in its signature."""
+        entry = self._tools.get(self.resolve_name(name))
+        if not entry:
+            return []
+        required = list(entry["schema"]["function"]["parameters"].get("required", []))
+        try:
+            for p in inspect.signature(entry["fn"]).parameters.values():
+                if (
+                    p.default is inspect.Parameter.empty
+                    and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                    and p.name not in required
+                ):
+                    required.append(p.name)
+        except (TypeError, ValueError):
+            pass
+        return required
+
+    def args_hint(self, name: str) -> str:
+        """The tool's real arguments, e.g. "question (string, required)"."""
+        entry = self._tools.get(self.resolve_name(name))
+        if not entry:
+            return ""
+        props = entry["schema"]["function"]["parameters"].get("properties", {})
+        required = set(self.required_params(name))
+        parts = [
+            f"{k} ({v.get('type', 'any')}{', required' if k in required else ''})"
+            for k, v in props.items()
+        ]
+        return ", ".join(parts) or "no arguments"
+
+    def is_arg_error(self, name: str, exc: TypeError) -> bool:
+        """True when calling the tool failed on its argument names, not inside its body."""
+        entry = self._tools.get(self.resolve_name(name))
+        fn = entry["fn"] if entry else None
+        msg = str(exc)
+        # Python names the function by __qualname__ in these messages ("Cls.method()").
+        names = {getattr(fn, "__qualname__", ""), getattr(fn, "__name__", "")} - {""}
+        called = any(msg.startswith(f"{n}()") for n in names)
+        return called and bool(
+            re.search(r"unexpected keyword argument|missing \d+ required|positional argument", msg)
+        )
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
@@ -643,6 +699,7 @@ _TOOL_CATEGORIES: dict[str, dict] = {
             "self.propose_persona_update",
             "self.apply_persona_update",
             "self.recent_changes",
+            "self.trace",
         ],
     },
     "study_library": {
@@ -741,6 +798,7 @@ TOOL_LABELS: dict[str, str] = {
     "docs.list": "Listing documents",
     "self.inspect": "Reading my own source code",
     "self.list_tools": "Listing my tools",
+    "self.trace": "Checking what I actually ran",
     "self.check_persona": "Reviewing my self-knowledge",
     "self.propose_persona_update": "Drafting persona update",
     "self.apply_persona_update": "Updating persona",

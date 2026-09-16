@@ -26,8 +26,9 @@ import kai.config as cfg
 
 os.environ.setdefault("KAI_TEST_MODE", "1")
 
-# The real database, captured before anything can point a test at it.
+# The real database and memory dir, captured before anything can point a test at them.
 _PRODUCTION_DB = Path(cfg.DB_PATH)
+_PRODUCTION_MEMORY_DIR = Path(cfg.MEMORY_DIR)
 
 
 def pytest_configure(config):
@@ -53,11 +54,23 @@ def pytest_configure(config):
         # drops .md/.txt files into the user's real ~/KaiFiles/notes.
         cfg.WORKSPACE_DIR = sandbox / "KaiFiles"
         cfg.NOTES_DIR = cfg.WORKSPACE_DIR / "notes"
-        for d in (cfg.TREE_DIR, cfg.STATE_DIR, cfg.KNOWLEDGE_DIR, cfg.NOTES_DIR):
+        # MEMORY_DIR holds the crash checkpoint, welcome-back notes, events.db, models.json,
+        # roles.json and device.key. Un-isolated, every Brain test's post-turn checkpoint
+        # wrote into the running Kai's real memory dir.
+        cfg.MEMORY_DIR = sandbox / "memory"
+        cfg.REFLECTIONS_PATH = cfg.MEMORY_DIR / "reflections.md"
+        # Both were computed from the real STATE_DIR when kai.config was imported.
+        cfg.APP_SETTINGS_PATH = cfg.STATE_DIR / "app_settings.json"
+        cfg.CLI_USER_PATH = cfg.STATE_DIR / "cli_user"
+        for d in (cfg.TREE_DIR, cfg.STATE_DIR, cfg.KNOWLEDGE_DIR, cfg.NOTES_DIR, cfg.MEMORY_DIR):
             d.mkdir(parents=True, exist_ok=True)
         for modname, attr, val in (
             ("kai.memory.tree", "_TREE_DIR", cfg.TREE_DIR),
             ("kai.memory.state", "_STATE_DIR", cfg.STATE_DIR),
+            ("kai.llm.models", "_MODELS_PATH", cfg.MEMORY_DIR / "models.json"),
+            ("kai.llm.roles", "_ROLES_PATH", cfg.MEMORY_DIR / "roles.json"),
+            ("kai.system.device", "_KEY_FILE", cfg.MEMORY_DIR / "device.key"),
+            ("kai.tools.memory.memory_tools", "REFLECTIONS_PATH", cfg.REFLECTIONS_PATH),
         ):
             mod = sys.modules.get(modname)
             if mod is not None:
@@ -66,10 +79,15 @@ def pytest_configure(config):
 
 
 def pytest_runtest_setup(item):
-    """Belt and suspenders: refuse to run any test whose DB_PATH somehow points
-    back at the production database."""
+    """Belt and suspenders: refuse to run any test whose DB_PATH or MEMORY_DIR somehow
+    points back at the real ones."""
     if Path(cfg.DB_PATH) == _PRODUCTION_DB:
         raise RuntimeError(
             f"Refusing to run {item.nodeid}: cfg.DB_PATH points at the real "
             f"database ({_PRODUCTION_DB}). Set it to a temp file first."
+        )
+    if Path(cfg.MEMORY_DIR) == _PRODUCTION_MEMORY_DIR:
+        raise RuntimeError(
+            f"Refusing to run {item.nodeid}: cfg.MEMORY_DIR points at the real "
+            f"memory dir ({_PRODUCTION_MEMORY_DIR})."
         )

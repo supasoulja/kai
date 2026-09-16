@@ -223,3 +223,21 @@ class OllamaClient:
             return [m["name"] for m in result.get("models", [])]
         except Exception:
             return []
+
+    def model_sizes(self) -> dict[str, int]:
+        """Installed model → bytes on disk (roughly what it takes in VRAM). {} on error."""
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/tags", timeout=5) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            return {m["name"]: int(m.get("size", 0)) for m in result.get("models", [])}
+        except Exception:
+            return {}
+
+    def loaded_models(self) -> dict[str, int]:
+        """Model loaded right now → bytes it holds in VRAM. {} on error."""
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/ps", timeout=5) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            return {m["name"]: int(m.get("size_vram", 0)) for m in result.get("models", [])}
+        except Exception:
+            return {}

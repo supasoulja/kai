@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from kai.config import PERSONA_PATH, SOURCE_ROOT
-from kai.tools.registry import registry
+from kai.tools.registry import ToolUnavailable, registry
 
 _PROJECT_ROOT = SOURCE_ROOT
 
@@ -101,7 +101,7 @@ def inspect_source(path: str = "", start_line: int = 0, end_line: int = 0) -> st
         return "Access denied — path must be within the project directory."
 
     if not target.exists():
-        return f"Not found: {clean}"
+        raise ToolUnavailable(f"Not found: {clean}")
 
     if target.is_dir():
         tree = _build_tree(target)
@@ -177,12 +177,12 @@ def recent_changes(limit: int = 10, file: str = "") -> str:
         cmd += ["--", file.strip()]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        if result.returncode != 0:
-            return f"git log failed: {result.stderr.strip()}"
-        output = result.stdout.strip()
-        return output if output else "No commits found."
     except Exception as e:
-        return f"Error running git log: {e}"
+        raise ToolUnavailable(f"Error running git log: {e}") from e
+    if result.returncode != 0:
+        raise ToolUnavailable(f"git log failed: {result.stderr.strip()}")
+    output = result.stdout.strip()
+    return output if output else "No commits found."
 
 
 # ── Live tool inventory ───────────────────────────────────────────────────────
@@ -358,27 +358,6 @@ def propose_persona_update(section: str, content: str) -> str:
     return "\n".join(proposal_lines)
 
 
-@registry.tool(
-    name="self.apply_persona_update",
-    description=(
-        "Apply a previously proposed and USER-APPROVED change to persona.md. "
-        "ONLY call this after: (1) you showed the exact change via self.propose_persona_update, "
-        "AND (2) the user explicitly approved it in the conversation. "
-        "Never call this without prior user approval."
-    ),
-    parameters={
-        "section": {
-            "type": "string",
-            "description": "The ## section heading to add or update.",
-            "required": True,
-        },
-        "content": {
-            "type": "string",
-            "description": "The approved content for this section.",
-            "required": True,
-        },
-    },
-)
 def _compute_persona_update(section: str, content: str) -> tuple[str, str, bool]:
     """Return (old_persona, new_persona, replaced) without writing anything.
 
@@ -426,6 +405,27 @@ def persona_update_diff(section: str, content: str) -> str:
     return "\n".join(diff)
 
 
+@registry.tool(
+    name="self.apply_persona_update",
+    description=(
+        "Apply a previously proposed and USER-APPROVED change to persona.md. "
+        "ONLY call this after: (1) you showed the exact change via self.propose_persona_update, "
+        "AND (2) the user explicitly approved it in the conversation. "
+        "Never call this without prior user approval."
+    ),
+    parameters={
+        "section": {
+            "type": "string",
+            "description": "The ## section heading to add or update.",
+            "required": True,
+        },
+        "content": {
+            "type": "string",
+            "description": "The approved content for this section.",
+            "required": True,
+        },
+    },
+)
 def apply_persona_update(section: str, content: str) -> str:
     if not PERSONA_PATH.exists():
         return "Error: persona.md not found."
@@ -434,3 +434,63 @@ def apply_persona_update(section: str, content: str) -> str:
     _, updated, replaced = _compute_persona_update(section, content)
     PERSONA_PATH.write_text(updated, encoding="utf-8")
     return f"Updated persona.md — section '## {section_name}' has been {'replaced' if replaced else 'added'}."
+
+
+@registry.tool(
+    name="self.trace",
+    description=(
+        "Read your OWN execution log — which tools you actually called on recent turns, "
+        "and how long each turn took. This is recorded by the system as you run; it is "
+        "evidence, not memory.\n"
+        "CALL THIS BEFORE agreeing that you failed to call a tool, invented data, "
+        "hallucinated, or 'didn't actually check'. If the user says you made something "
+        "up, look here FIRST and answer from what the log says. Your recollection of "
+        "what you did is not evidence — this table is.\n"
+        "If the log shows you DID call the tool, say so and show the entry: the "
+        "disagreement is then about the tool's data or its source, not about whether "
+        "you looked. Agreeing to a mistake you did not make is itself a false statement."
+    ),
+    parameters={
+        "turns": {
+            "type": "integer",
+            "description": "How many recent turns to show (default 5, max 25).",
+            "required": False,
+        },
+    },
+)
+def self_trace(turns: int = 5) -> str:
+    """Recent turns with the tools actually executed on each.
+
+    Exists because of a real failure: accused of inventing a weather report, Kai
+    agreed and described skipping a tool call it had in fact made — the trace showed
+    weather.current ran and the reply matched its output faithfully. A false
+    confession is worse than the error it admits to, because it corrupts the user's
+    model of the system and sends debugging in the wrong direction. The fix is to
+    make checking cheaper than agreeing.
+    """
+    from kai.core import trace as trace_log
+    from kai.core._app_state import get_current_user_id
+
+    limit = max(1, min(int(turns or 5), 25))
+    try:
+        entries = trace_log.recent(limit=limit, user_id=get_current_user_id())
+    except Exception as exc:  # pragma: no cover - defensive
+        return f"Could not read the trace log: {exc}"
+
+    if not entries:
+        return "No turns recorded yet for this user — nothing to verify against."
+
+    lines = ["Your recent turns (newest first) — what you ACTUALLY ran:", ""]
+    for e in entries:
+        stamp = (e.timestamp or "")[:19].replace("T", " ")
+        tools = ", ".join(e.tool_calls) if e.tool_calls else "NO TOOLS CALLED"
+        asked = " ".join((e.user_input or "").split())[:70]
+        lines.append(f"  {stamp}  [{tools}]")
+        lines.append(f"      asked: {asked}")
+    lines.append("")
+    lines.append(
+        "A tool name listed above means that call executed and returned — its output "
+        "is what your reply was built from. 'NO TOOLS CALLED' means you answered from "
+        "the model alone on that turn."
+    )
+    return "\n".join(lines)

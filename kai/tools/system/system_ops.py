@@ -5,7 +5,7 @@ These tools change the PC. Each one is labeled clearly and creates a
 restore point first where appropriate.
 
 Windows only (uses PowerShell). Unlike pc_tools, nothing here has a Linux
-implementation — on Linux each tool short-circuits to _LINUX_MSG.
+implementation — on Linux each tool raises ToolUnavailable(_LINUX_MSG).
 """
 
 import datetime
@@ -13,7 +13,7 @@ import re
 
 from kai.system.platform import IS_WINDOWS as _IS_WINDOWS
 from kai.tools._shell import run_powershell
-from kai.tools.registry import registry
+from kai.tools.registry import ToolUnavailable, registry
 
 _LINUX_MSG = "This tool is only available on Windows."
 
@@ -48,7 +48,7 @@ def _ps_escape(value: str) -> str:
 )
 def create_restore_point(description: str = "Kai checkpoint") -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG
+        raise ToolUnavailable(_LINUX_MSG)
     label = _ps_escape(description)[:80]
     cmd = (
         f"Checkpoint-Computer -Description '{label}' "
@@ -75,7 +75,7 @@ def create_restore_point(description: str = "Kai checkpoint") -> str:
 )
 def clear_temp_files() -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG
+        raise ToolUnavailable(_LINUX_MSG)
     cmd = r"""
 $paths = @($env:TEMP, $env:WINDIR + '\Temp')
 $freed = 0
@@ -117,7 +117,7 @@ $mb = [math]::Round($freed / 1MB, 1)
 )
 def disable_startup_program(program_name: str) -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG
+        raise ToolUnavailable(_LINUX_MSG)
     # Use WMIC or Registry to disable — safest is to use the registry key approach
     name = _ps_escape(program_name)
     cmd = (
@@ -152,7 +152,7 @@ def disable_startup_program(program_name: str) -> str:
 )
 def run_disk_cleanup() -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG
+        raise ToolUnavailable(_LINUX_MSG)
     cmd = "Start-Process cleanmgr.exe -ArgumentList '/sagerun:1' -NoNewWindow"
     stdout, stderr = _ps(cmd, timeout=15)
     if stderr and "error" in stderr.lower():
@@ -176,7 +176,7 @@ def run_disk_cleanup() -> str:
 )
 def repair_files() -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG
+        raise ToolUnavailable(_LINUX_MSG)
     stdout, stderr = _ps("sfc /scannow", timeout=900)
     if stderr and "error" in stderr.lower() and not stdout:
         return f"sfc /scannow failed to run: {stderr[:200]}"
@@ -211,7 +211,7 @@ def repair_files() -> str:
 )
 def kill_process(process_name: str) -> str:
     if not _IS_WINDOWS:
-        return _LINUX_MSG + " On Linux, use: kill or pkill."
+        raise ToolUnavailable(_LINUX_MSG + " On Linux, use: kill or pkill.")
     name = _ps_escape(process_name.strip())
     # Check if it's running first
     check_cmd = f"Get-Process -Name '{name.replace('.exe', '')}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
