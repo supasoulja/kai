@@ -505,11 +505,7 @@ def _amd_smi() -> str | None:
                     static = [static]
                 for i, g in enumerate(static):
                     asic = g.get("asic", g.get("gpu", {}))
-                    name = (
-                        asic.get("market_name")
-                        or asic.get("asic_serial")
-                        or g.get("gpu", {}).get("model", f"AMD GPU {i}")
-                    )
+                    name = asic.get("market_name") or g.get("gpu", {}).get("model", f"AMD GPU {i}")
                     names[i] = name
         except Exception:
             pass
