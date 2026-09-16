@@ -79,9 +79,9 @@ shared note — not the user's request, not the conversation.
 ### 6. Otto dropped half of compound requests
 
 The most common failure: a two-part question gets one dispatch. `crew_runner`'s coverage guard
-force-dispatches skipped domains, but only ones **triage matched** — and triage currently matches
-the full needed set on just 4 of 20 cross-domain tasks (see
-`docs/active/CREW_TRIAGE_DECISION.md`, unresolved).
+force-dispatches skipped domains, but only ones **triage matched**. Triage matched the full needed
+set on just 4 of 20 cross-domain tasks until 2026-09-04, when `TRIAGE_TOP_K=5` plus the expand-only
+category delta raised it to 17/20 (see `docs/archive/CREW_TRIAGE_DECISION.md`).
 
 → Hence Otto's *"count what the user actually asked for before you FINISH"* and the explicit
 *"anything about what the user remembers… is Remy's."* This is prompt-level mitigation for a
