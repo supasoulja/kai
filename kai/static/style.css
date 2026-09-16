@@ -1037,36 +1037,6 @@ details[open].think-block summary::before { content: '▼ '; }
 .feedback-btn.active-up    { border-color: #4caf50; color: #4caf50; background: #1a2e1a; }
 .feedback-btn.active-down  { border-color: #e05252; color: #e05252; background: #2e1a1a; }
 
-/* Activity log (tool call history in bubble) */
-.activity-block { margin-bottom: 10px; }
-.activity-block summary { color: var(--muted); }
-
-.activity-step {
-  padding: 2px 0;
-  font-size: 0.9em;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.activity-step::before {
-  content: '✓';
-  color: #4caf50;
-  font-size: 0.85em;
-  flex-shrink: 0;
-}
-
-.activity-reason {
-  padding: 3px 0 3px 18px;
-  font-size: 0.82em;
-  color: var(--muted);
-  font-style: italic;
-  opacity: 0.75;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* Input area */
 #input-area {
   padding: 14px 32px 18px;

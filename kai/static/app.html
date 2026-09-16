@@ -23,57 +23,75 @@
   <!-- Fonts vendored locally (Space Grotesk, Inter, Material Symbols) — no
        phone-home to Google. See kai/static/fonts/. -->
   <link rel="stylesheet" href="/static/fonts/fonts-app.css"/>
+  <!-- Ubuntu Mono: machine output (receipts, tool names, numbers) -->
+  <link rel="stylesheet" href="/static/fonts/fonts-computer.css"/>
 
   <style>
-    /* ── Themes ───────────────────────────────────────────────────────────── */
+    /* ── Design tokens (redesign §3.1–3.3) ───────────────────────────────────
+       The names on the left are the vocabulary; the legacy aliases below them keep
+       every older rule working. Change a colour here, not in a rule. */
     :root, [data-theme="nebula"] {
-      --accent: #c1c1ff;
-      --muted: #918fa0;
-      --text: #e4e1f0;
-      --bg: #12121d;
-      --surface: #1f1f29;
-      --surface-high: #292934;
-      --surface-highest: #34343f;
-      --primary: #c1c1ff;
-      --tertiary: #ffb867;
-      --error-color: #ffb4ab;
-      --outline-v: #464554;
+      --bg: #0f1014;
+      --surface-1: #16171d; --surface-2: #1d1f27; --surface-3: #262833;
+      --line: #2e3140; --line-strong: #3c4052;
+      --text-1: #eceef4; --text-2: #b4b8c7; --text-3: #8a8fa3;
+      --accent: #a9a4ff; --accent-ink: #14132a; --accent-soft: rgba(169,164,255,.12); --focus: #c8c4ff;
+      --grounded: #5fd4a6; --grounded-bg: rgba(95,212,166,.10);
+      --memory: #7cb7ff; --memory-bg: rgba(124,183,255,.10);
+      --unverified: #f2c14e; --unverified-bg: rgba(242,193,78,.10);
+      --risk-safe: #8a8fa3;
+      --risk-caution: #f2a64e; --risk-caution-bg: rgba(242,166,78,.10);
+      --risk-destructive: #ff7a6b; --risk-destructive-bg: rgba(255,122,107,.10);
+
+      --font-ui: 'Inter', system-ui, sans-serif;
+      --font-mono: 'Ubuntu Mono', 'DejaVu Sans Mono', ui-monospace, monospace;
+      --font-display: 'Space Grotesk', 'Inter', sans-serif;
+      --t-xs: 12px; --t-sm: 13px; --t-md: 14px; --t-chat: 15px; --t-lg: 17px; --t-xl: 22px; --t-display: 28px;
+      --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px; --s-7: 48px;
+      --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 999px;
+      --shadow-modal: 0 18px 48px rgba(0,0,0,.45);
       --theme-name: "Nebula";
+
+      /* Legacy aliases — older rules read these. */
+      --text: var(--text-1); --muted: var(--text-3);
+      --surface: var(--surface-1); --surface-low: var(--surface-2);
+      --surface-high: var(--surface-2); --surface-highest: var(--surface-3);
+      --outline-v: var(--line); --border: var(--line);
+      --primary: var(--accent); --tertiary: var(--unverified);
+      --error-color: var(--risk-destructive);
+      --primary-container: var(--accent-soft); --on-primary-container: var(--accent);
+      --font-headline: var(--font-ui);
+      --accent-rgb: 169,164,255; --accent-deep: #8283ff;
+      --text-1-rgb: 236,238,244; --text-2-rgb: 180,184,199; --line-rgb: 46,49,64;
+      --on-surface: var(--text-1);
+      --surface-container-high: var(--surface-3); --surface-hover: var(--surface-2);
     }
     [data-theme="terminal"] {
-      --accent: #00e535;
-      --muted: #3a5c3a;
-      --text: #a8e6a8;
       --bg: #080c08;
-      --surface: #0c130c;
-      --surface-high: #111a11;
-      --surface-highest: #162116;
-      --primary: #00e535;
-      --tertiary: #d4b04a;
-      --error-color: #ff5555;
-      --outline-v: #1a2e1a;
+      --surface-1: #0c130c; --surface-2: #111a11; --surface-3: #162116;
+      --line: #1a2e1a; --line-strong: #2b482b;
+      --text-1: #a8e6a8; --text-2: #7cc47c; --text-3: #5f9a5f;
+      --accent: #00e535; --accent-ink: #04210a; --accent-soft: rgba(0,229,53,.12); --focus: #6bff96;
+      --accent-rgb: 0,229,53; --accent-deep: #00b02a;
+      --text-1-rgb: 168,230,168; --text-2-rgb: 124,196,124; --line-rgb: 26,46,26;
       --theme-name: "Terminal";
     }
-    [data-theme="terminal"] body { font-family: 'Space Grotesk', monospace; }
+    [data-theme="terminal"] body { font-family: var(--font-mono); }
     [data-theme="terminal"] .msg-wrap.ai .bubble { border-left-color: rgba(0, 229, 53, 0.25); }
-    [data-theme="terminal"] .tab-btn.active { color: #00e535; border-bottom-color: #00e535; }
+    [data-theme="terminal"] .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 
     [data-theme="slate"] {
-      --accent: #7aa2f7;
-      --muted: #565f89;
-      --text: #c0caf5;
       --bg: #0f1117;
-      --surface: #16161e;
-      --surface-high: #1a1b26;
-      --surface-highest: #24283b;
-      --primary: #7aa2f7;
-      --tertiary: #e0af68;
-      --error-color: #f7768e;
-      --outline-v: #292e42;
-      --theme-name: "Slate";
+      --surface-1: #16161e; --surface-2: #1a1b26; --surface-3: #24283b;
+      --line: #292e42; --line-strong: #3b4261;
+      --text-1: #c0caf5; --text-2: #9aa5ce; --text-3: #7e87ab;
+      --accent: #7aa2f7; --accent-ink: #0b1020; --accent-soft: rgba(122,162,247,.12); --focus: #a9c1ff;
+      --accent-rgb: 122,162,247; --accent-deep: #5a84d8;
+      --text-1-rgb: 192,202,245; --text-2-rgb: 154,165,206; --line-rgb: 41,46,66;
+      --unverified: #e0af68; --theme-name: "Slate";
     }
     [data-theme="slate"] .msg-wrap.ai .bubble { border-left-color: rgba(122, 162, 247, 0.2); }
-    [data-theme="slate"] .tab-btn.active { color: #7aa2f7; border-bottom-color: #7aa2f7; }
+    [data-theme="slate"] .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 
     /* ── Theme picker swatches ───────────────────────────────────────────── */
     .theme-swatches { display: flex; gap: 8px; margin-top: 10px; }
@@ -92,6 +110,46 @@
     }
     .theme-swatch.active .swatch-check { display: block; }
 
+    /* Tailwind's fixed palette can't follow a theme — bind the few we use to tokens. */
+    .kai-surface-page { background-color: var(--bg); }
+    /* Tailwind's theme colours were compiled to fixed hex from the old palette, so no theme
+       could move them. Bind the ones this markup uses to tokens. */
+    .text-primary { color: var(--accent); }
+    .text-primary\/80 { color: rgba(var(--accent-rgb), .8); }
+    .text-primary\/40 { color: rgba(var(--accent-rgb), .4); }
+    .text-on-primary { color: var(--accent-ink); }
+    .text-on-surface { color: var(--text-1); }
+    .text-on-surface\/80 { color: rgba(var(--text-1-rgb), .8); }
+    .text-on-surface-variant { color: var(--text-2); }
+    .text-on-surface-variant\/50 { color: rgba(var(--text-2-rgb), .5); }
+    .text-on-surface-variant\/40 { color: rgba(var(--text-2-rgb), .4); }
+    .bg-primary { background-color: var(--accent); }
+    .bg-tertiary { background-color: var(--unverified); }
+    .bg-surface, .bg-surface-container-lowest { background-color: var(--bg); }
+    .bg-surface-container-low { background-color: var(--surface-1); }
+    .bg-surface-container { background-color: var(--surface-2); }
+    .bg-surface-container-high { background-color: var(--surface-3); }
+    .border-outline-variant\/5 { border-color: rgba(var(--line-rgb), .05); }
+    .border-outline-variant\/10 { border-color: rgba(var(--line-rgb), .1); }
+    .border-outline-variant\/20 { border-color: rgba(var(--line-rgb), .2); }
+    .ring-primary\/30 { --tw-ring-color: rgba(var(--accent-rgb), .3); }
+    .from-primary {
+      --tw-gradient-from: var(--accent) var(--tw-gradient-from-position);
+      --tw-gradient-to: rgba(var(--accent-rgb), 0) var(--tw-gradient-to-position);
+      --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+    }
+    .to-primary-container { --tw-gradient-to: var(--accent-deep) var(--tw-gradient-to-position); }
+    /* The browser's 0.8em <small> lands under the 12 px floor (§3.1). */
+    small { font-size: var(--t-xs); }
+    /* Tailwind's .font-headline hardcodes the persona face; chrome wears the UI face. */
+    .font-headline { font-family: var(--font-ui); }
+    /* Persona keeps its voice: the wordmark, its subtitle and the face (§3.1). */
+    .kai-wordmark-sub, #kai-face, h1.font-headline { font-family: var(--font-display); }
+    /* Numbers that come from the machine are mono (§3.1). */
+    #s-model, #s-ctx, #s-uptime, #s-tokens, #s-think { font-family: var(--font-mono); }
+    .text-slate-400 { color: var(--text-2); }
+    .text-slate-500, .text-slate-600 { color: var(--text-3); }
+
     /* ── Base ─────────────────────────────────────────────────────────────── */
     .material-symbols-outlined {
       font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -99,7 +157,7 @@
     body {
       background-color: var(--bg);
       color: var(--text);
-      font-family: 'Inter', sans-serif;
+      font-family: var(--font-ui);
     }
 
     /* ── Tab System ──────────────────────────────────────────────────────── */
@@ -108,8 +166,8 @@
 
     .tab-btn { position: relative; }
     .tab-btn.active {
-      color: #c1c1ff;
-      border-bottom: 2px solid #c1c1ff;
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
       padding-bottom: 4px;
     }
 
@@ -150,8 +208,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       font-weight: 600;
       border: 1px solid var(--outline-v);
     }
@@ -179,10 +237,8 @@
       align-items: center;
       gap: 10px;
       padding: 4px 0 8px;
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--muted);
     }
     .status-bar .dots {
@@ -203,7 +259,7 @@
       40%           { opacity: 1; transform: scale(1); }
     }
 
-    /* ── Thinking Block / Activity Log ──────────────────────────────────── */
+    /* ── Thinking block, receipts and provenance ──────────────────────────── */
     .think-block {
       margin-bottom: 12px;
       font-size: 0.82em;
@@ -216,10 +272,8 @@
       cursor: pointer;
       background: var(--surface-high);
       color: var(--muted);
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
     }
     .think-block pre {
       padding: 12px 14px;
@@ -229,21 +283,75 @@
       font-size: 0.9em;
       line-height: 1.5;
     }
-    .activity-step {
-      padding: 6px 14px;
-      color: var(--primary);
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
-      border-bottom: 1px solid var(--outline-v);
+    /* Receipts: the tools that actually ran this turn, built from tool_result events */
+    .receipts {
+      margin-bottom: 12px;
+      border: 1px solid var(--outline-v);
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 13px;
     }
-    .activity-step:last-child { border-bottom: none; }
-    .activity-reason {
-      padding: 6px 14px;
+    .receipt + .receipt { border-top: 1px solid var(--outline-v); }
+    .receipt summary {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+      padding: 7px 14px;
+      background: var(--surface-high);
       color: var(--muted);
-      font-style: italic;
-      font-size: 12px;
-      border-bottom: 1px solid var(--outline-v);
+      cursor: pointer;
+      list-style: none;
     }
+    .receipt summary::-webkit-details-marker { display: none; }
+    .receipt summary::marker { content: ''; }
+    .receipt-glyph { flex-shrink: 0; font-weight: 700; }
+    .receipt.ok .receipt-glyph { color: #5fd4a6; }
+    .receipt.failed .receipt-glyph { color: var(--error-color); }
+    .receipt-name {
+      flex-shrink: 0;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+    .receipt-args {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+    .receipt-dur { flex-shrink: 0; margin-left: auto; font-variant-numeric: tabular-nums; }
+    .receipt-reason { padding: 6px 14px 0; color: var(--muted); font-style: italic; font-size: 12px; }
+    .receipt-output {
+      max-height: 240px;
+      margin: 0;
+      padding: 10px 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* Provenance: how far an answer is backed by what ran */
+    .provenance {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .prov-badge { font-weight: 600; white-space: nowrap; }
+    .prov-grounded .prov-badge, .prov-ran .prov-badge { color: #5fd4a6; }
+    .prov-partial .prov-badge, .prov-unchecked .prov-badge { color: var(--tertiary); }
+    .prov-tool_failed .prov-badge, .prov-unbacked .prov-badge { color: var(--error-color); }
 
     /* ── Feedback ─────────────────────────────────────────────────────────── */
     .feedback-bar {
@@ -272,7 +380,7 @@
     .latency-badge {
       display: inline-block;
       margin-top: 6px;
-      font-size: 11px;
+      font-size: var(--t-xs);
       color: var(--muted);
       opacity: 0.55;
       user-select: none;
@@ -292,7 +400,7 @@
       color: var(--text);
       cursor: pointer;
       font-size: 13px;
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: var(--font-display);
       font-weight: 500;
       transition: all 0.15s;
     }
@@ -325,7 +433,7 @@
       padding: 8px 12px;
       max-height: 320px;
       overflow: auto;
-      font-family: 'Ubuntu Mono', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
       line-height: 1.5;
       white-space: pre-wrap;
@@ -337,19 +445,30 @@
     .diff-body .diff-ctx  { display: block; color: var(--muted); }
 
     /* ── Markdown Content ─────────────────────────────────────────────────── */
-    .content h1, .content h2, .content h3 { font-family: 'Space Grotesk', sans-serif; font-weight: 600; margin: 16px 0 8px; }
+    .content h1, .content h2, .content h3 { font-family: var(--font-display); font-weight: 600; margin: 16px 0 8px; }
     .content h1 { font-size: 1.3em; }
     .content h2 { font-size: 1.15em; }
     .content h3 { font-size: 1.05em; }
     .content p { margin: 0 0 10px; }
     .content ul, .content ol { padding-left: 1.5em; margin: 0 0 10px; }
+    .content ul { list-style: disc; }
+    .content ol { list-style: decimal; }
+    .content ul ul { list-style: circle; }
+    .confirm-bar { flex-wrap: wrap; }
+    .confirm-bar.card-approved .confirm-what { color: var(--tertiary); }
+    .confirm-bar.card-done .confirm-what { color: var(--grounded); }
+    .confirm-bar.card-failed .confirm-what { color: var(--error-color); }
+    .confirm-bar.card-skipped .confirm-what,
+    .confirm-bar.card-stale .confirm-what { color: var(--muted); }
+    .confirm-what { flex-basis: 100%; font-size: 12px; line-height: 1.5; margin-bottom: 6px; color: var(--text); }
+    .confirm-what code { font-size: var(--t-xs); word-break: break-all; }
     .content li { margin: 4px 0; }
     .content code {
       background: var(--surface-high);
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 0.88em;
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
     }
     .content pre {
       background: #0d0d17;
@@ -363,7 +482,7 @@
     .content a { color: var(--primary); text-decoration: underline; }
     .content table { border-collapse: collapse; width: 100%; margin: 10px 0; }
     .content th, .content td { padding: 8px 12px; border: 1px solid var(--outline-v); text-align: left; }
-    .content th { background: var(--surface-high); font-family: 'Space Grotesk'; font-weight: 500; }
+    .content th { background: var(--surface-high); font-family: var(--font-ui); font-weight: 500; }
     .content blockquote {
       border-left: 3px solid var(--primary);
       padding: 8px 16px;
@@ -389,17 +508,15 @@
       gap: 10px;
     }
     .settings-label {
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: var(--font-display);
       font-weight: 600;
       font-size: 14px;
       color: var(--text);
     }
     .settings-view-btn {
       margin-left: auto;
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--primary);
       background: none;
       border: 1px solid var(--outline-v);
@@ -410,8 +527,8 @@
     }
     .settings-view-btn:hover { background: var(--surface-high); }
     .badge {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 10px;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       background: var(--surface-high);
       color: var(--primary);
       padding: 2px 8px;
@@ -429,29 +546,28 @@
     }
     .tool-group-hdr::-webkit-details-marker { display: none; }
     .tool-group-hdr::before {
-      content: '\25B8'; font-size: 10px; color: var(--primary); transition: transform .15s;
+      content: '\25B8'; font-size: var(--t-xs); color: var(--primary); transition: transform .15s;
     }
     .tool-group[open] > .tool-group-hdr::before { transform: rotate(90deg); }
     .tool-group-name {
-      font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 12px;
+      font-family: var(--font-display); font-weight: 600; font-size: 12px;
       color: var(--text); text-transform: capitalize;
     }
-    .tool-group-count { margin-left: auto; font-family: 'Space Grotesk', monospace; font-size: 10px; color: var(--primary); }
+    .tool-group-count { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-xs); color: var(--primary); }
     .tool-row {
       display: flex; align-items: center; gap: 10px; padding: 7px 12px;
       border-top: 1px solid var(--outline-v); cursor: pointer;
     }
     .tool-row:first-of-type { border-top: none; }
     .tool-row-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-    .tool-row-name { font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text); }
+    .tool-row-name { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
     .tool-row-desc {
-      font-size: 10px; color: var(--text); opacity: .55;
+      font-size: var(--t-xs); color: var(--text); opacity: .55;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .tool-row-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
     .tool-risk {
-      font-family: 'Space Grotesk', monospace; font-size: 8px; text-transform: uppercase;
-      letter-spacing: .06em; padding: 1px 5px; border-radius: 7px;
+      font-family: var(--font-mono); font-size: var(--t-xs); padding: 1px 5px; border-radius: 7px;
       border: 1px solid var(--outline-v); color: var(--text); opacity: .55;
     }
     .tool-risk.r-caution { color: #b5842e; border-color: #b5842e66; opacity: 1; }
@@ -474,8 +590,8 @@
       width: 100%; background: var(--surface-high); border: 1px solid var(--outline-v);
       border-radius: 6px; padding: 8px 10px; color: var(--text); font-size: 13px; font-family: inherit;
     }
-    .recipe-textarea { font-family: 'Space Grotesk', monospace; font-size: 12px; resize: vertical; }
-    .recipe-hint { font-size: 11px; color: var(--muted); }
+    .recipe-textarea { font-family: var(--font-mono); font-size: 12px; resize: vertical; }
+    .recipe-hint { font-size: var(--t-xs); color: var(--muted); }
     .recipe-hint.error { color: #c0492f; }
     .recipe-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
     .recipe-item {
@@ -483,9 +599,9 @@
       border: 1px solid var(--outline-v); border-radius: 8px;
     }
     .recipe-item-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .recipe-item-name { font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text); }
+    .recipe-item-name { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
     .recipe-item-steps {
-      font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .recipe-del {
       margin-left: auto; flex: none; background: none; border: 1px solid var(--outline-v);
@@ -510,22 +626,22 @@
     .notes-item:hover { background: var(--surface-high); }
     .notes-item.active { background: var(--surface-high); border-color: var(--primary); }
     .notes-item-title {
-      font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px;
+      font-family: var(--font-display); font-weight: 600; font-size: 13px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .notes-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .notes-item-meta { font-size: var(--t-xs); color: var(--muted); margin-top: 2px; }
     .notes-item-meta .notes-dot { color: var(--primary); }
     .notes-item-meta .notes-dot-off { color: var(--muted); }
-    .notes-view-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 18px; }
-    .notes-view-meta { font-size: 11px; color: var(--muted); margin: 6px 0 18px; }
+    .notes-view-title { font-family: var(--font-display); font-weight: 600; font-size: 18px; }
+    .notes-view-meta { font-size: var(--t-xs); color: var(--muted); margin: 6px 0 18px; }
     .notes-view-body { font-size: 14px; line-height: 1.65; white-space: pre-wrap; word-wrap: break-word; }
     .notes-path {
-      font-family: ui-monospace, monospace; font-size: 12px; color: var(--text);
+      font-family: var(--font-mono); font-size: 12px; color: var(--text);
       background: var(--surface-high); border-radius: 6px; padding: 8px 10px;
       overflow-x: auto; white-space: nowrap;
     }
     .notes-view-files { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--border); }
-    .notes-loc { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+    .notes-loc { font-size: var(--t-xs); color: var(--muted); font-family: var(--font-mono); }
     .notes-msg { font-size: 12px; padding: 8px 24px; color: var(--muted); white-space: pre-wrap; }
     .notes-msg.err { color: #e95420; }
 
@@ -538,8 +654,8 @@
     .settings-nav-item:hover { border-color: var(--primary); }
     .settings-nav-item .material-symbols-outlined { color: var(--primary); font-size: 24px; flex: none; }
     .settings-nav-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .settings-nav-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; }
-    .settings-nav-sub { font-size: 11px; color: var(--muted); }
+    .settings-nav-title { font-family: var(--font-display); font-weight: 600; font-size: 14px; }
+    .settings-nav-sub { font-size: var(--t-xs); color: var(--muted); }
     .settings-nav-chev { margin-left: auto; color: var(--muted); flex: none; }
     .settings-sub-hdr {
       display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
@@ -547,11 +663,11 @@
     }
     .settings-back {
       display: inline-flex; align-items: center; gap: 4px; background: none; border: none;
-      color: var(--primary); cursor: pointer; font-family: 'Space Grotesk', sans-serif;
+      color: var(--primary); cursor: pointer; font-family: var(--font-display);
       font-size: 13px; padding: 4px 8px 4px 4px; border-radius: 6px;
     }
     .settings-back:hover { background: var(--surface-high); }
-    .settings-sub-title { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 16px; color: var(--text); }
+    .settings-sub-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--text); }
 
     /* Mode selector */
     .mode-selector-wrap { position: relative; margin-top: 8px; }
@@ -564,14 +680,14 @@
       border: 1px solid var(--outline-v);
       border-radius: 10px;
       color: var(--text);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
       cursor: pointer;
       transition: all 0.15s;
       width: 100%;
     }
     .mode-pill:hover { border-color: var(--primary); }
-    .mode-arrow { margin-left: auto; font-size: 10px; color: var(--muted); transition: transform 0.2s; }
+    .mode-arrow { margin-left: auto; font-size: var(--t-xs); color: var(--muted); transition: transform 0.2s; }
     .mode-pill.open .mode-arrow { transform: rotate(180deg); }
     .mode-dropdown {
       display: none;
@@ -602,8 +718,8 @@
     }
     .mode-option:hover { background: var(--surface); }
     .mode-option.active { background: rgba(193, 193, 255, 0.08); }
-    .mode-option strong { font-family: 'Space Grotesk'; font-size: 12px; }
-    .mode-option-desc { font-size: 11px; color: var(--muted); }
+    .mode-option strong { font-family: var(--font-ui); font-size: 12px; }
+    .mode-option-desc { font-size: var(--t-xs); color: var(--muted); }
 
     /* Think toggle */
     .btn-think-toggle {
@@ -616,7 +732,7 @@
       border: 1px solid var(--outline-v);
       border-radius: 10px;
       color: var(--text);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
       cursor: pointer;
       transition: all 0.15s;
@@ -631,13 +747,13 @@
       margin-bottom: 6px;
     }
     #temp-value {
-      font-family: 'Space Grotesk', monospace; font-size: 12px;
+      font-family: var(--font-mono); font-size: 12px;
       color: var(--tertiary);
     }
     #temp-slider {
       width: 100%; accent-color: var(--primary); cursor: pointer;
     }
-    .temp-slider-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .temp-slider-hint { font-size: var(--t-xs); color: var(--muted); margin-top: 4px; }
 
     /* Advanced preset editor */
     .preset-advanced {
@@ -645,19 +761,19 @@
       background: var(--surface-high); border: 1px solid var(--outline-v);
       border-radius: 10px;
     }
-    .preset-adv-hint { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .preset-adv-hint { font-size: var(--t-xs); color: var(--muted); margin-bottom: 8px; }
     .preset-adv-row {
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 6px;
     }
     .preset-adv-row label {
-      font-family: 'Space Grotesk', monospace; font-size: 12px; color: var(--text);
+      font-family: var(--font-mono); font-size: 12px; color: var(--text);
     }
     .preset-adv-row input {
       width: 80px; padding: 4px 8px; text-align: right;
       background: var(--surface); border: 1px solid var(--outline-v);
       border-radius: 6px; color: var(--text);
-      font-family: 'Space Grotesk', monospace; font-size: 12px;
+      font-family: var(--font-mono); font-size: 12px;
     }
 
     /* Send button → Stop state */
@@ -694,13 +810,11 @@
     .model-row:hover { border-color: var(--primary); background: var(--surface-high); }
     .model-row.model-active { border-color: var(--primary); background: rgba(193, 193, 255, 0.06); }
     .model-row-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-    .model-name { font-family: 'Space Grotesk'; font-weight: 600; font-size: 13px; white-space: nowrap; }
-    .model-id { font-family: 'Space Grotesk', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .model-name { font-family: var(--font-ui); font-weight: 600; font-size: 13px; white-space: nowrap; }
+    .model-id { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .model-tag {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       padding: 2px 6px;
       border-radius: 4px;
       background: var(--surface-high);
@@ -739,7 +853,7 @@
       border: 1px solid var(--outline-v);
       border-radius: 8px;
       color: var(--text);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
     }
     .model-select:focus, .model-name-input:focus {
@@ -750,12 +864,12 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
       color: var(--muted);
     }
     .model-add-actions { display: flex; gap: 8px; }
-    .btn { padding: 6px 16px; border-radius: 8px; font-family: 'Space Grotesk'; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .btn { padding: 6px 16px; border-radius: 8px; font-family: var(--font-ui); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
     .btn-sm { padding: 6px 14px; }
     .btn:not(.btn-muted) { background: var(--primary); color: var(--bg); border: none; }
     .btn:not(.btn-muted):hover { filter: brightness(1.1); }
@@ -767,10 +881,10 @@
       display: flex;
       justify-content: space-between;
       padding: 4px 0;
-      font-size: 11px;
+      font-size: var(--t-xs);
     }
-    .info-key { color: var(--muted); font-family: 'Space Grotesk', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
-    .info-val { color: var(--text); font-family: 'Space Grotesk', monospace; font-size: 11px; }
+    .info-key { color: var(--muted); font-family: var(--font-mono); font-size: var(--t-xs); }
+    .info-val { color: var(--text); font-family: var(--font-mono); font-size: var(--t-xs); }
 
     /* Dev-mode toggle (settings) */
     #dev-toggle {
@@ -783,7 +897,7 @@
       border: 1px solid var(--outline-v);
       border-radius: 10px;
       color: var(--text);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
       cursor: pointer;
       transition: all 0.15s;
@@ -793,9 +907,9 @@
     #dev-toggle.active #dev-state { color: var(--tertiary); }
     /* Dev-mode system stats panel (dashboard) */
     .dash-dev-block { margin-top: 8px; }
-    .dash-dev-block-head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
-    .dash-dev-pre { font-family: 'Space Grotesk', 'Ubuntu Mono', monospace; font-size: 11px; line-height: 1.45; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; margin: 0; }
-    .dash-console-pre { font-family: 'Ubuntu Mono', 'Space Grotesk', monospace; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; height: 280px; overflow-y: auto; margin: 0; padding: 10px 12px; background: #11111b; border: 1px solid var(--outline-v); border-radius: 6px; color: #cdd6f4; }
+    .dash-dev-block-head { font-size: var(--t-xs); color: var(--muted); margin-bottom: 3px; }
+    .dash-dev-pre { font-family: var(--font-mono); font-size: var(--t-xs); line-height: 1.45; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; margin: 0; }
+    .dash-console-pre { font-family: var(--font-mono); font-size: var(--t-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; height: 280px; overflow-y: auto; margin: 0; padding: 10px 12px; background: #11111b; border: 1px solid var(--outline-v); border-radius: 6px; color: #cdd6f4; }
     .dash-console-pre .ln { display: block; }
     .dash-console-pre .ln-ok   { color: #a6e3a1; }
     .dash-console-pre .ln-warn { color: #f9e2af; }
@@ -812,7 +926,7 @@
       background: var(--surface);
       border-radius: 10px;
     }
-    #settings-user-name { font-family: 'Space Grotesk'; font-weight: 500; font-size: 13px; }
+    #settings-user-name { font-family: var(--font-ui); font-weight: 500; font-size: 13px; }
 
     /* ── Overlay Panels (slide in from right) ────────────────────────────── */
     #history-panel,
@@ -848,7 +962,7 @@
       flex-shrink: 0;
     }
     .hist-panel-title, .mem-panel-title, .docs-panel-title {
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: var(--font-display);
       font-size: 18px;
       font-weight: 700;
     }
@@ -888,8 +1002,8 @@
     }
     .hist-item:hover { background: var(--surface-high); border-color: var(--primary); }
     .hist-item.active { border-color: var(--primary); background: rgba(193, 193, 255, 0.06); }
-    .hist-title { font-family: 'Space Grotesk'; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
-    .hist-meta { font-size: 11px; color: var(--muted); font-family: 'Space Grotesk', monospace; }
+    .hist-title { font-family: var(--font-ui); font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .hist-meta { font-size: var(--t-xs); color: var(--muted); font-family: var(--font-mono); }
 
     /* Memory tabs */
     .mem-tabs {
@@ -904,10 +1018,8 @@
       border: 1px solid var(--outline-v);
       border-radius: 8px;
       color: var(--muted);
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       cursor: pointer;
       transition: all 0.15s;
     }
@@ -923,7 +1035,7 @@
       border: 1px solid var(--outline-v);
       border-radius: 8px;
       color: var(--text);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       font-size: 12px;
     }
     .mem-filter:focus { outline: none; border-color: var(--primary); }
@@ -942,8 +1054,8 @@
     }
     .mem-row:hover { background: var(--surface-high); }
     .mem-key {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 11px;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--primary);
       min-width: 100px;
       font-weight: 600;
@@ -975,11 +1087,9 @@
     }
     .mem-val-input:focus { outline: none; }
     .mem-src {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 10px;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
     }
     .mem-actions { flex-shrink: 0; }
     .btn-mem-del {
@@ -1019,7 +1129,7 @@
       text-align: center;
       font-size: 12px;
       padding: 0 16px;
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
     }
     .docs-upload-status.ok { color: #66bb6a; }
     .docs-upload-status.err { color: var(--error-color); }
@@ -1041,7 +1151,7 @@
       margin: 12px;
       pointer-events: none;
       color: var(--on-surface, #fff);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
     }
     .chat-drop-overlay.active { display: flex; }
     .chat-drop-overlay .material-symbols-outlined { font-size: 40px; color: var(--primary); }
@@ -1056,7 +1166,7 @@
       border-radius: 8px;
       background: var(--surface-container-high, rgba(40,40,55,0.9));
       color: var(--muted);
-      font-family: 'Space Grotesk', monospace;
+      font-family: var(--font-mono);
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.2s;
@@ -1076,8 +1186,8 @@
     }
     .doc-icon { font-size: 20px; flex-shrink: 0; }
     .doc-info { flex: 1; min-width: 0; }
-    .doc-name { font-family: 'Space Grotesk'; font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .doc-meta { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: 'Space Grotesk', monospace; }
+    .doc-name { font-family: var(--font-ui); font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-meta { font-size: var(--t-xs); color: var(--muted); margin-top: 2px; font-family: var(--font-mono); }
     .btn-doc-del {
       background: none;
       border: none;
@@ -1091,10 +1201,8 @@
 
     /* Input hint */
     .input-hint {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--muted);
     }
 
@@ -1112,8 +1220,8 @@
     }
     .stat-card:hover { border-color: var(--primary); background: var(--surface-high); }
     .stat-card-icon { font-size: 24px; }
-    .stat-card-value { font-family: 'Space Grotesk'; font-size: 28px; font-weight: 700; color: var(--primary); }
-    .stat-card-label { font-family: 'Space Grotesk', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+    .stat-card-value { font-family: var(--font-ui); font-size: 28px; font-weight: 700; color: var(--primary); }
+    .stat-card-label { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--muted); }
 
     /* Dashboard recent sessions */
     .recent-sessions-list { }
@@ -1127,10 +1235,8 @@
 
     /* ── Sidebar History open button ─────────────────────────────────────── */
     .btn-hist-open {
-      font-family: 'Space Grotesk', monospace;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+      font-size: var(--t-xs);
       color: var(--primary);
       opacity: 0.6;
       background: none;
@@ -1185,7 +1291,6 @@
 
       #topbar-actions { gap: 10px; flex-shrink: 0; margin-left: 8px; }
       #open-computer-btn,
-      #topbar-actions a[href="/dnd"],
       #topbar-user { display: none; }
 
       /* ── Study tab — sidebar + results side-by-side overflows phone
@@ -1232,8 +1337,7 @@
       padding: 16px 0;
     }
     .study-sidebar-title {
-      font-family: var(--font-headline); font-size: 10px; letter-spacing: .12em;
-      text-transform: uppercase; color: var(--muted); padding: 6px 16px 2px;
+      font-family: var(--font-headline); font-size: var(--t-xs); color: var(--muted); padding: 6px 16px 2px;
     }
     .study-cat-btn {
       width: 100%; text-align: left; padding: 7px 16px;
@@ -1268,11 +1372,10 @@
     .study-search-input:focus { border-color: var(--accent); }
     .study-filter-chips { display: flex; gap: 6px; }
     .study-chip {
-      padding: 4px 12px; border-radius: 99px; font-size: 11px;
-      font-family: var(--font-headline); letter-spacing: .07em;
+      padding: 4px 12px; border-radius: 99px; font-size: var(--t-xs);
+      font-family: var(--font-headline);
       border: 1px solid var(--border); background: none;
       color: var(--muted); cursor: pointer; transition: all .15s;
-      text-transform: uppercase;
     }
     .study-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .study-chip:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
@@ -1280,7 +1383,6 @@
     .study-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
     .study-tab-btn {
       padding: 8px 20px; font-size: 12px; font-family: var(--font-headline);
-      text-transform: uppercase; letter-spacing: .08em;
       border: none; background: none; color: var(--muted); cursor: pointer;
       border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s;
     }
@@ -1294,8 +1396,7 @@
     .study-result-card:hover { border-color: var(--accent); }
     .study-result-source {
       display: inline-block; padding: 2px 8px; border-radius: 4px;
-      font-size: 10px; font-family: var(--font-headline); letter-spacing: .08em;
-      text-transform: uppercase; margin-bottom: 6px;
+      font-size: var(--t-xs); font-family: var(--font-headline); margin-bottom: 6px;
       background: rgba(var(--accent-rgb, 130,120,255),.15); color: var(--accent);
     }
     .study-result-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
@@ -1304,12 +1405,12 @@
     .study-result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .study-badge-free {
       display: inline-block; padding: 2px 7px; border-radius: 4px;
-      font-size: 10px; font-family: var(--font-headline); text-transform: uppercase;
+      font-size: var(--t-xs); font-family: var(--font-headline);
       background: rgba(72,199,142,.15); color: #48c78e; border: 1px solid rgba(72,199,142,.3);
     }
     .study-badge-unknown {
       display: inline-block; padding: 2px 7px; border-radius: 4px;
-      font-size: 10px; font-family: var(--font-headline); text-transform: uppercase;
+      font-size: var(--t-xs); font-family: var(--font-headline);
       background: rgba(255,170,0,.1); color: #fa0; border: 1px solid rgba(255,170,0,.25);
     }
     .study-empty { text-align: center; padding: 48px 0; color: var(--muted); font-size: 14px; }
@@ -1335,7 +1436,7 @@
     @media (max-width: 700px) { .dash-grid { grid-template-columns: 1fr; } }
     .dash-col { display: flex; flex-direction: column; }
     .dash-section { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 12px 14px; }
-    .dash-section-head { display: flex; align-items: center; gap: 6px; font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
+    .dash-section-head { display: flex; align-items: center; gap: 6px; font-family: var(--font-ui); font-size: var(--t-xs); color: var(--muted); margin-bottom: 10px; }
     .dash-refresh-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--muted); padding: 0; display: flex; align-items: center; transition: color .15s; }
     .dash-refresh-btn:hover { color: var(--accent); }
     .dash-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -1346,13 +1447,13 @@
     .dash-stat-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--outline-v); }
     .dash-stat-row:last-child { border-bottom: none; }
     .dash-stat-key { font-size: 12px; color: var(--muted); }
-    .dash-stat-val { font-family: 'Space Grotesk'; font-size: 14px; font-weight: 600; color: var(--text); }
-    .dash-action-btn { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--outline-v); border-radius: 6px; padding: 7px 12px; font-family: 'Space Grotesk'; font-size: 12px; color: var(--text); cursor: pointer; transition: background .15s, border-color .15s; text-align: left; }
+    .dash-stat-val { font-family: var(--font-ui); font-size: 14px; font-weight: 600; color: var(--text); }
+    .dash-action-btn { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--outline-v); border-radius: 6px; padding: 7px 12px; font-family: var(--font-ui); font-size: 12px; color: var(--text); cursor: pointer; transition: background .15s, border-color .15s; text-align: left; }
     .dash-action-btn:hover { background: var(--surface-high); border-color: var(--accent); color: var(--accent); }
     .dash-goals-list { display: flex; flex-direction: column; gap: 8px; }
     .dash-goal-item { background: var(--surface); border: 1px solid var(--outline-v); border-radius: 6px; padding: 8px 10px; }
     .dash-goal-title { font-size: 13px; color: var(--text); font-weight: 500; }
-    .dash-goal-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .dash-goal-meta { font-size: var(--t-xs); color: var(--muted); margin-top: 3px; }
     .dash-goal-bar { height: 3px; background: var(--outline-v); border-radius: 2px; margin-top: 6px; overflow: hidden; }
     .dash-goal-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
     /* Briefing card */
@@ -1364,7 +1465,7 @@
 
     /* ── Memory browser ──────────────────────────────────────────── */
     .mem-tabbar { display: flex; align-items: center; gap: 2px; padding: 10px 16px; border-bottom: 1px solid var(--outline-v); flex-shrink: 0; }
-    .mem-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 6px 12px; font-family: 'Space Grotesk'; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s; }
+    .mem-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 6px 12px; font-family: var(--font-ui); font-size: 12px; color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s; }
     .mem-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     .mem-tab:hover:not(.active) { color: var(--text); }
     .mem-search-input { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--text); outline: none; width: 200px; transition: border-color .15s; }
@@ -1373,45 +1474,45 @@
     .mem-pane.active { display: block; }
     .mem-facts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
     .mem-fact-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 12px 14px; }
-    .mem-fact-key { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin-bottom: 4px; }
+    .mem-fact-key { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--accent); margin-bottom: 4px; }
     .mem-fact-value { font-size: 13px; color: var(--text); line-height: 1.5; }
-    .mem-fact-meta { font-size: 11px; color: var(--muted); margin-top: 6px; display: flex; gap: 8px; }
+    .mem-fact-meta { font-size: var(--t-xs); color: var(--muted); margin-top: 6px; display: flex; gap: 8px; }
     .mem-timeline { display: flex; flex-direction: column; gap: 0; max-width: 700px; }
-    .mem-day-label { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 12px 0 6px; border-bottom: 1px solid var(--outline-v); margin-bottom: 8px; }
+    .mem-day-label { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--muted); padding: 12px 0 6px; border-bottom: 1px solid var(--outline-v); margin-bottom: 8px; }
     .mem-ep-row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--outline-v) 40%, transparent); align-items: flex-start; }
-    .mem-ep-type { font-family: 'Space Grotesk'; font-size: 10px; padding: 2px 6px; border-radius: 3px; background: var(--surface-high); color: var(--muted); flex-shrink: 0; margin-top: 1px; }
+    .mem-ep-type { font-family: var(--font-ui); font-size: var(--t-xs); padding: 2px 6px; border-radius: 3px; background: var(--surface-high); color: var(--muted); flex-shrink: 0; margin-top: 1px; }
     .mem-ep-content { font-size: 13px; color: var(--text); line-height: 1.5; flex: 1; }
-    .mem-ep-time { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+    .mem-ep-time { font-size: var(--t-xs); color: var(--muted); flex-shrink: 0; }
     .mem-goals-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
     @media (max-width: 700px) { .mem-goals-columns { grid-template-columns: 1fr; } }
-    .mem-goals-col-head { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--outline-v); }
+    .mem-goals-col-head { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--muted); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--outline-v); }
     .mem-goal-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
     .mem-goal-card-title { font-size: 13px; color: var(--text); font-weight: 500; }
-    .mem-goal-card-step { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .mem-goal-card-step { font-size: var(--t-xs); color: var(--muted); margin-top: 4px; }
     .mem-goal-card-bar { height: 3px; background: var(--outline-v); border-radius: 2px; margin-top: 8px; overflow: hidden; }
     .mem-goal-card-fill { height: 100%; background: var(--accent); border-radius: 2px; }
     .mem-reflections { max-width: 700px; display: flex; flex-direction: column; gap: 12px; }
     .mem-reflection-entry { background: var(--surface-low); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 13px; color: var(--text); line-height: 1.6; }
-    .mem-reflection-date { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .mem-reflection-date { font-size: var(--t-xs); color: var(--muted); margin-top: 4px; }
 
     /* ── Code block copy button ──────────────────────────────────── */
     .code-wrap { position: relative; }
-    .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface-high); border: 1px solid var(--outline-v); border-radius: 4px; padding: 3px 8px; font-size: 11px; font-family: 'Space Grotesk'; color: var(--muted); cursor: pointer; transition: color .15s, background .15s; }
+    .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface-high); border: 1px solid var(--outline-v); border-radius: 4px; padding: 3px 8px; font-size: var(--t-xs); font-family: var(--font-ui); color: var(--muted); cursor: pointer; transition: color .15s, background .15s; }
     .copy-btn:hover { color: var(--accent); background: var(--surface); }
     .copy-btn.copied { color: #4ade80; }
 
     /* ── Briefing card in chat messages ─────────────────────────── */
     .briefing-msg-card { background: var(--surface-low); border-left: 3px solid var(--tertiary); border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 8px; }
-    .briefing-msg-title { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--tertiary); margin-bottom: 6px; }
+    .briefing-msg-title { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--tertiary); margin-bottom: 6px; }
 
     /* ── New-capabilities awareness card (per-namespace stepper) ──── */
     .cap-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-left: 3px solid var(--tertiary); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 0 0 14px; }
     .cap-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .cap-card-title { font-family: 'Space Grotesk'; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--tertiary); }
-    .cap-card-progress { font-size: 11px; color: var(--muted); }
+    .cap-card-title { font-family: var(--font-ui); font-size: var(--t-xs); color: var(--tertiary); }
+    .cap-card-progress { font-size: var(--t-xs); color: var(--muted); }
     .cap-card-x { margin-left: auto; background: none; border: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
     .cap-card-x:hover { color: var(--text); }
-    .cap-card-ns { font-family: 'Space Grotesk'; font-size: 14px; color: var(--text); margin-bottom: 6px; }
+    .cap-card-ns { font-family: var(--font-ui); font-size: 14px; color: var(--text); margin-bottom: 6px; }
     .cap-card-ns code { background: var(--surface); padding: 1px 6px; border-radius: 4px; }
     .cap-card-tool { font-size: 13px; line-height: 1.5; color: var(--text); margin-bottom: 6px; }
     .cap-card-tool b { color: var(--tertiary); font-weight: 600; }
@@ -1427,7 +1528,7 @@
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
 <!-- SIDEBAR                                                                  -->
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
-<aside id="sidebar" class="w-[240px] h-screen overflow-y-auto bg-[#0d0d17] flex flex-col py-6 px-4 shrink-0">
+<aside id="sidebar" class="w-[240px] h-screen overflow-y-auto kai-surface-page flex flex-col py-6 px-4 shrink-0">
 
   <!-- Brand -->
   <div class="mb-6">
@@ -1437,7 +1538,7 @@
       </div>
       <div>
         <h1 class="text-2xl font-bold tracking-tighter text-primary font-headline leading-none">Kai</h1>
-        <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Local AI Agent</span>
+        <span class="kai-wordmark-sub font-headline uppercase tracking-widest text-[12px] text-slate-500">Local AI Agent</span>
       </div>
     </div>
   </div>
@@ -1448,31 +1549,31 @@
   <!-- System Stats -->
   <div class="space-y-3 mb-6">
     <div class="flex justify-between items-center">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Model</span>
-      <span id="s-model" class="font-headline text-[11px] text-primary">&mdash;</span>
+      <span class="font-headline text-[12px] text-slate-500">Model</span>
+      <span id="s-model" class="font-headline text-[12px] text-primary">&mdash;</span>
     </div>
     <div class="flex justify-between items-center">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Context</span>
-      <span id="s-ctx" class="font-headline text-[11px] text-primary">&mdash;</span>
+      <span class="font-headline text-[12px] text-slate-500">Context</span>
+      <span id="s-ctx" class="font-headline text-[12px] text-primary">&mdash;</span>
     </div>
     <div class="flex justify-between items-center">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Uptime</span>
-      <span id="s-uptime" class="font-headline text-[11px] text-slate-400">&mdash;</span>
+      <span class="font-headline text-[12px] text-slate-500">Uptime</span>
+      <span id="s-uptime" class="font-headline text-[12px] text-slate-400">&mdash;</span>
     </div>
     <div class="flex justify-between items-center">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Tokens</span>
-      <span id="s-tokens" class="font-headline text-[11px] text-slate-400">&mdash;</span>
+      <span class="font-headline text-[12px] text-slate-500">Tokens</span>
+      <span id="s-tokens" class="font-headline text-[12px] text-slate-400">&mdash;</span>
     </div>
     <div class="flex justify-between items-center">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-500">Avg Think</span>
-      <span id="s-think" class="font-headline text-[11px] text-slate-400">&mdash;</span>
+      <span class="font-headline text-[12px] text-slate-500">Avg Think</span>
+      <span id="s-think" class="font-headline text-[12px] text-slate-400">&mdash;</span>
     </div>
   </div>
 
   <!-- History -->
   <div class="mb-2">
     <div class="flex justify-between items-center px-1 mb-2">
-      <span class="font-headline uppercase tracking-widest text-[10px] text-slate-600 font-bold">History</span>
+      <span class="font-headline text-[12px] text-slate-600 font-bold">History</span>
       <button class="btn-hist-open" onclick="openHistoryPanel()">view all &rsaquo;</button>
     </div>
     <div id="s-recent-sessions" class="space-y-1">
@@ -1489,7 +1590,7 @@
       <span class="material-symbols-outlined text-lg">add</span>
       New Chat
     </button>
-    <p class="text-center font-headline text-[10px] uppercase tracking-widest text-slate-600">
+    <p class="text-center font-headline text-[12px] text-slate-600">
       Enter to send &middot; Shift+Enter for newline
     </p>
   </div>
@@ -1504,25 +1605,24 @@
 <main id="main" class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-surface">
 
   <!-- Tab Bar -->
-  <header id="app-header" class="h-14 flex justify-between items-center w-full px-8 bg-[#12121d] border-b border-outline-variant/10 shrink-0">
+  <header id="app-header" class="h-14 flex justify-between items-center w-full px-8 kai-surface-page border-b border-outline-variant/10 shrink-0">
     <!-- Hamburger — mobile only -->
     <button id="mobile-menu-btn" onclick="openSidebar()" class="mr-3 text-on-surface-variant hover:text-primary transition-colors" aria-label="Open menu">
       <span class="material-symbols-outlined">menu</span>
     </button>
     <nav id="tab-nav" class="flex items-center gap-8">
-      <button class="tab-btn active font-headline uppercase tracking-widest text-[12px] transition-colors bg-transparent border-none cursor-pointer" data-tab="dashboard">Dashboard</button>
-      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="chat">Chat</button>
-      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="settings">Settings</button>
-      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="study">Study</button>
-      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="memory">Memory</button>
-      <button class="tab-btn font-headline uppercase tracking-widest text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="notes">Notes</button>
+      <button class="tab-btn active font-headline text-[12px] transition-colors bg-transparent border-none cursor-pointer" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn font-headline text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="chat">Chat</button>
+      <button class="tab-btn font-headline text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="settings">Settings</button>
+      <button class="tab-btn font-headline text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="study">Study</button>
+      <button class="tab-btn font-headline text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="memory">Memory</button>
+      <button class="tab-btn font-headline text-[12px] text-slate-500 hover:text-primary transition-colors bg-transparent border-none cursor-pointer" data-tab="notes">Notes</button>
     </nav>
     <div id="topbar-actions" class="flex items-center gap-6">
-      <button id="open-computer-btn" class="font-headline uppercase tracking-widest text-[11px] text-slate-500 hover:text-[#e95420] transition-colors bg-transparent border-none cursor-pointer flex items-center gap-1" title="Kai's Computer">
+      <button id="open-computer-btn" class="font-headline text-[12px] text-slate-500 hover:text-[#e95420] transition-colors bg-transparent border-none cursor-pointer flex items-center gap-1" title="Kai's Computer">
         <span class="material-symbols-outlined" style="font-size:16px">desktop_windows</span>
         Computer
       </button>
-      <a href="/dnd" class="font-headline uppercase tracking-widest text-[11px] text-slate-500 hover:text-primary transition-colors">D&amp;D</a>
       <div class="flex items-center gap-2">
         <span id="topbar-user" class="font-headline text-[12px] text-on-surface/80"></span>
         <span class="material-symbols-outlined text-on-surface-variant">account_circle</span>
@@ -1544,7 +1644,7 @@
         <div id="dash-briefing-wrap" style="display:none;" class="dash-briefing-card mb-6">
           <div class="dash-briefing-header">
             <span class="material-symbols-outlined" style="font-size:16px;color:var(--tertiary)">wb_sunny</span>
-            <span id="dash-briefing-date" style="font-family:'Space Grotesk';font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--tertiary)"></span>
+            <span id="dash-briefing-date" style="font-family: var(--font-ui);font-size: var(--t-xs);color:var(--tertiary)"></span>
           </div>
           <div id="dash-briefing-body" style="font-size:13px;line-height:1.6;color:var(--text);white-space:pre-line;"></div>
         </div>
@@ -1655,7 +1755,7 @@
           <div class="dash-section-head">
             <span class="material-symbols-outlined" style="font-size:15px">terminal</span>
             Server Console
-            <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);cursor:pointer">
+            <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size: var(--t-xs);text-transform:none;color:var(--muted);cursor:pointer">
               <input type="checkbox" id="dash-console-autoscroll" checked style="margin:0;cursor:pointer"> autoscroll
             </label>
             <button id="dash-console-clear" class="dash-refresh-btn" title="Clear the console view" style="margin-left:10px">
@@ -1700,7 +1800,7 @@
               </button>
               <button class="suggestion p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-all group flex flex-col gap-2 border border-outline-variant/5">
                 <span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform">system_update</span>
-                <span class="font-headline text-sm font-medium">Check for Windows updates</span>
+                <span class="font-headline text-sm font-medium">Check for system updates</span>
               </button>
               <button class="suggestion p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-all group flex flex-col gap-2 border border-outline-variant/5">
                 <span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform">wifi</span>
@@ -1712,7 +1812,7 @@
               </button>
               <button class="suggestion p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-all group flex flex-col gap-2 border border-outline-variant/5">
                 <span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform">rocket_launch</span>
-                <span class="font-headline text-sm font-medium">What programs start with Windows?</span>
+                <span class="font-headline text-sm font-medium">What starts automatically at boot?</span>
               </button>
             </div>
           </div>
@@ -1724,8 +1824,7 @@
       <div id="goals-banner" style="display:none;" class="goals-banner">
         <span class="material-symbols-outlined" style="font-size:14px;color:var(--tertiary)">track_changes</span>
         <span id="goals-banner-text" style="flex:1;font-size:12px;color:var(--muted)"></span>
-        <button id="goals-banner-view" style="font-size:11px;font-family:'Space Grotesk';color:var(--accent);background:none;border:none;cursor:pointer;text-transform:uppercase;letter-spacing:.05em" title="Open memory browser">View</button>
-        <button id="goals-banner-dismiss" style="background:none;border:none;cursor:pointer;color:var(--muted);line-height:1" title="Dismiss">
+        <button id="goals-banner-view" style="font-size: var(--t-xs);font-family: var(--font-ui);color:var(--accent);background:none;border:none;cursor:pointer;border:none;cursor:pointer;color:var(--muted);line-height:1" title="Dismiss">
           <span class="material-symbols-outlined" style="font-size:14px">close</span>
         </button>
       </div>
@@ -1892,7 +1991,7 @@
             <div class="settings-label">Response Mode</div>
             <div class="mode-selector-wrap">
               <button class="mode-pill" id="mode-pill" onclick="toggleModeDropdown()">
-                <span id="mode-label">Short answers</span>
+                <span id="mode-label">Default</span>
                 <span class="mode-arrow">&#9662;</span>
               </button>
               <div id="mode-dropdown" class="mode-dropdown">
@@ -1943,14 +2042,14 @@
               </div>
             </div>
 
-            <!-- Temperature slider (this chat only) -->
+            <!-- Temperature slider (overrides the mode's temperature) -->
             <div class="temp-slider-wrap">
               <div class="temp-slider-head">
                 <span class="settings-label" style="margin:0">Temperature</span>
                 <span id="temp-value">0.40</span>
               </div>
               <input type="range" id="temp-slider" min="0" max="2" step="0.01" value="0.399">
-              <div class="temp-slider-hint">Adjusts this chat only</div>
+              <div class="temp-slider-hint">Overrides the mode's temperature for your account until you pick a mode or Kai restarts</div>
             </div>
 
             <!-- Advanced: editable + saved preset temperatures -->
@@ -1974,6 +2073,7 @@
                 <label>Crazy</label>
                 <input type="number" min="0" max="2" step="0.01" id="adv-crazy">
               </div>
+              <div class="preset-adv-hint" id="preset-adv-msg" role="status"></div>
               <div class="model-add-actions">
                 <button class="btn btn-sm" id="preset-adv-save" onclick="savePresetTemps()">Save</button>
               </div>
@@ -2044,6 +2144,7 @@
             <div class="temp-slider-hint" style="margin-top:6px">Chain existing tools into a one-step shortcut Kai can run.</div>
             <div id="recipe-form" class="recipe-form" style="display:none">
               <input id="recipe-name" class="recipe-input" type="text" placeholder="Name (e.g. speed-up-pc)" maxlength="64">
+              <input id="recipe-desc" class="recipe-input" type="text" placeholder="What it does (Kai reads this to pick it)" maxlength="200">
               <input id="recipe-triggers" class="recipe-input" type="text" placeholder="Trigger words, comma-separated (optional)">
               <textarea id="recipe-steps" class="recipe-textarea" rows="4" placeholder="One tool per line, e.g. system.clear_temp_files"></textarea>
               <div class="recipe-hint" id="recipe-error">One tool per line. Name a step to reuse its output: "disk = files.disk_usage path=/" then "files.read path={{disk}}". Steps that don't reference each other run in parallel.</div>
@@ -2076,6 +2177,18 @@
               <button class="settings-view-btn" onclick="openDocsPanel()">Manage</button>
             </div>
             <div id="s-docs-preview" class="mt-2"></div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Your data</span>
+            </div>
+            <div class="settings-nav-sub" style="margin:6px 0 10px">Download everything Kai stores for this account, or delete the account and everything Kai remembers for it.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="settings-view-btn" id="privacy-export-btn">Export my data</button>
+              <button class="settings-view-btn" id="privacy-delete-btn" style="color:#ff7a6b">Delete my account…</button>
+            </div>
+            <div class="settings-nav-sub" id="privacy-msg" style="margin-top:8px"></div>
           </div>
         </div>
 
@@ -2170,7 +2283,7 @@
             <div class="study-empty">
               <span class="material-symbols-outlined" style="font-size:40px;opacity:.3;display:block;margin-bottom:8px;">school</span>
               Search above to find open-access papers and books.<br>
-              <span style="font-size:11px;opacity:.6;">arXiv · PubMed Central · Semantic Scholar · Open Library · Project Gutenberg</span>
+              <span style="font-size: var(--t-xs);opacity:.6;">arXiv · PubMed Central · Semantic Scholar · Open Library · Project Gutenberg</span>
             </div>
           </div>
 

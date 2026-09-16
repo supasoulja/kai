@@ -81,6 +81,10 @@ const welcomeEl  = $('welcome');
 let isStreaming   = false;
 let _activeController = null;   // AbortController for the in-flight /chat stream
 let _userStopped     = false;   // true when the current abort was a deliberate Stop
+let _maxInputChars   = 8000;    // server's chat limit, refreshed from /info
+let _greetingActive  = false;   // Kai's opening line is still streaming
+let _queuedMessage   = null;    // typed during the greeting; sent when it finishes
+let _approveCallId   = null;    // set by a card's Go ahead: the call the next message approves
 
 // Stop the in-flight turn: tell the backend to abort (stops tool loops + thinking
 // loops server-side) and abort the local stream. Whatever was generated is kept.
@@ -807,6 +811,16 @@ async function loadInfo() {
     const d = await fetch('/info').then(r => r.json());
     const model = (d.model || '').replace(':latest', '');
 
+    // Who is signed in — topbar and Settings → You
+    if (d.user && d.user.name) {
+      _currentUser = { name: d.user.name, initial: d.user.name[0].toUpperCase() };
+      const tu = $('topbar-user');
+      if (tu) tu.textContent = d.user.name;
+      const su = $('settings-user-name');
+      if (su) su.textContent = d.user.name;
+    }
+    if (d.max_input_chars) _maxInputChars = d.max_input_chars;
+
     // Model row
     const modelEl = $('s-model');
     if (modelEl) modelEl.textContent = model;
@@ -833,23 +847,27 @@ async function loadInfo() {
       hl.innerHTML = '<div class="info-row"><span class="info-key">\u2014</span><span class="info-val">no facts yet</span></div>';
     }
 
-    // Add User section \u2014 owner only
+    // What this account may do comes from the server's permission table
+    // (kai/core/permissions.py), never from guessing at the level here.
+    const can = new Set(d.capabilities || []);
+
+    // Add User section — owner and admins
     const addUserSection = $('add-user-section');
-    if (addUserSection) addUserSection.style.display = d.is_owner ? '' : 'none';
+    if (addUserSection) addUserSection.style.display = can.has('accounts.create') ? '' : 'none';
 
-    // System control (restart / shutdown) \u2014 owner only
+    // System control (restart / shutdown) — owner and admins
     const sysControl = $('system-control-section');
-    if (sysControl) sysControl.style.display = d.is_owner ? '' : 'none';
+    if (sysControl) sysControl.style.display = can.has('server.control') ? '' : 'none';
 
-    // Server console \u2014 owner only (also starts polling if dashboard is open)
-    KaiConsole.setOwner(!!d.is_owner);
-    if (d.is_owner && document.getElementById('panel-dashboard')?.classList.contains('active')) {
+    // Server console — owner and admins (also starts polling if dashboard is open)
+    KaiConsole.setOwner(can.has('server.control'));
+    if (can.has('server.control') && document.getElementById('panel-dashboard')?.classList.contains('active')) {
       KaiConsole.start();
     }
   } catch { /* ignore */ }
 }
 
-// Add-user form (owner only)
+// Add-user form (owner and admins)
 (function initUserAddForm() {
   const addBtn    = $('user-add-btn');
   const form      = $('user-add-form');
@@ -878,7 +896,7 @@ async function loadInfo() {
     const pin  = pinIn.value;
 
     if (!name) { if (msgEl) msgEl.textContent = 'Enter a name.'; return; }
-    if (pin.length < 4) { if (msgEl) msgEl.textContent = 'PIN must be at least 4 digits.'; return; }
+    if (!/^\d{4,8}$/.test(pin)) { if (msgEl) msgEl.textContent = 'PIN must be 4–8 digits.'; return; }
 
     saveBtn.disabled = true;
     try {
@@ -895,7 +913,7 @@ async function loadInfo() {
       nameIn.value = '';
       pinIn.value = '';
       form.style.display = 'none';
-      if (msgEl) msgEl.textContent = `${esc(name)} can now log in with their PIN.`;
+      if (msgEl) msgEl.textContent = `${name} can now log in with their PIN.`;
     } catch {
       if (msgEl) msgEl.textContent = 'Network error. Please try again.';
     } finally {
@@ -1226,9 +1244,31 @@ function renderMarkdown(content, text) {
   scrollEnd();
 }
 
+function showComposerNotice(text) {
+  const t = $('chat-drop-toast');
+  if (!t) return;
+  t.textContent = text;
+  t.className = 'chat-drop-toast show';
+  clearTimeout(showComposerNotice._timer);
+  showComposerNotice._timer = setTimeout(() => { t.className = 'chat-drop-toast'; }, 6000);
+}
+
 async function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || isStreaming) return;
+  if (!text) return;
+  if (isStreaming) {
+    // Kai's greeting is still streaming: hold the message and send it right after.
+    if (_greetingActive) {
+      _queuedMessage = _queuedMessage ? `${_queuedMessage}\n${text}` : text;  // never drop an earlier one
+      inputEl.value = '';
+      inputEl.placeholder = 'Sending as soon as Kai finishes saying hello…';
+    }
+    return;
+  }
+  if (text.length > _maxInputChars) {
+    showComposerNotice(`That message is ${text.length.toLocaleString()} characters; the limit is ${_maxInputChars.toLocaleString()}. Shorten it, or attach it as a document.`);
+    return;
+  }
 
   isStreaming       = true;
   setSendStopMode(true);
@@ -1256,11 +1296,15 @@ async function sendMessage() {
   _userStopped = false;
   const streamTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min ceiling
 
+  const approveId = _approveCallId;  // this message is a card's Go ahead for that call
+  _approveCallId = null;
+
   try {
+    const receipts = [];  // tools that actually ran this turn, from tool_result events
     const resp = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify(approveId ? { message: text, confirm: approveId } : { message: text }),
       signal: controller.signal,
     });
 
@@ -1285,13 +1329,6 @@ async function sendMessage() {
           const skipAsWaking = isFirstMsg && ev.text === 'Thinking...';
           if (!hasTokens && !skipAsWaking) setStatus(si, ev.text);
           if (!skipAsWaking) faceOnStatus(ev.text);
-          if (ev.text !== 'Thinking...' && ev.text !== 'Responding...' && ev.text !== 'Compressing memory...') {
-            if (pendingReason) {
-              statusLog.push({ type: 'reason', text: pendingReason });
-              pendingReason = null;
-            }
-            statusLog.push({ type: 'tool', text: ev.text });
-          }
 
         } else if (ev.type === 'think_step') {
           pendingReason = ev.text;
@@ -1327,9 +1364,14 @@ async function sendMessage() {
           }
           scrollEnd();
 
+        } else if (ev.type === 'tool_result') {
+          receipts.push({ ...ev, reason: pendingReason });
+          if (ev.call_id) _setCardState(ev.call_id, ev.ok ? 'done' : 'failed', ev);
+          pendingReason = null;
+
         } else if (ev.type === 'confirm_tool') {
           console.log('[confirm_tool] received:', ev.name, ev.label);
-          pendingConfirm = { name: ev.name, label: ev.label, diff: ev.diff || '' };
+          pendingConfirm = { name: ev.name, label: ev.label, args: ev.args || {}, diff: ev.diff || '', call_id: ev.call_id || '' };
 
         } else if (ev.type === 'token') {
           if (!hasTokens) { hideStatus(si); hasTokens = true; stopWakingAnimation(); setFace('responding'); }
@@ -1374,7 +1416,7 @@ async function sendMessage() {
           } else if (!hasTokens) hideStatus(si);
           // If an error cut the stream short, say so \u2014 don't let a partial
           // response look like a complete, intentional answer.
-          if (streamError) {
+          if (streamError && fullText) {
             const note = document.createElement('div');
             note.className = 'stream-error-note';
             note.textContent = '\u26A0 ' + streamError +
@@ -1391,7 +1433,11 @@ async function sendMessage() {
           }
           faceOnDone(!!streamError, fullText);
           if (fullText) playTTS(fullText);
-          if (statusLog.length > 0) addActivityLog(content, statusLog);
+          if (receipts.length) addReceipts(content, receipts);
+          if (approveId && !receipts.some(r => r.call_id === approveId)) {
+            _setCardState(approveId, streamError ? 'interrupted' : 'stale');
+          }
+          if (fullText && ev.grounding && !pendingConfirm) addProvenance(content, ev.grounding);
           if (ev.message_id && fullText) addFeedbackBar(content.closest('.bubble'), ev.message_id, fullText);
           if (ev.latency_ms != null && fullText) addLatencyBadge(content.closest('.bubble'), ev.latency_ms);
           if (pendingConfirm) {
@@ -1432,24 +1478,59 @@ async function sendMessage() {
   _activeController  = null;
   _userStopped       = false;
   setSendStopMode(false);
+  if (approveId) _setCardState(approveId, 'interrupted');  // only a card still "approved" changes
+  syncApprovalCards();
   if (inputEl) inputEl.focus();
   // Refresh sidebar stats after each turn
   loadInfo();
 }
 
-// ── Activity log ─────────────────────────────────────────────────────────────
+// ── Receipts and provenance ──────────────────────────────────────────────────
+// Receipts come from tool_result events, so only tools that actually ran appear (T2-23);
+// the same data is saved with the message and redrawn when a chat is reopened (T2-28).
 
-function addActivityLog(content, steps) {
-  const toolCount = steps.filter(s => s.type === 'tool').length;
-  const el = document.createElement('details');
-  el.className = 'think-block activity-block';
-  el.innerHTML = `<summary>${toolCount} action${toolCount !== 1 ? 's' : ''} taken</summary>` +
-    steps.map(s => s.type === 'reason'
-      ? `<div class="activity-reason">${esc(s.text)}</div>`
-      : `<div class="activity-step">${esc(s.text)}</div>`
-    ).join('');
+function _argText(args) {
+  return Object.entries(args || {})
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' ');
+}
+
+function addReceipts(content, receipts) {
+  const el = document.createElement('div');
+  el.className = 'receipts';
+  el.innerHTML = receipts.map(r => {
+    const ms = Number(r.duration_ms) || 0;
+    const dur = ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+    const body = r.ok ? r.output : r.error;
+    return `<details class="receipt ${r.ok ? 'ok' : 'failed'}">` +
+      `<summary><span class="receipt-glyph">${r.ok ? '\u2713' : '\u2715'}</span>` +
+      `<code class="receipt-name">${esc(r.name)}</code>` +
+      `<code class="receipt-args">${esc(_argText(r.args))}</code>` +
+      `<span class="receipt-dur">${dur}</span></summary>` +
+      (r.reason ? `<div class="receipt-reason">${esc(r.reason)}</div>` : '') +
+      (body ? `<pre class="receipt-output">${esc(body)}</pre>` : '') +
+      `</details>`;
+  }).join('');
   content.parentNode.insertBefore(el, content);
   scrollEnd();
+}
+
+const _PROVENANCE = {
+  grounded:    ['\u2713', 'Grounded', g => `${g.traced} of ${g.checked} numbers trace to tool output.`],
+  partial:     ['\u25D0', 'Partly grounded', g => `${g.untraced.length} of ${g.checked} numbers don't appear in any tool output: ${g.untraced.join(', ')}.`],
+  ran:         ['\u2713', 'From tool output', () => 'A tool ran; this answer has no numbers to check.'],
+  unchecked:   ['\u25CB', 'Not checked this turn', () => 'No tool ran. This comes from memory or earlier in the chat.'],
+  tool_failed: ['\u2715', 'Tool failed', g => `${(g.failed || []).join(', ')} didn't succeed, so no result backs this answer.`],
+  unbacked:    ['\u26A0', 'Unbacked claim', () => 'This answer describes work that no tool reported doing.'],
+};
+
+function addProvenance(content, g) {
+  const spec = g && _PROVENANCE[g.state];
+  if (!spec) return;
+  const el = document.createElement('div');
+  el.className = `provenance prov-${g.state}`;
+  el.innerHTML = `<span class="prov-badge">${spec[0]} ${spec[1]}</span><span class="prov-detail">${esc(spec[2](g))}</span>`;
+  content.parentNode.insertBefore(el, content.nextSibling);
 }
 
 // ── Feedback ─────────────────────────────────────────────────────────────────
@@ -1520,23 +1601,85 @@ function addConfirmBar(bubble, confirm) {
     bubble.appendChild(diffBox);
   }
 
+  const argText = Object.entries(confirm.args || {})
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(' ');
+  const shownArgs = argText.length > 200 ? argText.slice(0, 200) + '…' : argText;
   const bar = document.createElement('div');
   bar.className = 'confirm-bar';
+  if (confirm.call_id) bar.dataset.callId = confirm.call_id;
+  bar.dataset.label = confirm.label || confirm.name;
   bar.innerHTML = `
+    <div class="confirm-what">Waiting for your OK — nothing has run yet: <strong>${esc(confirm.label || confirm.name)}</strong>
+      <code>${esc(confirm.name)}${shownArgs ? ' ' + esc(shownArgs) : ''}</code></div>
     <button class="confirm-btn confirm-go">Go ahead</button>
     <button class="confirm-btn confirm-skip">Skip</button>
   `;
   bubble.appendChild(bar);
 
   bar.querySelector('.confirm-go').addEventListener('click', () => {
-    bar.remove();
-    // Send "go ahead" as a new user message — triggers the pending tool
+    if (isStreaming) {
+      showComposerNotice('Kai is still replying. Approve once this reply finishes.');
+      return;
+    }
+    _setCardState(bar, 'approved');
+    // Send "go ahead" as a new user message, naming the call this card approves
+    _approveCallId = confirm.call_id || null;
     if (inputEl) inputEl.value = 'go ahead';
     sendMessage();
   });
-  bar.querySelector('.confirm-skip').addEventListener('click', () => {
-    bar.remove();
+  bar.querySelector('.confirm-skip').addEventListener('click', async () => {
+    bar.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    let status = 0;
+    try {
+      status = (await fetch('/chat/confirm/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(confirm.call_id ? { call_id: confirm.call_id } : {}),
+      })).status;
+    } catch {}
+    _setCardState(bar, status === 200 ? 'skipped' : status === 409 ? 'stale' : 'unreachable');
   });
+}
+
+// The approval card's states: waiting → approved (running) → done or failed, or skipped.
+// "stale" is a card whose call is no longer the one waiting on the server.
+function _setCardState(barOrId, state, receipt) {
+  const bar = typeof barOrId === 'string'
+    ? document.querySelector(`.confirm-bar[data-call-id="${CSS.escape(barOrId)}"]`)
+    : barOrId;
+  if (!bar) return;
+  // A stream that ends without word on the call only settles a card still marked approved.
+  if (state === 'interrupted' && !bar.classList.contains('card-approved')) return;
+  const label = `<strong>${esc(bar.dataset.label || '')}</strong>`;
+  const text = {
+    approved:    `Approved — running ${label}…`,
+    done:        `\u2713 Done — ${label} ran.`,
+    failed:      `\u2715 Failed — ${label}: ${esc((receipt && receipt.error) || 'the tool reported an error')}`,
+    skipped:     `Skipped — ${label} did not run.`,
+    stale:       `No longer waiting — ${label} did not run.`,
+    interrupted: `Approved — the reply stopped before Kai reported whether ${label} ran.`,
+    unreachable: 'Could not reach Kai to cancel. Nothing runs unless you say \u201cgo ahead\u201d.',
+  }[state];
+  if (!text) return;
+  bar.className = `confirm-bar card-${state}`;
+  bar.innerHTML = `<div class="confirm-what">${text}</div>`;
+}
+
+// The server keeps at most one call waiting, and cards follow it. A waiting card whose call was
+// dropped (another message was sent) says so; after a reload the waiting call gets its card back.
+async function syncApprovalCards({ restore = false } = {}) {
+  const waiting = [...document.querySelectorAll('.confirm-bar[data-call-id]:not([class*="card-"])')];
+  if (!waiting.length && !restore) return;
+  let p;
+  try { p = (await fetch('/chat/pending').then(r => r.json())) || {}; } catch { return; }
+  for (const bar of waiting) if (bar.dataset.callId !== p.call_id) _setCardState(bar, 'stale');
+  if (!restore || !p.call_id || isStreaming) return;
+  if (document.querySelector(`.confirm-bar[data-call-id="${CSS.escape(p.call_id)}"]`)) return;
+  const { si, content } = addKaiBubble();
+  hideStatus(si);
+  content.textContent = 'This is still waiting for your OK from before:';
+  addConfirmBar(content.closest('.bubble'), p);
 }
 
 // ── Suggestion chips ─────────────────────────────────────────────────────────
@@ -1562,6 +1705,7 @@ document.querySelectorAll('.suggestion').forEach(chip => {
 async function streamGreeting(fresh = false) {
   if (isStreaming) return;
   isStreaming = true;
+  _greetingActive = true;
   if (sendBtn) sendBtn.disabled = true;
   stopIdleBlink();
   setFace('waking');
@@ -1614,8 +1758,16 @@ async function streamGreeting(fresh = false) {
     messageCount = Math.max(0, messageCount - 1);
   } finally {
     isStreaming = false;
+    _greetingActive = false;
     if (sendBtn) sendBtn.disabled = false;
     startIdleBlink();
+    syncApprovalCards({ restore: true });
+    if (_queuedMessage && inputEl) {
+      inputEl.value = _queuedMessage;
+      inputEl.placeholder = 'Message Kai…';
+      _queuedMessage = null;
+      sendMessage();
+    }
   }
 }
 
@@ -2050,7 +2202,7 @@ async function loadMode() {
 function _applyMode(mode, label) {
   const labelEl = $('mode-label');
   if (labelEl) labelEl.textContent = label;
-  document.querySelectorAll('.mode-option').forEach(btn => {
+  document.querySelectorAll('.mode-option[data-mode]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
 }
@@ -2084,8 +2236,8 @@ async function setMode(mode) {
   } catch { /* ignore */ }
 }
 
-// Mode option buttons
-document.querySelectorAll('.mode-option').forEach(btn => {
+// Mode option buttons. Preset options share the class, so match data-mode (T2-17).
+document.querySelectorAll('.mode-option[data-mode]').forEach(btn => {
   btn.addEventListener('click', () => setMode(btn.dataset.mode));
 });
 
@@ -2187,9 +2339,9 @@ function _renderToolLevels(activeKey) {
     strong.textContent = lv.label;
     const desc = document.createElement('span');
     desc.className = 'mode-option-desc';
-    desc.textContent = lv.installed
-      ? lv.blurb
-      : `not installed — run: ollama pull ${lv.model}`;
+    desc.textContent = !lv.installed
+      ? `not installed — run: ollama pull ${lv.model}`
+      : (lv.fits === false ? lv.note : lv.blurb);
     btn.append(strong, desc);
     btn.addEventListener('click', () => setToolLevel(lv.key));
     dd.appendChild(btn);
@@ -2257,7 +2409,11 @@ function togglePresetAdvanced() {
   if (!adv) return;
   const showing = adv.style.display !== 'none';
   adv.style.display = showing ? 'none' : 'block';
-  if (!showing) _fillAdvancedInputs();
+  if (!showing) {
+    _fillAdvancedInputs();
+    const msg = $('preset-adv-msg');
+    if (msg) msg.textContent = '';
+  }
 }
 
 function _fillAdvancedInputs() {
@@ -2282,6 +2438,16 @@ async function savePresetTemps() {
     _presets = d.presets || _presets;
     const active = _presets.find(p => p.key === _activePreset);
     if (active) _setTempUI(active.temp);
+    const msg = $('preset-adv-msg');
+    const clamped = Object.entries(d.clamped || {});
+    if (clamped.length) {
+      // Keep the panel open so the adjusted value is seen (T2-19).
+      _fillAdvancedInputs();
+      if (msg) msg.textContent = 'Saved, but out of range: ' +
+        clamped.map(([k, v]) => `${PRESET_LABELS[k] || k} was set to ${Number(v).toFixed(2)}`).join(', ') + '.';
+      return;
+    }
+    if (msg) msg.textContent = '';
     const adv = $('preset-advanced');
     if (adv) adv.style.display = 'none';
   } catch { /* ignore */ }
@@ -2401,6 +2567,7 @@ function _toggleRecipeForm(show) {
   f.style.display = show ? 'flex' : 'none';
   if (show) {
     $('recipe-name').value = '';
+    $('recipe-desc').value = '';
     $('recipe-triggers').value = '';
     $('recipe-steps').value = '';
     _recipeHint(_RECIPE_HELP, false);
@@ -2444,15 +2611,17 @@ function renderRecipes(recipes) {
 
 async function saveRecipe() {
   const name = $('recipe-name').value.trim();
+  const description = $('recipe-desc').value.trim();
   const triggers = $('recipe-triggers').value.split(',').map(s => s.trim()).filter(Boolean);
   const steps = $('recipe-steps').value.split('\n').map(s => s.trim()).filter(Boolean);
   if (!name) { _recipeHint('Give the recipe a name.', true); return; }
+  if (!description) { _recipeHint('Say what the recipe does. Kai reads it to decide when to use it.', true); return; }
   if (!steps.length) { _recipeHint('Add at least one tool (one per line).', true); return; }
   try {
     const r = await fetch('/settings/recipes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, triggers, steps }),
+      body: JSON.stringify({ name, description, triggers, steps }),
     });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
@@ -2532,7 +2701,11 @@ function renderModelList() {
       const name = btn.dataset.name;
       if (!confirm(`Remove model "${name}"?`)) return;
       try {
-        await fetch(`/settings/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const r = await fetch(`/settings/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.detail || 'Could not remove the model.');
+        }
         await loadModels();
       } catch { /* ignore */ }
     });
@@ -2981,6 +3154,9 @@ async function loadSessionIntoChat(sessionId) {
           <div class="bubble"><div class="content">${safeMarkdown(m.content || '')}</div></div>
         `;
         messagesEl.appendChild(wrap);
+        const replyContent = wrap.querySelector('.content');
+        if (m.meta && m.meta.receipts && m.meta.receipts.length) addReceipts(replyContent, m.meta.receipts);
+        if (m.meta && m.meta.grounding) addProvenance(replyContent, m.meta.grounding);
         if (m.latency_ms != null) addLatencyBadge(wrap.querySelector('.bubble'), m.latency_ms);
       }
     }
@@ -3213,7 +3389,7 @@ document.addEventListener('keydown', e => {
 // ── 14. Init ─────────────────────────────────────────────────────────────────
 
 // Set user info from localStorage
-_currentUser = { name: localStorage.getItem('kai_last_user') || 'User' };
+_currentUser = { name: localStorage.getItem('kai_last_user') || '' };  // /info fills in the real name
 _currentUser.initial = _currentUser.name[0]?.toUpperCase() || 'U';
 
 const topbarUser = $('topbar-user');
@@ -3235,6 +3411,17 @@ $('tools-refresh')?.addEventListener('click', loadToolsSettings);
 $('recipe-new-btn')?.addEventListener('click', () => _toggleRecipeForm(true));
 $('recipe-cancel-btn')?.addEventListener('click', () => _toggleRecipeForm(false));
 $('recipe-save-btn')?.addEventListener('click', saveRecipe);
+$('privacy-export-btn')?.addEventListener('click', () => { window.location.href = '/users/account/export'; });
+$('privacy-delete-btn')?.addEventListener('click', async () => {
+  const msg = $('privacy-msg');
+  const name = (_currentUser && _currentUser.name) || '';
+  const typed = prompt(`This permanently deletes the account "${name}" and everything Kai remembers for it. Note files already written to disk are left where they are.\n\nType the account name to confirm.`);
+  if (typed === null) return;
+  if (!name || typed.trim() !== name) { if (msg) msg.textContent = 'The name didn’t match — nothing was deleted.'; return; }
+  const r = await fetch('/users/account', { method: 'DELETE' }).catch(() => null);
+  if (r && r.ok) window.location.href = '/login';
+  else if (msg) msg.textContent = 'Could not delete the account.';
+});
 document.querySelectorAll('.settings-nav-item').forEach(b =>
   b.addEventListener('click', () => openSettingsSub(b.dataset.sub)));
 document.querySelectorAll('.settings-back').forEach(b =>
@@ -3734,7 +3921,19 @@ async function openNote(id) {
       <div class="notes-view-title">${esc(n.title || 'Untitled')}</div>
       <div class="notes-view-meta">${esc(ts)} · id ${esc(n.id)}</div>
       <div class="notes-view-body">${esc(n.content)}</div>
-      ${files}`;
+      ${files}
+      <div style="margin-top:12px"><button class="settings-view-btn notes-delete-btn">Delete note</button></div>`;
+    view.querySelector('.notes-delete-btn')?.addEventListener('click', async () => {
+      if (!confirm('Delete this note? Its .md and .txt files are removed too.')) return;
+      const r = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null);
+      if (r && r.ok) {
+        _noteSel = null;
+        view.innerHTML = '<div class="notes-empty">Note deleted.</div>';
+        loadNotes();
+      } else {
+        view.insertAdjacentHTML('beforeend', '<div class="notes-empty">Could not delete that note.</div>');
+      }
+    });
   } catch {
     view.innerHTML = '<div class="notes-empty">Could not open that note.</div>';
   }

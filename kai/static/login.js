@@ -39,6 +39,8 @@
       if (!res.ok) throw new Error('Failed to load users');
       const data = await res.json();
       const names = Array.isArray(data.names) ? data.names : [];
+      // Registration only works for the first account; after that the owner adds people.
+      if (showRegister) showRegister.style.display = names.length ? 'none' : '';
       loginUserSel.innerHTML = '';
       if (names.length === 0) {
         const opt = document.createElement('option');
@@ -122,8 +124,8 @@
       registerError.textContent = 'Please enter a name.';
       return;
     }
-    if (pin.length < 4) {
-      registerError.textContent = 'PIN must be at least 4 characters.';
+    if (!/^\d{4,8}$/.test(pin)) {
+      registerError.textContent = 'PIN must be 4–8 digits.';
       return;
     }
 
@@ -142,7 +144,8 @@
       } else if (res.status === 409) {
         registerError.textContent = 'That name is already taken. Choose another.';
       } else {
-        registerError.textContent = 'Registration failed. Please try again.';
+        const body = await res.json().catch(() => ({}));
+        registerError.textContent = body.detail || 'Registration failed. Please try again.';
       }
     } catch (err) {
       registerError.textContent = 'Network error. Is the server running?';
