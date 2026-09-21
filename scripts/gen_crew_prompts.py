@@ -56,7 +56,8 @@ SCOPE = {
     "Gus": "the machine — system health, performance, cleanup and optimisation, "
     "startup items, updates, and network diagnostics",
     "Dewey": "files and code — reading, writing, editing and organising files, "
-    "disk-usage analysis, and git repositories",
+    "disk-usage analysis, git repositories, and making documents: flyers, slides, "
+    "summaries and spreadsheets",
     "Scout": "the outside view — web search, fetching and reading specific pages, the "
     "study library of papers and books, and understanding images and audio",
     "Remy": "memory and self — notes, the long-term memory tree, past-conversation "
@@ -73,7 +74,7 @@ HEADER = {
     "Dewey": (
         "Dewey — files & code",
         "Specialist: reading, writing, editing and organising files, disk-usage analysis, "
-        "git repositories.",
+        "git repositories, making documents (flyers, slides, summaries, spreadsheets).",
     ),
     "Scout": (
         "Scout — eyes & web",

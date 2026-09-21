@@ -343,6 +343,10 @@ WORKSPACE_DIR = Path(
 NOTES_DIR = WORKSPACE_DIR / "notes"
 NOTES_REPO_SUBDIR = "notes"  # folder inside the configured repo notes are written to
 
+# What design.render / design.spreadsheet make: PDFs, PNGs, .xlsx. One subfolder per
+# account, because /api/designs serves these files back to the account that made them.
+DESIGNS_DIR = WORKSPACE_DIR / "designs"
+
 # Git repos Kai is allowed to clone. Add URLs here to grant access.
 # Trailing slashes and .git suffixes are ignored during comparison.
 ALLOWED_GIT_REPOS: list[str] = [

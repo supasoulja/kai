@@ -54,6 +54,7 @@ def pytest_configure(config):
         # drops .md/.txt files into the user's real ~/KaiFiles/notes.
         cfg.WORKSPACE_DIR = sandbox / "KaiFiles"
         cfg.NOTES_DIR = cfg.WORKSPACE_DIR / "notes"
+        cfg.DESIGNS_DIR = cfg.WORKSPACE_DIR / "designs"
         # MEMORY_DIR holds the crash checkpoint, welcome-back notes, events.db, models.json,
         # roles.json and device.key. Un-isolated, every Brain test's post-turn checkpoint
         # wrote into the running Kai's real memory dir.

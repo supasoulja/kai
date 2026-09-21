@@ -397,6 +397,8 @@ _WRITE_TOOLS = frozenset(
         "research.add_to_library",
         "sandbox.copy_to_workspace",
         "browser.screenshot",
+        "design.render",
+        "design.spreadsheet",
         "memory.reflect",
         "workspace.git_clone",
         "self.apply_persona_update",
@@ -435,6 +437,21 @@ _CLAIM_KINDS = (
             r"\b(?:created|saved|wrote|written|appended|stored|filed|added)\b", re.IGNORECASE
         ),
         lambda name, out: name in _WRITE_TOOLS,
+    ),
+    (
+        # "I've updated the poster" after design.render failed and only tree.save ran
+        # (2026-09-21). Any write tool backs a generic write claim; a made document needs
+        # the tool that makes documents.
+        "document",
+        re.compile(
+            r"\b(?:created|made|generated|updated|built|designed|rendered|produced|redid|remade|"
+            r"put\s+together)\b[^.!?\n]*\b(?:flyers?|posters?|slides?|decks?|presentations?|"
+            r"spreadsheets?|pdfs?|handouts?)\b"
+            r"|\b(?:flyers?|posters?|slides?|decks?|presentations?|spreadsheets?|pdfs?|handouts?)\b"
+            r"[^.!?\n]*\b(?:created|made|generated|updated|built|designed|rendered|produced|ready)\b",
+            re.IGNORECASE,
+        ),
+        lambda name, out: name.startswith("design."),
     ),
 )
 _GENERIC_DONE_RE = re.compile(

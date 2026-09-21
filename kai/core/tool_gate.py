@@ -124,6 +124,22 @@ _TOOL_KEYWORDS_SINGLE = [
     # Documents
     "document",
     "pdf",
+    # Making things (design.*)
+    "flyer",
+    "flyers",
+    "poster",
+    "posters",
+    "slides",
+    "slideshow",
+    "presentation",
+    "spreadsheet",
+    "spreadsheets",
+    "excel",
+    "xlsx",
+    "brochure",
+    "handout",
+    "infographic",
+    "printable",
 ]
 
 _TOOL_KEYWORDS_COMPOUND = [
@@ -172,6 +188,8 @@ _TOOL_KEYWORDS_COMPOUND = [
     r"\w+\.dll",
     # Document triggers
     r"docx?|word\s+doc|uploaded?\s+file|my\s+file|that\s+file",
+    # Making things (design.*)
+    r"slide\s*deck|one[-\s]?pager",
     # Gaming triggers
     r"gaming\s+time|game\s+time|game\s+mode|ready\s+to\s+play|pre.?game",
 ]

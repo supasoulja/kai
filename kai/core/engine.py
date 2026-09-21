@@ -96,6 +96,17 @@ _APPROVAL_ASK_RE = re.compile(
     r"|\bdo you (?:approve|want me to (?:proceed|run it|go ahead))\b",
     re.IGNORECASE,
 )
+# A deliverable promised for later. There is no later: a turn that ends in "I'll put
+# together that presentation" ends with nothing made (2026-09-21, design.render offered and
+# ranked first). Only artifact nouns count, so "let me write a summary:" followed by the
+# summary itself does not trip it.
+_PROMISED_WORK_RE = re.compile(
+    r"\b(?:i'?ll|i\s+will|i'?m|i\s+am|let\s+me|going\s+to)\s+(?:now\s+|go\s+ahead\s+and\s+)?"
+    r"(?:put\w*\s+together|draft\w*|creat\w*|mak\w*|prepar\w*|generat\w*|build\w*|design\w*|"
+    r"whip\w*\s+up)\b[^.?!\n]{0,60}?\b(?:flyers?|posters?|slides?|slide\s*deck|presentations?|"
+    r"decks?|spreadsheets?|pdfs?|handouts?|brochures?)\b",
+    re.IGNORECASE,
+)
 _ZERO_TOOL_NUDGES = (
     (
         COMPLETED_ACTION_RE,
@@ -110,6 +121,13 @@ _ZERO_TOOL_NUDGES = (
         "You stated facts about this machine, but no tool ran this turn. Call the tool that "
         "checks it, or say plainly that you have not checked. Do not answer from memory or "
         "guesswork.",
+    ),
+    (
+        _PROMISED_WORK_RE,
+        "promised",
+        "You said you would make it, but no tool ran, and nothing happens after this reply. "
+        "Make it now with the tool that does it. If you need a detail from the user first, "
+        "ask for that plainly instead of promising.",
     ),
     (
         _APPROVAL_ASK_RE,
@@ -181,7 +199,7 @@ def tool_receipt(name: str, args: dict, result: dict, duration_ms: int) -> dict:
                 value = value[:117] + "…"
         shown[key] = value
     ok = bool(result.get("success"))
-    return {
+    receipt = {
         "name": name,
         "args": shown,
         "ok": ok,
@@ -190,6 +208,18 @@ def tool_receipt(name: str, args: dict, result: dict, duration_ms: int) -> dict:
         "duration_ms": duration_ms,
         "output": str(result.get("output") or "")[:600] if ok else "",
     }
+    # Files a tool made (design.*) become previews and links under the receipt. Only our own
+    # route's URLs pass, so no tool can put an arbitrary address into the page.
+    output = result.get("output")
+    if ok and isinstance(output, dict) and isinstance(output.get("files"), list):
+        files = [
+            {"name": str(f.get("name", "")), "url": f["url"], "preview": bool(f.get("preview"))}
+            for f in output["files"]
+            if isinstance(f, dict) and str(f.get("url", "")).startswith("/api/designs/")
+        ]
+        if files:
+            receipt["files"] = files
+    return receipt
 
 
 def _proposal_problem(tool_args: dict) -> str | None:
@@ -1102,7 +1132,7 @@ class TurnEngine:
             if result.get("kind") in ("unavailable", "bad_args"):
                 return False, False
             return True, False
-        if re.search(r"\b0x[0-9a-fA-F]{4,}\b", result.get("output", "")):
+        if re.search(r"\b0x[0-9a-fA-F]{4,}\b", str(result.get("output", ""))):
             return False, True
         return False, False
 

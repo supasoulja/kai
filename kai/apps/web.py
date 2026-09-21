@@ -322,6 +322,9 @@ from kai.api.routes import (
     debug as _debug_router,
 )
 from kai.api.routes import (
+    designs as _designs_router,
+)
+from kai.api.routes import (
     documents as _documents_router,
 )
 from kai.api.routes import (
@@ -358,6 +361,7 @@ for _r in (
     _settings_router,
     _debug_router,
     _documents_router,
+    _designs_router,
     _system_router,
     _notes_router,
     _accounts_router,

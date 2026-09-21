@@ -56,6 +56,7 @@ browser = [
 documents = [
     "pypdf>=4.0",            # PDF text extraction (uploads + study library)
     "python-docx>=1.1",      # .docx / .doc extraction (imported as `docx`)
+    "openpyxl>=3.1",         # .xlsx output for design.spreadsheet
 ]
 # Native desktop window + tray. On Linux these also need system packages first
 # (python3-gi, gir1.2-webkit2-4.1, libappindicator3-dev) — see README.

@@ -73,6 +73,17 @@ def test_a_typeerror_inside_the_tool_is_still_a_hard_failure():
     assert TurnEngine._classify_tool_result(res) == (True, False)
 
 
+def test_a_tool_returning_a_dict_does_not_crash_the_turn():
+    """2026-09-21: design.render returned a dict and the classifier's regex raised on it,
+    so the file was made but the turn died before Kai could reply."""
+    assert TurnEngine._classify_tool_result({"success": True, "output": {"files": []}}) == (
+        False,
+        False,
+    )
+    coded = {"success": True, "output": {"code": "0x80070005"}}
+    assert TurnEngine._classify_tool_result(coded) == (False, True)
+
+
 def test_narrated_recovery_skips_tools_that_need_arguments():
     """T1-14: "I am appending ... now" fired files.append with {} and escalated."""
     known = {"files.append", "system.info"}

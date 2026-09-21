@@ -31,11 +31,11 @@ from pathlib import Path
 import kai.config as cfg
 
 # ── The crew → category map (from plan Part A.2) ─────────────────────────────────
-# Each of the 15 tool categories in kai/tools/registry.py is owned by exactly one
+# Each tool category in kai/tools/registry.py is owned by exactly one
 # specialist. Otto (boss) and Envoy (MCP, none yet) own no categories here.
 CREW_CATEGORIES: dict[str, list[str]] = {
     "Gus": ["system_health", "system_control", "startup_and_updates", "network"],
-    "Dewey": ["file_operations", "disk_analysis", "workspace_and_code"],
+    "Dewey": ["file_operations", "disk_analysis", "workspace_and_code", "design_and_documents"],
     "Scout": ["search_and_info", "web_content", "study_library", "media_understanding"],
     "Remy": ["notes_and_memory", "goals_and_tasks", "self_inspection", "docs_rag"],
 }

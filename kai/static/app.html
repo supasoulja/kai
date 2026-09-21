@@ -337,6 +337,26 @@
       font-size: 13px;
       line-height: 1.5;
     }
+    /* Files a tool made (design.*): previews and links, from the receipts */
+    .design-files { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: -4px 0 12px; }
+    .design-thumb img {
+      display: block;
+      max-width: min(240px, 100%);
+      max-height: 300px;
+      border: 1px solid var(--outline-v);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .design-links { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    .design-links a {
+      padding: 5px 10px;
+      border: 1px solid var(--outline-v);
+      border-radius: 8px;
+      background: var(--surface-high);
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .design-links a:hover { border-color: var(--accent); }
 
     /* Provenance: how far an answer is backed by what ran */
     .provenance {

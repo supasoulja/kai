@@ -1512,7 +1512,30 @@ function addReceipts(content, receipts) {
       `</details>`;
   }).join('');
   content.parentNode.insertBefore(el, content);
+  const files = _designFiles(receipts);
+  if (files) content.parentNode.insertBefore(files, content);
   scrollEnd();
+}
+
+// Files a tool made (design.render, design.spreadsheet): a thumbnail that opens the file,
+// and a link per file. Built from receipts, so only files a tool actually made appear.
+function _designFiles(receipts) {
+  const made = receipts.filter(r => r.ok && Array.isArray(r.files) && r.files.length);
+  if (!made.length) return null;
+  const el = document.createElement('div');
+  el.className = 'design-files';
+  el.innerHTML = made.map(r => {
+    const main = r.files.filter(f => !f.preview);
+    const open = (main[0] || r.files[0]).url;
+    const thumbs = r.files.filter(f => f.preview || /\.png(\?|$)/i.test(f.url)).slice(0, 8);
+    return thumbs.map(f =>
+      `<a class="design-thumb" href="${esc(f.preview ? open : f.url)}" target="_blank" rel="noopener">` +
+      `<img src="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy"></a>`).join('') +
+      `<div class="design-links">` + main.map(f =>
+        `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}</a>`).join('') +
+      `</div>`;
+  }).join('');
+  return el;
 }
 
 const _PROVENANCE = {

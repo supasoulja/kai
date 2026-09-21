@@ -41,7 +41,7 @@ Edit `kai/persona/persona.md` to change their behavior. No code changes needed.
 ## Features
 
 - **Multi-model routing** — fast CPU embedding classifies every user turn and routes to chat, reasoning (thinking mode), tool use, or researcher. Seeds from built-in patterns and grows dynamically from usage.
-- **75+ tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, self-inspection, and more
+- **75+ tools** — web search, full-page URL fetching, browser automation, vision analysis, audio transcription, flyers/slides/summaries/spreadsheets, system diagnostics, sandboxed file management, network tools, notes, goals, study/research, self-inspection, and more
 - **Filesystem tree memory** — hierarchical key-value nodes at paths like `user/preferences/gaming/fps`. Version C scoring (recency × confidence × similarity × importance). Hardcoded prefixes always surface first. Three state stores modulate every score.
 - **Cerebellum validation** — pre/post execution checks on every tool call. Intent drift, scope, loop detection, and output coherence. CPU-only ONNX, ~5ms per check.
 - **Intuition flags** — five detectors override scoring when the equation misses something. Surfaced in a `[FLAGS]` block the chat model can reason about.
@@ -163,7 +163,7 @@ use (and a future installer can offer them as checkboxes). Each is guarded by
 
 | Feature | Install | Enables |
 |---------|---------|---------|
-| **Document ingest** | `pip install -r requirements-documents.txt` *(or `kai-agent[documents]`)* | Upload PDFs/Word docs for RAG; index downloaded study material (uses `pypdf` + `python-docx`) |
+| **Document ingest** | `pip install -r requirements-documents.txt` *(or `kai-agent[documents]`)* | Upload PDFs/Word docs for RAG; index downloaded study material; `.xlsx` output for `design.spreadsheet` (uses `pypdf` + `python-docx` + `openpyxl`) |
 | **Native desktop app** | `pip install -r requirements-desktop.txt` *(or `kai-agent[desktop]`)* | `python app.py` window + tray (see [Desktop App](#desktop-app-linux--windows)) |
 | **HTTPS / LAN** | `pip install cryptography` | Self-signed TLS for `python web.py --https` / `--lan` (already in core requirements) |
 | **AMD GPU temps (Windows)** | `pip install pyadl` | GPU temperature readout on AMD cards via the AMD Display Library |
@@ -381,7 +381,7 @@ Tracking is on by default but can be turned off per user, and the recorded histo
 
 ## Tools
 
-Kai picks the right tool automatically. 84 tools across 17 namespaces:
+Kai picks the right tool automatically. 84 tools across 21 namespaces:
 
 | Namespace | Key tools | Purpose |
 |-----------|-----------|---------|
@@ -398,6 +398,7 @@ Kai picks the right tool automatically. 84 tools across 17 namespaces:
 | `study.*` | `search_papers`, `find_free`, `search_books`, `ask_library` | Open academic search + local library |
 | `workspace.*` | `git_clone`, `git_pull` | Git operations |
 | `docs.*` | `search`, `list`, `delete` | Document RAG |
+| `design.*` | `render`, `spreadsheet` | Flyers, slide decks and summaries as PDF/PNG (Markdown in, layout applied for you); spreadsheets as `.xlsx` |
 | `memory.*` | `search_history`, `reflect` | Memory inspection |
 | `self.*` | `inspect`, `check_persona`, `propose_persona_update` | Self-inspection and persona management |
 

@@ -43,10 +43,10 @@ to survive, so lead with the answer.
 
 YOUR TOOLS: tree.save, tree.browse, tree.read, tree.find, notes.save, notes.search, notes.list,
 memory.get_detail, memory.search_history, memory.recent_sessions, memory.reflect,
-memory.read_reflections, memory.sleep_notes, goals.create, goals.list, goals.update,
-goals.complete, goals.abandon, self.inspect, self.list_tools, self.check_persona,
-self.propose_persona_update, self.apply_persona_update, self.recent_changes,
-docs.search, docs.list, docs.delete
+memory.read_reflections, memory.sleep_notes, notes.where, goals.create, goals.list,
+goals.update, goals.complete, goals.abandon, self.inspect, self.list_tools,
+self.check_persona, self.propose_persona_update, self.apply_persona_update,
+self.recent_changes, self.trace, docs.search, docs.list, docs.delete
 ```
 
-**Tool list is generated** from the live registry (`tools_for_specialist("Remy")`) — 27 tools. Do not hand-edit it; regenerate instead. Scout's list had silently drifted one tool out of sync.
+**Tool list is generated** from the live registry (`tools_for_specialist("Remy")`) — 29 tools. Do not hand-edit it; regenerate instead. Scout's list had silently drifted one tool out of sync.

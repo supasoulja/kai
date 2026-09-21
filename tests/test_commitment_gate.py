@@ -114,6 +114,20 @@ def test_zero_tool_system_claims_and_imitated_approvals_are_sent_back(reply):
     )
 
 
+def test_a_promised_deliverable_is_sent_back():
+    """2026-09-21: design.render was offered and ranked first, and Kai replied with a
+    promise to make the deck later. Nothing happens after the reply, so nothing was made."""
+    promise = (
+        "I'll put together that presentation for you. I'm drafting five slides covering the "
+        "environmental impact and soil health. I'll provide it as a PDF once finished."
+    )
+    eng = _Engine([promise, HONEST])
+    messages = [{"role": "user", "content": "make a 5 slide presentation on composting"}]
+    result = _drive(eng, messages)
+    assert result[1] == HONEST
+    assert _sent_back(messages)
+
+
 def test_rounds_leave_the_check_to_brain_once_a_tool_ran():
     """With a tool executed, the rounds hand the prose back untouched: Brain discards
     it and checks its own final answer against what actually ran."""
@@ -153,11 +167,32 @@ def test_a_proposal_does_not_back_a_rename_but_approval_does():
             [("browser.screenshot", "Saved /tmp/kai_screenshot.png")],
         ),
         ("The file has been moved to the trash.", [("sandbox.approve", "Moved to trash: /x → /y")]),
+        (
+            "I've created the spreadsheet for your monthly bills as `monthly-bills.xlsx`.",
+            [("design.spreadsheet", "{'files': [{'name': 'monthly-bills.xlsx'}]}")],
+        ),
+        (
+            "I've created the flyer and saved it as `bake-sale.pdf`.",
+            [("design.render", "{'files': [{'name': 'bake-sale.pdf'}]}")],
+        ),
     ],
 )
 def test_real_work_backs_its_claim(claim, executed):
     """T1-21: the old substring gate flagged these real, successful actions."""
     assert check_claims_backed(claim, executed).verdict < Verdict.FLAG
+
+
+def test_a_made_document_needs_the_tool_that_makes_documents():
+    """2026-09-21: design.render failed, tree.save filed the phone number, and Kai said
+    "I've updated the poster". A generic write tool must not back a document claim."""
+    claim = "I've updated the poster with your phone number."
+    saved = [("tree.save", "Saved to user/identity/contact_info")]
+    rendered = [("design.render", "{'files': [{'name': 'poster.pdf'}]}")]
+    v = check_claims_backed(claim, saved)
+    assert v.verdict >= Verdict.FLAG and "document" in v.reason
+    assert check_claims_backed(claim, rendered).verdict < Verdict.FLAG
+    advice = "A good poster includes a clear photo and a phone number."
+    assert check_claims_backed(advice, [("search.web", "tips")]).verdict < Verdict.FLAG
 
 
 def test_a_tool_that_did_nothing_backs_nothing():
@@ -198,6 +233,9 @@ def test_parked_progress_claims_are_recognised():
         "I don't have a tool that can do that.",
         "Keeping your drivers up to date is worth it.",
         "A deep scan checks disks, memory and logs.",
+        "Let me write a summary: composting keeps food scraps out of landfills.",
+        "Here are some tips for your presentation: keep each slide short.",
+        "What should the flyer say about parking?",
     ],
 )
 def test_ordinary_replies_are_not_gated(text):

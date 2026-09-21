@@ -1,7 +1,8 @@
 # Optional dependencies for the "documents" feature group: uploading PDFs and
 # Word docs for RAG (kai/memory/documents.py) and indexing downloaded study
-# material (kai/tools/knowledge/study.py). All guarded by try/except in code, so
-# the app runs fine without them — these just turn the feature on.
+# material (kai/tools/knowledge/study.py), plus .xlsx output for design.spreadsheet.
+# All guarded in code, so the app runs fine without them — these just turn the
+# features on.
 #
 # Install ON TOP of the core requirements:
 #   pip install -r requirements.txt
@@ -10,3 +11,4 @@
 pypdf>=4.0          # PDF text extraction (uploads + study library). Single PDF
                     # reader for the whole app — study.py no longer uses pdfminer.
 python-docx>=1.1    # .docx / .doc text extraction (imported as `docx`)
+openpyxl>=3.1       # .xlsx output for design.spreadsheet
