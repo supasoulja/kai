@@ -20,7 +20,7 @@
 #   build arg        default                              what it changes
 #   PYTHON_VERSION   3.12                                 base image tag
 #   KAI_VERSION      dev                                  version label (release.sh stamps it)
-#   KAI_EXTRAS       voice,documents                      pip extras; "" installs core only
+#   KAI_EXTRAS       voice,documents,browser              pip extras; "" installs core only
 #   KAI_UID/KAI_GID  1000/1000                            owner of /data — match your host
 #                                                         user when bind-mounting
 #   KAI_SOURCE_URL   https://github.com/supasoulja/kai    repo the GHCR package links to
@@ -44,7 +44,7 @@ RUN python -m build --wheel -o /dist
 FROM python:${PYTHON_VERSION}-slim
 
 ARG KAI_VERSION=dev
-ARG KAI_EXTRAS=voice,documents
+ARG KAI_EXTRAS=voice,documents,browser
 ARG KAI_UID=1000
 ARG KAI_GID=1000
 ARG KAI_SOURCE_URL=https://github.com/supasoulja/kai
@@ -62,15 +62,27 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg curl \
  && rm -rf /var/lib/apt/lists/*
 
-# The default extras skip [browser]: Playwright also needs ~400 MB of browser
-# binaries and a pile of system libs. Add it in your own layer if you want it.
 # The extras have to attach to the resolved filename: `/tmp/*.whl[voice,documents]`
 # is one glob pattern to the shell (the brackets read as a character class), so it
 # never expands and pip receives the literal string. Resolve it first. An empty
 # KAI_EXTRAS drops the brackets entirely.
+#
+# [browser] is only the Playwright package. When it is in KAI_EXTRAS, Chromium's
+# headless shell and the system libraries it needs are installed too, so the
+# browser.* and design.render tools work in the container. It has to happen here,
+# as root, before USER kai.
+#
+# PLAYWRIGHT_BROWSERS_PATH is Playwright's own variable, not a Kai setting. Without
+# it Playwright looks under XDG_CACHE_HOME, which points at the /data volume at run
+# time, and would never find the browser installed into the image.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 COPY --from=build /dist/ /tmp/dist/
 RUN WHEEL="$(ls /tmp/dist/*.whl)" \
  && pip install --no-cache-dir "${WHEEL}${KAI_EXTRAS:+[${KAI_EXTRAS}]}" \
+ && case ",${KAI_EXTRAS}," in \
+      *,browser,*) python -m playwright install --with-deps --only-shell chromium \
+                   && rm -rf /var/lib/apt/lists/* ;; \
+    esac \
  && rm -rf /tmp/dist
 
 # Kai writes to its data dir and its workspace; it never needs to write anywhere

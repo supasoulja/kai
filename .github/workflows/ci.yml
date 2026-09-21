@@ -81,5 +81,9 @@ jobs:
           from kai.store.db import get_conn; get_conn()
           assert c.PERSONA_PATH.is_file(), 'persona.md missing from image'
           assert list(c.CREW_PROMPTS_DIR.glob('*.md')), 'crew prompts missing from image'
-          print('image ok:', kai.__version__)
+          from kai.tools.design import render, spreadsheet
+          r = render.design_render('smoke', '# Smoke\ntest\n\n> ok', 'flyer', 'pdf')
+          assert [f['name'] for f in r['files']] == ['smoke.pdf', 'smoke.preview.png'], r
+          assert spreadsheet.design_spreadsheet('smoke', 'A,B\n1,2')['files'], 'no xlsx'
+          print('image ok:', kai.__version__, '(Chromium and openpyxl work)')
           "

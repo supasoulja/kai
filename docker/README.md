@@ -85,7 +85,7 @@ machines is a build arg or a runtime env var.
 |---|---|---|
 | `PYTHON_VERSION` | `3.12` | pick the base image |
 | `KAI_VERSION` | `dev` | stamp the version label (`release.sh` sets it) |
-| `KAI_EXTRAS` | `voice,documents` | choose pip extras — `""` for core only; `browser` adds the Playwright package but not its browsers |
+| `KAI_EXTRAS` | `voice,documents,browser` | choose pip extras — `""` for core only; with `browser` the image also gets Chromium (see below) |
 | `KAI_UID` / `KAI_GID` | `1000` | match your host user when bind-mounting `/data` |
 | `KAI_SOURCE_URL` | `https://github.com/supasoulja/kai` | point the GHCR source label at a fork |
 
@@ -99,8 +99,19 @@ your LAN addresses.
 
 ## What's in the image, and what isn't
 
-Included: core + `[voice,documents]` (change with `KAI_EXTRAS`), plus `ffmpeg`
+Included: core + `[voice,documents,browser]` (change with `KAI_EXTRAS`), plus `ffmpeg`
 for audio decode.
+
+`browser` brings Playwright's Chromium headless shell and the system libraries it
+needs, installed to `/opt/playwright` (`PLAYWRIGHT_BROWSERS_PATH`). That is what makes
+`design.render` (flyers, slides, summaries), `browser.read_page` and `browser.screenshot`
+work in the container. It takes the image from about 1.6 GB to 2.3 GB. To leave it out:
+
+```bash
+docker build -f docker/Dockerfile --build-arg KAI_EXTRAS=voice,documents -t kai:dev .
+```
+
+Without it those three tools report themselves unavailable; spreadsheets still work.
 
 Only `pyproject.toml`, `README.md`, `LICENSE` and `kai/` can enter the build
 context. `.dockerignore` is an allowlist, so `.git`, `var/`, `models/`, docs,
@@ -109,8 +120,6 @@ at the repo root stays out until someone adds it on purpose.
 
 Not included, on purpose:
 
-- **`[browser]`** (Playwright) — another ~400 MB of browser binaries and system
-  libs. Add it in your own layer if you need `browser.*` tools.
 - **The desktop app** (`kai-app`) — it opens a native GTK/WebKit window and a
   tray icon. Containerising a desktop app means X11 or Wayland socket
   forwarding; run it on the host instead.
