@@ -7,7 +7,10 @@
 #
 # First time on a new machine:
 #   git clone https://github.com/supasoulja/kai-private.git newB2_kai
-#   cd newB2_kai && scripts/bootstrap.sh
+#   cd newB2_kai && bash scripts/bootstrap.sh
+#
+# That clone names the remote `origin`; step 2 renames it to `private` and
+# adds the public repo as `origin`, matching every other machine.
 #
 # Re-running is safe — every step checks before it acts.
 #
@@ -40,7 +43,7 @@ cd "$ROOT_DIR"
 # ── Step 1: Python ───────────────────────────────────────────────────
 # pyproject.toml says requires-python = ">=3.11". Checking here rather than
 # letting pip fail halfway through a 1 GB install.
-echo "[1/6] Checking Python..."
+echo "[1/7] Checking Python..."
 if command -v python3 &>/dev/null; then
     PY="python3"
 else
@@ -60,13 +63,36 @@ if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; t
 fi
 echo "      $("$PY" --version 2>&1) found."
 
-# ── Step 2: Private context repo ─────────────────────────────────────
+# ── Step 2: Remote names ─────────────────────────────────────────────
+# Cloning kai-private names that remote `origin`, but every other machine calls
+# it `private` and keeps `origin` for the PUBLIC repo. /save-all pushes to
+# `private` by name, so a mismatch breaks it on this machine only — exactly the
+# kind of difference a mirror should not have.
+echo ""
+echo "[2/7] Checking remote names..."
+if ! git -C "$ROOT_DIR" remote | grep -qx private; then
+    if git -C "$ROOT_DIR" remote get-url origin 2>/dev/null | grep -q kai-private; then
+        git -C "$ROOT_DIR" remote rename origin private
+        echo "      renamed origin -> private (it points at kai-private)"
+    else
+        git -C "$ROOT_DIR" remote add private https://github.com/supasoulja/kai-private.git
+        echo "      added private"
+    fi
+fi
+if ! git -C "$ROOT_DIR" remote | grep -qx origin; then
+    git -C "$ROOT_DIR" remote add origin https://github.com/supasoulja/kai.git
+    echo "      added origin (public)"
+fi
+echo "      private -> $(git -C "$ROOT_DIR" remote get-url private)"
+echo "      origin  -> $(git -C "$ROOT_DIR" remote get-url origin)"
+
+# ── Step 3: Private context repo ─────────────────────────────────────
 # docs/, audits/, CLAUDE.md and friends are gitignored here — they hold
 # personal context and this repo has a public remote. They live in the
 # private kai-docs repo and are symlinked in, so a fresh clone that skips
 # this step has the source but none of the project's memory.
 echo ""
-echo "[2/6] Checking private context (kai-docs)..."
+echo "[3/7] Checking private context (kai-docs)..."
 CTX_DIR="$(cd "$ROOT_DIR/.." && pwd)/kai-docs"
 if [ -d "$CTX_DIR/.git" ]; then
     echo "      Present — pulling any updates..."
@@ -86,11 +112,11 @@ else
     fi
 fi
 
-# ── Step 3: Symlink the context into place ───────────────────────────
+# ── Step 4: Symlink the context into place ───────────────────────────
 # Tools and editors expect these at the repo root. Relative targets, so the
 # pair of directories can live anywhere as long as they stay siblings.
 echo ""
-echo "[3/6] Linking context into the working copy..."
+echo "[4/7] Linking context into the working copy..."
 if [ -d "$CTX_DIR" ]; then
     for p in docs audits experiments CLAUDE.md CODE_MAP.md AUDIT_PLAN.md; do
         if [ -e "$ROOT_DIR/$p" ] || [ -L "$ROOT_DIR/$p" ]; then
@@ -116,12 +142,12 @@ else
     echo "      Skipped — no kai-docs checkout."
 fi
 
-# ── Step 4: Virtual environment ──────────────────────────────────────
+# ── Step 5: Virtual environment ──────────────────────────────────────
 # --system-site-packages is required, not a preference: app.py needs the
 # apt-only gi/PyGObject, which lives outside the venv. pyvenv.cfg is
 # gitignored, so a git sync can never repair a venv built without it.
 echo ""
-echo "[4/6] Setting up the virtual environment..."
+echo "[5/7] Setting up the virtual environment..."
 if [ -d "$ROOT_DIR/.venv" ]; then
     echo "      .venv already exists."
     grep -q 'include-system-site-packages = true' "$ROOT_DIR/.venv/pyvenv.cfg" 2>/dev/null \
@@ -156,21 +182,21 @@ if [ "$WITH_BROWSER" -eq 1 ]; then
     "$VPY" -m playwright install chromium
 fi
 
-# ── Step 5: Pre-commit hooks ─────────────────────────────────────────
+# ── Step 6: Pre-commit hooks ─────────────────────────────────────────
 # Same ruff version as CI, so a commit here fails the same way it would there.
 echo ""
-echo "[5/6] Installing pre-commit hooks..."
+echo "[6/7] Installing pre-commit hooks..."
 if "$VPY" -m pre_commit install &>/dev/null; then
     echo "      Hooks installed (ruff check + ruff format)."
 else
     echo "      [!] pre-commit install failed — run it by hand later."
 fi
 
-# ── Step 6: Verify ───────────────────────────────────────────────────
+# ── Step 7: Verify ───────────────────────────────────────────────────
 echo ""
 # Setup is done by now, so a failure here is a report, not a crash: say what
 # broke, keep going, and exit non-zero at the end so CI still notices.
-echo "[6/6] Verifying..."
+echo "[7/7] Verifying..."
 FAILED=0
 if "$VPY" -m ruff check .; then
     echo "      ruff: clean."
