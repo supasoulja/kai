@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from kai.config import CORE_API_KEY, UNPAYWALL_EMAIL
+from kai.tools._html import html_to_text
 from kai.tools.registry import registry
 
 _HEADERS = {
@@ -604,38 +605,13 @@ def get_book_url(gutenberg_id: int = 0, archive_id: str = "") -> str:
 
 
 def _extract_epub_text(path: str) -> str:
-    """Extract plain text from an epub file using only stdlib (zipfile + html.parser)."""
-    import html.parser
-
-    class _Strip(html.parser.HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.parts: list[str] = []
-            self._skip = False
-
-        def handle_starttag(self, tag, attrs):
-            if tag in ("script", "style"):
-                self._skip = True
-            if tag in ("p", "div", "h1", "h2", "h3", "h4", "li", "tr", "br"):
-                self.parts.append("\n")
-
-        def handle_endtag(self, tag):
-            if tag in ("script", "style"):
-                self._skip = False
-
-        def handle_data(self, data):
-            if not self._skip:
-                self.parts.append(data)
-
+    """Extract plain text from an epub — a zip of XHTML, one entry per chapter."""
     texts: list[str] = []
     try:
         with zipfile.ZipFile(path, "r") as zf:
             for name in sorted(zf.namelist()):
                 if name.lower().endswith((".html", ".xhtml", ".htm")):
-                    raw = zf.read(name).decode("utf-8", errors="replace")
-                    p = _Strip()
-                    p.feed(raw)
-                    chunk = " ".join("".join(p.parts).split())
+                    chunk = html_to_text(zf.read(name))
                     if chunk:
                         texts.append(chunk)
     except Exception:

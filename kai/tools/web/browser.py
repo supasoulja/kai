@@ -7,10 +7,10 @@ Browser automation tools — JS-rendered pages that research.fetch_url can't rea
 Uses Playwright headless Chromium. Falls back gracefully if Playwright isn't available.
 """
 
-import re
 import tempfile
 from pathlib import Path
 
+from kai.tools._html import collapse_ws, excerpt
 from kai.tools.registry import registry
 
 _PLAYWRIGHT_ERR = (
@@ -26,14 +26,6 @@ def _playwright_available() -> bool:
         return True
     except ImportError:
         return False
-
-
-def _clean_text(raw: str) -> str:
-    """Collapse whitespace runs in extracted browser text."""
-    raw = re.sub(r"[ \t]+", " ", raw)
-    lines = [ln.strip() for ln in raw.splitlines()]
-    lines = [ln for ln in lines if ln]
-    return "\n".join(lines)
 
 
 # ── browser.read_page ──────────────────────────────────────────────────────────
@@ -101,22 +93,13 @@ def read_page(url: str, wait_for: str = "") -> str:
             raw = page.inner_text("body")
             browser.close()
 
-        text = _clean_text(raw)
+        text = collapse_ws(raw)
         if not text:
             return f"[browser] {url}\n\nPage rendered but no readable text was found."
 
         # Search mode: return an excerpt, not the whole page (same contract as
         # research.fetch_url). Deep/full reads go through research.add_to_library.
-        from kai.config import WEB_EXCERPT_CHARS
-
-        truncated = len(text) > WEB_EXCERPT_CHARS
-        result = f"[browser] {url}\n\n{text[:WEB_EXCERPT_CHARS]}"
-        if truncated:
-            result += (
-                f"\n\n[Excerpt — showing first {WEB_EXCERPT_CHARS} chars. "
-                "Ask to add this page to the library for the full text.]"
-            )
-        return result
+        return f"[browser] {url}\n\n{excerpt(text)}"
 
     except Exception as e:
         return f"Browser error navigating to {url}: {e}"
