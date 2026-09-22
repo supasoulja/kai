@@ -100,6 +100,17 @@ if [ -d "$CTX_DIR" ]; then
         ln -s "../kai-docs/$p" "$ROOT_DIR/$p"
         echo "      linked $p"
     done
+
+    # Claude Code's project commands (/save-all and friends). .claude/ is
+    # gitignored, so a fresh clone has no such directory — the commands live in
+    # the context repo and are linked in, which is what carries them between
+    # machines. Target is relative to .claude/, not to the repo root.
+    mkdir -p "$ROOT_DIR/.claude"
+    if [ ! -e "$ROOT_DIR/.claude/commands" ] && [ ! -L "$ROOT_DIR/.claude/commands" ] \
+       && [ -d "$CTX_DIR/claude-commands" ]; then
+        ln -s "../../kai-docs/claude-commands" "$ROOT_DIR/.claude/commands"
+        echo "      linked .claude/commands"
+    fi
     echo "      Context in place."
 else
     echo "      Skipped — no kai-docs checkout."
