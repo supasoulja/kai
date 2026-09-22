@@ -3,14 +3,22 @@
 var/
 
 # ── Dev docs (personal context, not for public repo) ───────────────────────────
+# These live in the private kai-docs repo and are symlinked in (see
+# scripts/bootstrap.sh). Each directory is listed BOTH with and without the
+# trailing slash: `docs/` matches a real directory but NOT a symlink pointing
+# at one, and these are symlinks. Without the bare form they would show up as
+# untracked and could be committed to the public remote.
 HISTORY_AND_VISION.md
 docs/
+docs
 BUILD_PLAN.md
 PROJECT_PLAN.md
 audits/
+audits
 AUDIT_PLAN.md
 CODE_MAP.md
 experiments/
+experiments
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
