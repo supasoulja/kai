@@ -11,13 +11,13 @@ neutral (Kai is less certain, asserts less). High depth lets scores spread out.
 
 import json  # for serializing state to/from the database
 import sqlite3  # the database driver
-import threading  # thread-local connection cache (see _conn)
 import time  # for timestamps
 from dataclasses import asdict, dataclass, field, fields  # asdict turns a dataclass into a dict
 from pathlib import Path  # clean path handling
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 from kai.config import STATE_DIR as _STATE_DIR  # runtime data: var/state/{user_id}.db
+from kai.store.conn import cached_conn, close_cached  # WAL + thread-local connection cache
 
 # ─── State dataclasses ────────────────────────────────────────────────────────
 # Each one captures a different "who" — the person, Kai herself, or the bond
@@ -91,12 +91,7 @@ def delete_user_db(user_id) -> None:
             pass
 
 
-def _connect(user_id: str) -> sqlite3.Connection:
-    """Open this user's state database, creating the table on first use."""
-    conn = sqlite3.connect(_db_path(user_id))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if the file is locked
+def _init(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS state (
             key          TEXT PRIMARY KEY,   -- "user" | "kai" | "relationship"
@@ -105,42 +100,21 @@ def _connect(user_id: str) -> sqlite3.Connection:
         )
     """)
     conn.commit()
-    return conn
-
-
-# Per-(thread, user_id) connection cache — see kai/memory/tree.py for the
-# rationale. Avoids reopening + re-running CREATE TABLE on every load/save, and
-# stops the per-call connection leak from the old `with _connect(...)` pattern.
-_local = threading.local()
 
 
 def _conn(user_id: str) -> sqlite3.Connection:
     """Return this thread's cached connection for the user, opening it once.
 
-    Keyed by the resolved DB path so a STATE_DIR change (e.g. tests pointing it
-    at a tmp dir) never reuses a stale connection from the old location."""
-    cache = getattr(_local, "conns", None)
-    if cache is None:
-        cache = _local.conns = {}
-    key = str(_db_path(user_id))
-    conn = cache.get(key)
-    if conn is None:
-        conn = cache[key] = _connect(user_id)
-    return conn
+    The path is recomputed on every call and is what the cache is keyed by, so a
+    STATE_DIR change (e.g. tests pointing it at a tmp dir) never reuses a stale
+    connection from the old location."""
+    return cached_conn(_db_path(user_id), row_factory=sqlite3.Row, init=_init)
 
 
 def _close(user_id) -> None:
     """Evict and close this thread's cached connection (call before deleting the
     file so the OS can unlink it)."""
-    cache = getattr(_local, "conns", None)
-    if not cache:
-        return
-    conn = cache.pop(str(_db_path(user_id)), None)
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    close_cached(_db_path(user_id))
 
 
 def _save(user_id: str, key: str, obj) -> None:

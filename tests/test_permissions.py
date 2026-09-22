@@ -10,14 +10,14 @@ import pytest
 
 from kai.core import permissions
 from kai.store import audit, users
-from kai.store.db import get_conn
+from kai.store.db import _forget_schema_for_tests, get_conn
 
 _MACHINE = "test-machine-hash"
 
 
 @pytest.fixture(autouse=True)
 def _no_accounts():
-    users._table_ensured = False  # re-run the create/migrate check against this database
+    _forget_schema_for_tests("users")  # re-run the create/migrate check against this database
     users._ensure_table()
     audit._ensure_table()
     conn = get_conn()
@@ -64,7 +64,7 @@ def test_migration_keeps_the_lowest_id_as_owner():
             (name, _MACHINE),
         )
     conn.commit()
-    users._table_ensured = False
+    _forget_schema_for_tests("users")
 
     accounts = {a["name"]: a for a in users.list_accounts()}
     assert accounts["oldest"]["level"] == "owner"

@@ -1,19 +1,20 @@
 """
-Centralized SQLite connection management.
+The shared database — kai.db — and its schema.
 
-Provides thread-local connection reuse, WAL mode, and one-time table
-initialization. Every module that touches the database should use get_conn()
-instead of sqlite3.connect(DB_PATH) directly.
+get_conn() is the entry point: a thread-local connection to cfg.DB_PATH with WAL,
+sqlite-vec, and the core schema created on first use. Any module that needs kai.db
+calls it instead of sqlite3.connect(). The connection itself is opened by
+kai/store/conn.py, which every other database in the project shares.
 
-Why thread-local?
-  SQLite connections are not safe to share across threads, but creating a new
-  connection (+ loading sqlite-vec) on every operation is expensive. Thread-local
-  storage gives each thread a long-lived connection that is reused across calls.
+Schema ownership — read this before adding a table:
 
-Why WAL?
-  Default journal mode blocks readers during writes. WAL (Write-Ahead Logging)
-  allows concurrent reads and writes — critical since background daemon threads
-  commit memory while the main thread reads context.
+  _create_core_tables() below is the CORE schema, not the whole database. A module
+  may instead own its own table: it writes the CREATE TABLE itself and registers it
+  through ensure_schema(), which runs it once per database file. That is how users,
+  provider_keys, crew_log, flow_log and sandbox_log are created — most of them
+  lazily, so a fresh install carries no debug or auth table it may never write, and
+  so a tool pack can bring its own storage. Either route is fine; a table must be
+  defined in exactly ONE place.
 
 Storage conventions across the codebase (there are three — know which to use):
 
@@ -24,15 +25,14 @@ Storage conventions across the codebase (there are three — know which to use):
 
   2. Per-user file databases (kai/memory/{tree,state,knowledge}).
      The brain's memory tree is partitioned into one SQLite file per user
-     (kai/memory/tree/<user_id>.db, etc.) rather than a user_id column, so a
-     user's whole tree can be dropped/exported as a file. These open their own
-     connection per call via a local _connect()/_conn() (also WAL); they do NOT
-     go through get_conn(). Only the memory tree/state/knowledge use this.
+     (var/tree/<user_id>.db, etc.) rather than a user_id column, so a user's
+     whole tree can be dropped/exported as a file. These call conn.cached_conn()
+     with their own path; they do NOT go through get_conn().
 
-  3. Long-lived module-global connections (kai/events.py). The event bus
-     (events.db) is a separate database with its own process-wide connection
-     (check_same_thread=False) — an independent subsystem, not part of the
-     main schema.
+  3. Long-lived module-global connection (kai/core/events.py). The event bus
+     (events.db) is a separate database with one process-wide connection
+     (check_same_thread=False) — an independent subsystem, not part of this
+     schema.
 
   New code should default to (1). Reach for (2) only for per-user file
   partitioning, and (3) only for a genuinely separate subsystem database.
@@ -43,45 +43,29 @@ import threading
 from pathlib import Path
 
 import kai.config as cfg
+from kai.store.conn import cached_conn, close_cached, sqlite_vec_available
 from kai.util import log
 
-_local = threading.local()
-# Which database files have had their schema created. Keyed by resolved path so
-# a test pointing get_conn() at a fresh temp DB still gets its tables built, even
+# Which (database file, schema name) pairs have been created. Keyed by path so a
+# test pointing get_conn() at a fresh temp DB still gets its tables built, even
 # after the production DB was already initialized in the same process. A plain
 # bool here was the cause of the cross-test "no such table: users" failures.
-_schema_initialized: set[Path] = set()
-_schema_lock = threading.Lock()
-
-# sqlite-vec availability (checked once, cached)
-_SQLITE_VEC_AVAILABLE: bool | None = None
-
-
-def _check_sqlite_vec() -> bool:
-    global _SQLITE_VEC_AVAILABLE
-    if _SQLITE_VEC_AVAILABLE is not None:
-        return _SQLITE_VEC_AVAILABLE
-    try:
-        import sqlite_vec  # noqa: F401
-
-        _SQLITE_VEC_AVAILABLE = True
-    except ImportError:
-        _SQLITE_VEC_AVAILABLE = False
-    return _SQLITE_VEC_AVAILABLE
-
-
-def sqlite_vec_available() -> bool:
-    """Public check — whether sqlite-vec is importable."""
-    return _check_sqlite_vec()
+_schema_done: set[tuple[Path, str]] = set()
+_schema_lock = threading.RLock()
 
 
 def _reset_for_tests() -> None:
-    """Drop this thread's cached connection so the next get_conn() reconnects to
-    the current cfg.DB_PATH. Per-path schema tracking means a temp DB that has
-    never been seen still gets its tables built; already-initialized paths are
-    left alone (schema creation is CREATE TABLE IF NOT EXISTS, so re-running is
-    harmless either way)."""
-    _local.__dict__.pop("conn", None)
+    """Close this thread's connection to the current cfg.DB_PATH so the next
+    get_conn() reconnects. Largely belt-and-braces now that connections and
+    schema state are both keyed by path — a newly assigned temp DB was never
+    going to inherit the old one's connection or skip its own tables."""
+    close_cached(Path(cfg.DB_PATH))
+
+
+def _forget_schema_for_tests(name: str) -> None:
+    """Make the next ensure_schema(..., name, ...) on the current cfg.DB_PATH run its
+    create again — for a test that drops a table to exercise its migration."""
+    _schema_done.discard((Path(cfg.DB_PATH), name))
 
 
 def get_conn() -> sqlite3.Connection:
@@ -91,32 +75,28 @@ def get_conn() -> sqlite3.Connection:
     The connection is created once per thread and reused for all subsequent calls.
     Tables are initialized on the first call from any thread.
     """
-    conn = getattr(_local, "conn", None)
-    if conn is not None:
-        return conn
-
     # Resolve the path at call time (not a frozen import-time value) so tests
     # that reassign cfg.DB_PATH before connecting actually reach their temp DB.
-    db_path = Path(cfg.DB_PATH)
-    # kai.config no longer mkdirs at import time (that made importing the module
-    # write to disk). Every DB open funnels through here, so this is the one
-    # place that has to guarantee the directory exists — and it honors a test
-    # that has repointed cfg.DB_PATH at a temp dir.
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if DB is locked
+    return cached_conn(Path(cfg.DB_PATH), vec=True, init=_ensure_core_schema)
 
-    if _check_sqlite_vec():
-        import sqlite_vec
 
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
+def ensure_schema(conn: sqlite3.Connection, name: str, create) -> None:
+    """Run ``create(conn)`` once per (database file, *name*) — the registration
+    hook for a module that owns its own table (see "Schema ownership" above).
 
-    _local.conn = conn
-    _ensure_schema(conn, db_path)
-    return conn
+    Keyed by the current cfg.DB_PATH rather than a module-global bool. A bool
+    skips creation entirely once the path changes, which loses the table on the
+    new database: loud for a read, silent for the log writers that swallow their
+    own errors.
+    """
+    key = (Path(cfg.DB_PATH), name)
+    if key in _schema_done:
+        return
+    with _schema_lock:
+        if key in _schema_done:
+            return
+        create(conn)
+        _schema_done.add(key)
 
 
 # ── Search helpers ───────────────────────────────────────────────────────────
@@ -170,20 +150,21 @@ def resort_by_rowid_order(
     return entries
 
 
-def _ensure_schema(conn: sqlite3.Connection, db_path: Path) -> None:
-    """Create all tables once per database file. No-op if this path is already
-    initialized in the current process."""
-    if db_path in _schema_initialized:
+def _ensure_core_schema(conn: sqlite3.Connection) -> None:
+    """Migrate and create the core tables once per database file. No-op if this
+    path is already initialized in the current process."""
+    key = (Path(cfg.DB_PATH), "core")
+    if key in _schema_done:
         return
     with _schema_lock:
-        if db_path in _schema_initialized:
+        if key in _schema_done:
             return
         _maybe_migrate_fresh(conn)
         _maybe_migrate_embed_dim(conn)
-        _create_all_tables(conn)
+        _create_core_tables(conn)
         _maybe_add_latency_column(conn)
         _maybe_add_message_meta_column(conn)
-        _schema_initialized.add(db_path)
+        _schema_done.add(key)
 
 
 def _maybe_add_latency_column(conn: sqlite3.Connection) -> None:
@@ -191,7 +172,7 @@ def _maybe_add_latency_column(conn: sqlite3.Connection) -> None:
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(session_messages)").fetchall()}
     except Exception:
-        return  # table doesn't exist yet — _create_all_tables already made it fresh
+        return  # table doesn't exist yet — _create_core_tables already made it fresh
     if "latency_ms" in cols:
         return
     conn.execute("ALTER TABLE session_messages ADD COLUMN latency_ms INTEGER")
@@ -213,7 +194,7 @@ def _maybe_add_message_meta_column(conn: sqlite3.Connection) -> None:
 def _maybe_migrate_fresh(conn: sqlite3.Connection) -> None:
     """
     Detect old schema (no user_id columns) and do a fresh-start migration.
-    Drops all data tables EXCEPT users. Called before _create_all_tables
+    Drops all data tables EXCEPT users. Called before _create_core_tables
     so the new schema is created cleanly.
     """
     # Check if semantic_facts exists and has user_id
@@ -260,7 +241,7 @@ def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
     only the vec0 virtual tables (which store vectors + rowids) are dropped.
     New 384-dim vectors are created on-demand as content is accessed.
     """
-    if not _check_sqlite_vec():
+    if not sqlite_vec_available():
         return
 
     # Quick check: if episodic_vec exists and is already the right dimension,
@@ -306,7 +287,7 @@ def _maybe_migrate_embed_dim(conn: sqlite3.Connection) -> None:
     log.ok("Old vector tables dropped — new ones will be created at 384-dim")
 
 
-def _create_all_tables(conn: sqlite3.Connection) -> None:
+def _create_core_tables(conn: sqlite3.Connection) -> None:
     """Idempotent schema creation for every table in the project."""
     conn.executescript("""
         -- Semantic memory (per-user)
@@ -569,7 +550,7 @@ def _create_all_tables(conn: sqlite3.Connection) -> None:
     # Vector tables (require sqlite-vec extension)
     # Live tables use FAST_EMBED_DIM (384) for CPU-based fastembed.
     # HQ shadow tables at HQ_EMBED_DIM (2560) are created by shutdown_reembed().
-    if _check_sqlite_vec():
+    if sqlite_vec_available():
         from kai.config import FAST_EMBED_DIM
 
         dim = FAST_EMBED_DIM

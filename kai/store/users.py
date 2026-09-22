@@ -9,7 +9,7 @@ Auth layers:
                    Legacy SHA-256-only hashes (no ``$``) are auto-upgraded on
                    next successful login.
   3. Machine key — 30-byte random value generated once per Kai installation
-                   (see kai/device.py). Its SHA-256 hash is stored per user at
+                   (see kai/system/device.py). Its SHA-256 hash is stored per user at
                    registration time. Login is rejected if the machine key on
                    the current PC doesn't match the one used at registration.
                    This means a copied database file is useless on another PC.
@@ -25,7 +25,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from kai.store.db import get_conn
+from kai.store.db import ensure_schema, get_conn
 
 _PBKDF2_ROUNDS = 600_000  # OWASP 2023 recommendation for PBKDF2-HMAC-SHA256
 
@@ -90,15 +90,7 @@ def _verify(value: str, stored: str) -> bool:
         return hmac.compare_digest(legacy, stored)
 
 
-_table_ensured = False
-
-
-def _ensure_table() -> None:
-    """Create users table if needed. Called lazily on first use."""
-    global _table_ensured
-    if _table_ensured:
-        return
-    conn = get_conn()
+def _create_table(conn) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +118,12 @@ def _ensure_table() -> None:
     if "created_by" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN created_by INTEGER")  # NULL: nobody on record
     conn.commit()
-    _table_ensured = True
+
+
+def _ensure_table() -> None:
+    """Create the users table if needed. This module owns it rather than
+    db._create_core_tables — see "Schema ownership" in kai/store/db.py."""
+    ensure_schema(get_conn(), "users", _create_table)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ nothing (proven root cause of the Aug-2026 "memory stopped writing" regression).
 Rows are enqueued after each eligible turn and drained by the Brain when no user
 turn is in flight — and again best-effort on Brain construction, so a hard kill
 or a short session that never reached idle re-drains next startup. The table
-itself lives in kai/store/db.py (_create_all_tables); this module is just the
+itself lives in kai/store/db.py (_create_core_tables); this module is just the
 read/write API. Every path swallows its own errors: queueing must never break a
 turn.
 """

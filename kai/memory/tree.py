@@ -9,7 +9,6 @@ Empty folders cost nothing. Missing folders cost judgment.
 """
 
 import sqlite3  # standard library — Python's built-in database driver
-import threading  # thread-local connection cache (see _conn)
 import time  # for unix timestamps on node creation/update
 from dataclasses import dataclass, field  # dataclass auto-generates __init__, __repr__, etc.
 from pathlib import Path  # cleaner file path handling than raw strings
@@ -19,6 +18,7 @@ import numpy as np  # numerical arrays — used to store and compare embeddings
 # ─── Paths ────────────────────────────────────────────────────────────────────
 # Runtime data lives outside the package — see kai/config.py (var/tree/{user_id}.db).
 from kai.config import TREE_DIR as _TREE_DIR
+from kai.store.conn import cached_conn, close_cached  # WAL + thread-local connection cache
 
 # These path prefixes bypass the scoring equation entirely — always surface first.
 # A node is hardcoded if its path starts with any of these strings.
@@ -91,56 +91,23 @@ def delete_user_db(user_id) -> None:
         try:
             p.unlink(missing_ok=True)
         except Exception:
-            pass  # e.g. kai/memory/tree/1.db
-
-
-def _connect(user_id: str) -> sqlite3.Connection:
-    """Open (or create) the database for this user and return a connection."""
-    conn = sqlite3.connect(_db_path(user_id))  # opens the file; creates it if missing
-    conn.row_factory = sqlite3.Row  # makes rows dict-like: row["path"] instead of row[0]
-    conn.execute("PRAGMA journal_mode=WAL")  # WAL mode: reads don't block writes
-    conn.execute("PRAGMA busy_timeout=5000")  # wait up to 5s if another process holds the lock
-    _init(conn)  # create the table and index on first run
-    return conn
-
-
-# Connections are cached per (thread, user_id). sqlite3 connections can't be
-# shared across threads, so we key by thread via threading.local(). This avoids
-# reopening the file + re-running CREATE TABLE on every operation — and avoids
-# leaking connections (sqlite3's `with conn:` commits the transaction but never
-# closes the connection, so the old "with _connect(...)" pattern leaked one per
-# call). Callers keep `with _conn(...)` for transaction (commit/rollback) scope.
-_local = threading.local()
+            pass  # e.g. var/tree/1.db held open elsewhere
 
 
 def _conn(user_id: str) -> sqlite3.Connection:
     """Return this thread's cached connection for the user, opening it once.
 
-    Keyed by the resolved DB path (not just user_id) so that if TREE_DIR changes
-    — e.g. tests monkeypatch it to a tmp dir — a stale connection from the old
-    location is never reused."""
-    cache = getattr(_local, "conns", None)
-    if cache is None:
-        cache = _local.conns = {}
-    key = str(_db_path(user_id))
-    conn = cache.get(key)
-    if conn is None:
-        conn = cache[key] = _connect(user_id)
-    return conn
+    The path is recomputed on every call and is what the cache is keyed by, so if
+    TREE_DIR changes — e.g. tests monkeypatch it to a tmp dir — a stale connection
+    from the old location is never reused. Callers keep `with _conn(...)` for
+    transaction (commit/rollback) scope; the connection outlives the block."""
+    return cached_conn(_db_path(user_id), row_factory=sqlite3.Row, init=_init)
 
 
 def _close(user_id) -> None:
     """Evict and close this thread's cached connection (call before deleting the
     file so the OS — notably Windows — can unlink it)."""
-    cache = getattr(_local, "conns", None)
-    if not cache:
-        return
-    conn = cache.pop(str(_db_path(user_id)), None)
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    close_cached(_db_path(user_id))
 
 
 def _init(conn: sqlite3.Connection) -> None:

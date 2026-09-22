@@ -89,18 +89,13 @@ _db_conn = None
 def _get_db():
     global _db_conn
     if _db_conn is None:
-        import sqlite3
-
         from kai.config import MEMORY_DIR
+        from kai.store.conn import open_db
 
-        db_path = MEMORY_DIR / "events.db"
-        # kai.config no longer mkdirs at import time, so every direct
-        # sqlite3.connect has to make its own parent (tree.py, state.py and
-        # knowledge.py already do; this one was riding on the import side effect).
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _db_conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        _db_conn.execute("PRAGMA journal_mode=WAL")
-        _db_conn.execute("PRAGMA busy_timeout=5000")  # wait, don't fail, on lock contention
+        # One process-wide connection, not the usual thread-local one: emit() is
+        # called from every worker thread and the writes are serialized by
+        # _db_lock, so check_same_thread is off deliberately.
+        _db_conn = open_db(MEMORY_DIR / "events.db", check_same_thread=False)
         _db_conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,

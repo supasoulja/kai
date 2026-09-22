@@ -21,10 +21,9 @@ import json
 import time
 
 from kai.core._app_state import get_current_user_id
-from kai.store.db import get_conn
+from kai.store.db import ensure_schema, get_conn
 
 _MAX_FIELD = 4000
-_schema_ready = False
 
 # Retention cap — crew turns are low-volume, but never let the log grow unbounded.
 _LOG_MAX = 5000
@@ -32,10 +31,7 @@ _TRIM_EVERY = 100
 _writes_since_trim = 0
 
 
-def _ensure_schema(conn) -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
+def _create_table(conn) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS crew_log (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +46,10 @@ def _ensure_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crew_trace ON crew_log(trace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crew_ts ON crew_log(ts)")
     conn.commit()
-    _schema_ready = True
+
+
+def _ensure_schema(conn) -> None:
+    ensure_schema(conn, "crew_log", _create_table)
 
 
 def record(trace_id: str, kind: str, *, session_id: str | None = None, **payload) -> None:

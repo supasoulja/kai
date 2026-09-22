@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from kai.config import FAST_EMBED_DIM, HANDOFF_THRESHOLD
+from kai.store.conn import cached_conn, close_cached
 from kai.util.ids import new_id
 
 EmbedFn = Callable[[str], list[float]]
@@ -38,11 +39,10 @@ def delete_user_db(user_id: int) -> None:
     """Permanently remove a user's knowledge database (file + WAL/SHM sidecars).
 
     Called by store.users.delete_user so account deletion wipes the per-user
-    learned-knowledge file. Best-effort: missing files are ignored. On Linux,
-    unlinking an open SQLite file is safe; on Windows the caller should evict
-    the user's Brain first so cached connections are released.
+    learned-knowledge file. Best-effort: missing files are ignored.
     """
     base = _user_db_path(user_id)
+    close_cached(base)  # evict this thread's connection so the file can be unlinked
     for p in (base, base.with_suffix(".db-wal"), base.with_suffix(".db-shm")):
         try:
             p.unlink(missing_ok=True)
@@ -306,10 +306,32 @@ class HandoffRouter:
 # ── KnowledgeStore ─────────────────────────────────────────────────────────────
 
 
+def _init(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS knowledge (
+            id          TEXT PRIMARY KEY,
+            content     TEXT NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'researcher',
+            topic       TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_topic   ON knowledge(topic);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_created ON knowledge(created_at);
+    """)
+    try:
+        conn.execute(f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vec
+            USING vec0(embedding float[{FAST_EMBED_DIM}])
+        """)
+    except Exception:
+        pass  # no sqlite-vec — search() falls back to LIKE
+    conn.commit()
+
+
 class KnowledgeStore:
     """
     Per-user knowledge store. Each user gets their own SQLite file at
-    kai/memory/knowledge/users/{user_id}.db
+    var/knowledge/users/{user_id}.db
 
     Written by the researcher model when it discovers something worth keeping.
     Searched by all models when they need external context beyond conversation history.
@@ -318,56 +340,9 @@ class KnowledgeStore:
     def __init__(self, user_id: int) -> None:
         self.user_id = user_id
         self._db_path = _user_db_path(user_id)
-        self._local = threading.local()
-        self._schema_ready = False
-        self._schema_lock = threading.Lock()
 
     def _conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            return conn
-
-        conn = sqlite3.connect(self._db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-
-        try:
-            import sqlite_vec
-
-            conn.enable_load_extension(True)
-            sqlite_vec.load(conn)
-            conn.enable_load_extension(False)
-        except Exception:
-            pass
-
-        self._local.conn = conn
-        self._ensure_schema(conn)
-        return conn
-
-    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        with self._schema_lock:
-            if self._schema_ready:
-                return
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS knowledge (
-                    id          TEXT PRIMARY KEY,
-                    content     TEXT NOT NULL,
-                    source      TEXT NOT NULL DEFAULT 'researcher',
-                    topic       TEXT,
-                    created_at  TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_knowledge_topic   ON knowledge(topic);
-                CREATE INDEX IF NOT EXISTS idx_knowledge_created ON knowledge(created_at);
-            """)
-            try:
-                conn.execute(f"""
-                    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vec
-                    USING vec0(embedding float[{FAST_EMBED_DIM}])
-                """)
-            except Exception:
-                pass
-            conn.commit()
-            self._schema_ready = True
+        return cached_conn(self._db_path, vec=True, init=_init)
 
     def learn(
         self,

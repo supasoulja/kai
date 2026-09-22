@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 import kai.config as cfg
-from kai.store.db import get_conn
+from kai.store.db import ensure_schema, get_conn
 from kai.tools.registry import ToolUnavailable, registry
 from kai.util.ids import short_id
 
@@ -170,8 +170,7 @@ def _create_proposal(op: str, source: str, dest: str = "") -> dict:
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
 
-def _ensure_table():
-    conn = get_conn()
+def _create_table(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sandbox_log (
             id TEXT PRIMARY KEY,
@@ -187,8 +186,9 @@ def _ensure_table():
 
 
 def _log_op(op: str, source: str, dest: str, status: str, user_id: int | None = None):
-    _ensure_table()
+    # This tool owns sandbox_log — see "Schema ownership" in kai/store/db.py.
     conn = get_conn()
+    ensure_schema(conn, "sandbox_log", _create_table)
     conn.execute(
         "INSERT INTO sandbox_log (id, timestamp, operation, source, dest, status, user_id) "
         "VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
@@ -530,8 +530,8 @@ def approve_proposal(proposal_id: str) -> str:
     },
 )
 def sandbox_history(limit: int = 10) -> str:
-    _ensure_table()
     conn = get_conn()
+    ensure_schema(conn, "sandbox_log", _create_table)
     rows = conn.execute(
         "SELECT timestamp, operation, source, dest, status "
         "FROM sandbox_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",

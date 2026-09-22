@@ -1,5 +1,5 @@
 """
-kai/flow.py — turn-flow recorder: the X-ray for a single conversation turn.
+kai/core/flow.py — turn-flow recorder: the X-ray for a single conversation turn.
 
 The events table holds what the UI shows (stream tokens, tool labels).
 This log holds what actually happened INSIDE the turn — every model request
@@ -17,10 +17,9 @@ import time
 
 import kai.config as cfg
 from kai.core._app_state import get_current_user_id
-from kai.store.db import get_conn
+from kai.store.db import ensure_schema, get_conn
 
 _MAX_FIELD = 6000  # truncate giant payload values (full file dumps etc.)
-_schema_ready = False
 
 # Retention: trim the oldest rows past cfg.FLOW_LOG_MAX so the debug log can't
 # grow without bound. Checked every _TRIM_EVERY inserts rather than per-row.
@@ -46,10 +45,7 @@ def unsubscribe(fn) -> None:
         pass
 
 
-def _ensure_schema(conn) -> None:
-    global _schema_ready
-    if _schema_ready:
-        return
+def _create_table(conn) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS flow_log (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +64,10 @@ def _ensure_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_trace ON flow_log(trace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_user ON flow_log(user_id)")
     conn.commit()
-    _schema_ready = True
+
+
+def _ensure_schema(conn) -> None:
+    ensure_schema(conn, "flow_log", _create_table)
 
 
 def record(trace_id: str, kind: str, **payload) -> None:
