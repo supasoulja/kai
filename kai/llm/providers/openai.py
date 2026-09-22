@@ -15,6 +15,11 @@ It normalizes both directions so Brain never knows it isn't talking to Ollama:
 
 Tool *schemas* need no translation — Ollama already uses OpenAI's
 {"type":"function","function":{…}} format.
+
+`think` is accepted but never sent: every backend spells reasoning differently
+(OpenAI `reasoning_effort`, OpenRouter `reasoning`, …) and the wrong one 400s,
+so there is nothing portable to forward. Reasoning that arrives unasked is still
+surfaced — the response side reads `reasoning`/`reasoning_content`.
 """
 
 from __future__ import annotations
@@ -129,9 +134,9 @@ class OpenAIClient(BaseHTTPProvider):
         messages: list[dict],
         tools: list[dict] | None = None,
         model: str = "",
-        think: bool = False,
+        think: bool = False,  # never sent: reasoning is spelled differently per backend
         temperature: float = TEMPERATURE_TOOL,
-        keep_alive: str = "10m",
+        keep_alive: str = "10m",  # never sent: Ollama model-residency knob, no cloud equivalent
     ) -> dict:
         data = self._post_json(
             "/chat/completions", self._payload(messages, tools, model, temperature, False)
@@ -144,7 +149,7 @@ class OpenAIClient(BaseHTTPProvider):
         messages: list[dict],
         tools: list[dict] | None = None,
         model: str = "",
-        think: bool = False,
+        think: bool = False,  # never sent: reasoning is spelled differently per backend
         temperature: float = TEMPERATURE_FINAL,
     ) -> Generator[tuple[str, bool, dict], None, None]:
         content_parts: list[str] = []
