@@ -19,8 +19,14 @@ _LINUX_MSG = "This tool is only available on Windows."
 
 
 def _ps(cmd: str, timeout: int = 30) -> tuple[str, str]:
-    """Run PowerShell, return (stdout, stderr)."""
+    """Run PowerShell, return (stdout, stderr). These tools report the failure
+    reason back to the user, so this adapter keeps stderr rather than the
+    `str | None` the other tool modules use. A run that never completed reports
+    stderr as an "Error:" string — a timeout must not read as a silent success.
+    """
     res = run_powershell(cmd, timeout)
+    if not res.ok:
+        return "", f"Error: {res.err}"
     return res.out, res.err
 
 
@@ -97,7 +103,7 @@ $mb = [math]::Round($freed / 1MB, 1)
 """
     stdout, stderr = _ps(cmd, timeout=60)
     if not stdout:
-        return "Temp file cleanup ran but returned no output."
+        return f"Temp file cleanup produced no output. {stderr[:200]}".strip()
     return stdout.strip()
 
 
@@ -215,7 +221,9 @@ def kill_process(process_name: str) -> str:
     name = _ps_escape(process_name.strip())
     # Check if it's running first
     check_cmd = f"Get-Process -Name '{name.replace('.exe', '')}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
-    pids, _ = _ps(check_cmd, timeout=8)
+    pids, check_err = _ps(check_cmd, timeout=8)
+    if check_err and "error" in check_err.lower():
+        return f"Could not check whether '{name}' is running: {check_err[:200]}"
     if not pids.strip():
         return f"Process '{name}' is not currently running."
     kill_cmd = f"Stop-Process -Name '{name.replace('.exe', '')}' -Force -ErrorAction Stop"

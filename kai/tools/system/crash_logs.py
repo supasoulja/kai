@@ -43,7 +43,12 @@ _NOISE_IDS = {10016, 10010, 7031}
 )
 def get_crash_logs() -> str:
     if not _IS_WINDOWS:
-        return _journalctl_errors(priority="err", since="7 days ago")
+        lines, err = _journalctl(priority="err", since="7 days ago")
+        if err:
+            return err
+        if not lines:
+            return "No significant errors or crashes in the journal for the past 7 days."
+        return "\n".join(lines)
     events = _fetch_events(days=7, max_events=20)
     events = _filter_noise(events)
 
@@ -435,21 +440,46 @@ $results | Sort-Object date -Descending | ConvertTo-Json -Compress
 # ── Linux helpers ──────────────────────────────────────────────────────────────
 
 
-def _journalctl_errors(
-    priority: str = "err", since: str = "24 hours ago", max_lines: int = 25
-) -> str:
+# Kernel spam that is usually harmless — dropped from every journal read.
+_JOURNAL_NOISE = ("microcode", "EDAC", "ACPI Warning", "pcie_aspm")
+
+
+def _is_journal_marker(line: str) -> bool:
+    """journalctl's own separators — '-- Boot <id> --', '-- No entries --'.
+    A --grep search returns one per boot in range, and they are not entries:
+    reporting them as crashes is a fabricated result."""
+    stripped = line.strip()
+    return stripped.startswith("-- ") and stripped.endswith("--")
+
+
+def _journalctl(
+    priority: str = "err",
+    since: str = "24 hours ago",
+    max_lines: int = 25,
+    grep: str = "",
+    timeout: int = 10,
+) -> tuple[list[str], str | None]:
     """
-    Pull errors from the systemd journal.
-    priority: journalctl -p level — "err", "crit", "warning", etc.
-    since: passed to --since (e.g. "7 days ago", "boot")
+    Read the systemd journal. Returns (entry lines, error) — error is None when
+    journalctl ran, and an empty list means it ran and found nothing. Callers
+    render their own "nothing found" wording so a failed read is never reported
+    as a clean result.
+
+    priority: journalctl -p level — "err", "crit", "warning", "info".
+    since: passed to --since (e.g. "7 days ago"), or "boot" for -b.
+    grep: journalctl --grep pattern, e.g. "amdgpu|drm".
+    timeout: seconds. A --grep scan below error priority walks far more of the
+    journal and needs more than the default.
     """
+    since_arg = ["-b"] if since == "boot" else [f"--since={since}"]
+    grep_arg = ["--grep", grep] if grep else []
     try:
-        since_arg = ["-b"] if since == "boot" else [f"--since={since}"]
         r = subprocess.run(
             [
                 "journalctl",
                 f"-p{priority}",
                 *since_arg,
+                *grep_arg,
                 "--no-pager",
                 f"-n{max_lines}",
                 "-o",
@@ -457,20 +487,19 @@ def _journalctl_errors(
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
         )
-        out = r.stdout.strip()
-        if not out or out == "-- No entries --":
-            return f"No {priority}+ events found since {since}."
-        lines = out.splitlines()
-        # Filter kernel spam that's usually harmless
-        _noise = {"microcode", "EDAC", "ACPI Warning", "pcie_aspm"}
-        lines = [line for line in lines if not any(n in line for n in _noise)]
-        return "\n".join(lines[:max_lines]) if lines else f"No significant {priority}+ events."
     except FileNotFoundError:
-        return "journalctl not found — not a systemd system?"
+        return [], "journalctl not found — not a systemd system?"
     except Exception as exc:
-        return f"journalctl error: {exc}"
+        return [], f"journalctl error: {exc}"
+
+    lines = [
+        ln
+        for ln in r.stdout.strip().splitlines()
+        if not _is_journal_marker(ln) and not any(n in ln for n in _JOURNAL_NOISE)
+    ]
+    return lines[:max_lines], None
 
 
 def _linux_gpu_crashes(days: int = 30) -> str:
@@ -499,33 +528,18 @@ def _linux_gpu_crashes(days: int = 30) -> str:
     except Exception:
         pass
 
-    # Journal GPU errors
-    try:
-        r = subprocess.run(
-            [
-                "journalctl",
-                "-b",
-                "--no-pager",
-                "-n50",
-                "-o",
-                "short-iso",
-                "-p",
-                "err",
-                "--grep",
-                "amdgpu|radeon|nvidia|drm|gpu",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        out = r.stdout.strip()
-        if out and out != "-- No entries --":
-            results.append("\nJournal GPU errors (this boot):")
-            results.append(out)
-    except Exception:
-        pass
+    # Journal GPU errors — dmesg above may still have found something, so a
+    # journalctl failure here is not fatal to the tool.
+    lines, journal_err = _journalctl(
+        priority="err", since="boot", max_lines=50, grep="amdgpu|radeon|nvidia|drm|gpu"
+    )
+    if lines:
+        results.append("\nJournal GPU errors (this boot):")
+        results.extend(lines)
 
     if not results:
+        if journal_err:
+            return f"No GPU crash events found in dmesg. Journal search failed: {journal_err}"
         return f"No GPU crash events found in the past {days} days."
     return "\n".join(results)
 
@@ -570,35 +584,28 @@ def _linux_game_crashes(days: int = 7, game_name: str = "") -> str:
                 ).stdout.strip()
                 results.append(f"  {mtime}  {os.path.basename(d)}")
 
-    # Journal: segfaults and killed processes
-    try:
-        r = subprocess.run(
-            [
-                "journalctl",
-                f"--since={days} days ago",
-                "--no-pager",
-                "-n30",
-                "-o",
-                "short-iso",
-                "--grep",
-                "segfault|killed process|core dumped|Out of memory",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        out = r.stdout.strip()
-        if out and out != "-- No entries --":
-            lines = out.splitlines()
-            if game_name:
-                lines = [line for line in lines if game_name.lower() in line.lower()]
-            if lines:
-                results.append(f"\nJournal crashes (past {days} days):")
-                results.extend(lines[:15])
-    except Exception:
-        pass
+    # Journal: segfaults and killed processes. Priority "info" because the
+    # kernel logs segfaults below error level — the grep is the real filter.
+    # That scan is slow (~23s over a week here), hence the raised timeout.
+    lines, journal_err = _journalctl(
+        priority="info",
+        since=f"{days} days ago",
+        max_lines=30,
+        grep="segfault|killed process|core dumped|Out of memory",
+        timeout=45,
+    )
+    if game_name:
+        lines = [line for line in lines if game_name.lower() in line.lower()]
+    if lines:
+        results.append(f"\nJournal crashes (past {days} days):")
+        results.extend(lines[:15])
 
     if not results:
         suffix = f" for '{game_name}'" if game_name else ""
+        if journal_err:
+            return (
+                f"No game crash reports found in Steam logs or crash dumps{suffix}. "
+                f"Journal search failed: {journal_err}"
+            )
         return f"No game crash reports found in the past {days} days{suffix}."
     return "\n".join(results)

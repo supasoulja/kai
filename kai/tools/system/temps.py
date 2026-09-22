@@ -28,9 +28,9 @@ _cache_ttl = 60.0  # seconds before refresh
 _refresh_running = False
 
 
-def _ps(cmd: str, timeout: int = 10) -> str:
-    """Run PowerShell, return stdout or empty string."""
-    return run_powershell(cmd, timeout).out
+def _ps(cmd: str, timeout: int = 10) -> str | None:
+    """Run PowerShell, return stdout or None when there's no usable output."""
+    return run_powershell(cmd, timeout).out or None
 
 
 def _maybe_refresh() -> None:
@@ -254,7 +254,7 @@ def _gpu_vendor() -> str:
             "Where-Object {$_.Name -notmatch 'Virtual|Microsoft|Parsec|Basic'} | "
             "Select-Object -ExpandProperty Name -First 1"
         )
-        out = _ps(ps, timeout=6).lower()
+        out = (_ps(ps, timeout=6) or "").lower()
         if "amd" in out or "radeon" in out:
             _gpu_vendor_cache = "amd"
         elif "nvidia" in out or "geforce" in out or "quadro" in out:
@@ -388,7 +388,7 @@ def _find_amd_smi() -> str | None:
         "-Recurse -Filter 'amd-smi.exe' -ErrorAction SilentlyContinue "
         "| Select-Object -ExpandProperty FullName -First 1"
     )
-    found = _ps(ps, timeout=10).strip()
+    found = _ps(ps, timeout=10)
     if found and os.path.isfile(found):
         _amd_smi_path_cache = found
         return _amd_smi_path_cache
@@ -610,7 +610,7 @@ def _find_nvidia_smi() -> str | None:
         "-Recurse -Filter 'nvidia-smi.exe' -ErrorAction SilentlyContinue "
         "| Select-Object -ExpandProperty FullName -First 1"
     )
-    found = _ps(ps, timeout=8).strip()
+    found = _ps(ps, timeout=8)
     if found and os.path.isfile(found):
         _nvidia_smi_path_cache = found
         return _nvidia_smi_path_cache

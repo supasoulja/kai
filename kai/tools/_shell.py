@@ -4,8 +4,10 @@ Shared subprocess helpers for tool modules.
 The PowerShell invocation (flags, UTF-8 decoding, timeout handling) used to be
 copy-pasted as a private `_ps()` in four tool files — each with a slightly
 different return shape; likewise a plain-argv `_run()` in three. The actual calls
-live here now (`run_powershell`, `run_argv`); each tool keeps a thin adapter that
-maps this structured result onto whatever shape its call sites expect.
+live here now (`run_powershell`, `run_argv`). Each tool keeps a thin `_ps()` adapter
+that supplies its module's default timeout and maps this structured result onto
+`str | None`, where None means no usable output. system_ops is the exception — its
+tools report stderr back to the user, so its adapter returns (stdout, stderr).
 """
 
 import subprocess
