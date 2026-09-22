@@ -339,6 +339,14 @@ def update_account(
         return True
     try:
         conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
+        if name is not None:  # open sessions carry the name they signed in with
+            try:
+                conn.execute(
+                    "UPDATE session_tokens SET user_name = ? WHERE user_id = ?",
+                    (name.strip(), user_id),
+                )
+            except sqlite3.OperationalError:
+                pass  # no session_tokens table yet: nobody has ever signed in
         conn.commit()
     except sqlite3.IntegrityError:
         conn.rollback()

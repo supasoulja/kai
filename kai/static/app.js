@@ -111,6 +111,7 @@ function setSendStopMode(on) {
 }
 let messageCount  = 0;
 let _currentUser  = null;   // { name, initial }
+let _caps         = new Set();   // this account's capabilities, from /info
 
 // Session metrics
 const sessionStart = Date.now();
@@ -850,10 +851,11 @@ async function loadInfo() {
     // What this account may do comes from the server's permission table
     // (kai/core/permissions.py), never from guessing at the level here.
     const can = new Set(d.capabilities || []);
+    _caps = can;
 
-    // Add User section — owner and admins
-    const addUserSection = $('add-user-section');
-    if (addUserSection) addUserSection.style.display = can.has('accounts.create') ? '' : 'none';
+    // People page — owner and admins
+    const peopleNav = $('settings-nav-people');
+    if (peopleNav) peopleNav.style.display = can.has('accounts.view') ? '' : 'none';
 
     // System control (restart / shutdown) — owner and admins
     const sysControl = $('system-control-section');
@@ -867,59 +869,411 @@ async function loadInfo() {
   } catch { /* ignore */ }
 }
 
-// Add-user form (owner and admins)
-(function initUserAddForm() {
-  const addBtn    = $('user-add-btn');
-  const form      = $('user-add-form');
-  const cancelBtn = $('user-cancel-btn');
-  const saveBtn   = $('user-save-btn');
-  const nameIn    = $('user-add-name');
-  const pinIn     = $('user-add-pin');
-  const msgEl     = $('user-add-msg');
+// ── People: accounts, levels, grants, kicks, audit log ───────────────────────
+// Every rule is the server's (kai/core/permissions.py). GET /accounts says which rows this
+// account may edit, which levels it may hand out and which grants it may set; this page
+// only hides what the server would refuse.
 
-  if (!addBtn || !form) return;
+// What each level does today. Only what the server enforces (docs/active/PERMISSIONS.md).
+const LEVEL_INFO = {
+  owner:  'Everything on this Kai. There is one owner, and ownership moves only by transfer.',
+  admin:  'Adds Members and Guests, manages models and recipes, restarts Kai, reads the audit log.',
+  member: 'Their own chats, memory, notes and documents.',
+  guest:  'Chats are saved, but Kai learns nothing from them.',
+};
+const GRANT_INFO = {
+  'tools.destructive': {
+    tag:   '+ destructive tools',
+    label: 'May approve destructive tools in their own session',
+    note:  'Saved on the account, but nothing checks it yet: the tool gate that reads it is the next permissions increment.',
+  },
+};
+const AUDIT_VERB = {
+  'account.create':         'created',
+  'account.edit':           'edited',
+  'account.grants':         'changed the grants of',
+  'account.kick':           'kicked',
+  'account.delete':         'deleted the account',
+  'account.transfer_owner': 'handed ownership to',
+  'server.restart':         'restarted Kai',
+  'server.shutdown':        'shut Kai down',
+};
+const AUDIT_PAGE = 50;
 
-  addBtn.addEventListener('click', () => {
-    form.style.display = form.style.display === 'none' ? '' : 'none';
-    if (msgEl) msgEl.textContent = '';
+let _people      = { accounts: [], assignable: [], grants: {} };
+let _peopleOpen  = null;   // id of the expanded account
+let _auditOldest = null;   // smallest audit id on screen, for "Load older"
+let _auditSeq    = 0;
+
+const levelName = l => l ? l[0].toUpperCase() + l.slice(1) : '';
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const now  = new Date();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `today ${time}`;
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return `yesterday ${time}`;
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+  return `${d.toLocaleDateString('en-US', opts)} ${time}`;
+}
+
+function peopleMsg(text, isErr = false) {
+  const el = $('people-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('err', !!isErr);
+}
+
+// The response body, or null once the reason it failed is on screen.
+async function peopleCall(url, method, body) {
+  try {
+    const r = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      peopleMsg(typeof d.detail === 'string' ? d.detail : 'That didn’t work.', true);
+      return null;
+    }
+    return d;
+  } catch {
+    peopleMsg('Network error. Please try again.', true);
+    return null;
+  }
+}
+
+async function loadPeople() {
+  const list = $('people-list');
+  if (!list) return;
+  try {
+    const r = await fetch('/accounts');
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      list.innerHTML = `<div class="empty-hint">${esc(typeof d.detail === 'string' ? d.detail : 'Could not load accounts.')}</div>`;
+      return;
+    }
+    _people = { accounts: d.accounts || [], assignable: d.assignable_levels || [], grants: d.grants || {} };
+  } catch {
+    list.innerHTML = '<div class="empty-hint">Could not load accounts.</div>';
+    return;
+  }
+  renderPeople();
+}
+
+function renderPeople() {
+  const list = $('people-list');
+  if (!list) return;
+  const count = $('people-count');
+  if (count) count.textContent = _people.accounts.length;
+
+  const addBtn = $('people-add-btn');
+  if (addBtn) addBtn.style.display = _people.assignable.length ? '' : 'none';
+  const addLevel = $('people-add-level');
+  if (addLevel) {
+    const keep = addLevel.value;
+    addLevel.innerHTML = _people.assignable.map(l => `<option value="${esc(l)}">${esc(levelName(l))}</option>`).join('');
+    addLevel.value = _people.assignable.includes(keep) ? keep
+      : _people.assignable.includes('member') ? 'member' : (_people.assignable[0] || '');
+    const hint = $('people-add-hint');
+    if (hint) hint.textContent = LEVEL_INFO[addLevel.value] || '';
+  }
+
+  if (!_people.accounts.some(a => a.id === _peopleOpen)) _peopleOpen = null;
+  const names = new Map(_people.accounts.map(a => [a.id, a.name]));
+  list.innerHTML = _people.accounts.map(a => renderPerson(a, names)).join('');
+}
+
+// Owner-only actions on someone else's row: kick, remove, hand over ownership.
+function _ownerActions(a) {
+  return !a.you && (_caps.has('accounts.kick') || _caps.has('accounts.transfer'));
+}
+
+function renderPerson(a, names) {
+  const open     = _peopleOpen === a.id;
+  const editable = a.can_edit || _ownerActions(a);
+  const maker    = a.created_by ? `added by ${names.get(a.created_by) || 'a removed account'}` : '';
+  const seen     = a.last_seen ? `signed in ${fmtWhen(a.last_seen)}` : 'never signed in';
+  const grants   = a.grants.map(g =>
+    `<span class="people-grant-tag" title="${esc(GRANT_INFO[g]?.label || g)}">${esc(GRANT_INFO[g]?.tag || g)}</span>`).join('');
+  const head = `
+      <span class="people-avatar">${esc((a.name[0] || '?').toUpperCase())}</span>
+      <span class="people-info">
+        <span class="people-name">${esc(a.name)}${a.you ? ' <span class="people-you">(you)</span>' : ''}</span>
+        <span class="people-meta">${esc([maker, seen].filter(Boolean).join(' · '))}</span>
+      </span>
+      <span class="people-tags">${grants}<span class="people-level lv-${esc(a.level)}">${esc(a.level)}</span>${
+        editable ? '<span class="material-symbols-outlined people-chev">expand_more</span>' : ''}</span>`;
+  const row = editable
+    ? `<button class="people-row" data-toggle="${a.id}" aria-expanded="${open}">${head}</button>`
+    : `<div class="people-row" title="Only the owner can edit this account.">${head}</div>`;
+  return `<div class="people-item${open ? ' open' : ''}" data-id="${a.id}">${row}${open ? renderPersonEdit(a) : ''}</div>`;
+}
+
+function renderPersonEdit(a) {
+  let html = '';
+  if (a.can_edit) {
+    const levels = a.level === 'owner' ? [] : _people.assignable;
+    const levelField = levels.length ? `
+      <label class="people-field">Level
+        <select class="model-select" data-f="level">${levels.map(l =>
+          `<option value="${esc(l)}"${l === a.level ? ' selected' : ''}>${esc(levelName(l))}</option>`).join('')}</select>
+      </label>` : '';
+    html += `
+      <label class="people-field">Name
+        <input class="model-name-input" data-f="name" type="text" maxlength="64" autocomplete="off" value="${esc(a.name)}">
+      </label>
+      <label class="people-field">New PIN
+        <input class="model-name-input" data-f="pin" type="password" inputmode="numeric" maxlength="8"
+               placeholder="Leave blank to keep the current PIN" autocomplete="new-password">
+      </label>
+      ${levelField}
+      <div class="people-hint" data-f="level-hint">${esc(LEVEL_INFO[a.level] || '')}</div>
+      <div class="people-grants" data-f="grants">${renderGrantBoxes(a, a.level)}</div>
+      <div class="model-add-actions">
+        <button class="btn btn-sm" data-act="save">Save</button>
+        <button class="btn btn-sm btn-muted" data-act="close">Cancel</button>
+      </div>`;
+  }
+  if (_ownerActions(a)) {
+    const btns = [];
+    if (_caps.has('accounts.kick')) {
+      btns.push('<button class="btn btn-sm btn-muted" data-act="signout">Sign out everywhere</button>');
+      btns.push('<button class="btn btn-sm btn-danger" data-act="remove">Remove account…</button>');
+    }
+    if (_caps.has('accounts.transfer')) btns.push('<button class="btn btn-sm btn-muted" data-act="transfer">Make owner…</button>');
+    html += `<div class="people-danger"><span class="people-danger-label">Owner only</span>${btns.join('')}</div>`;
+  }
+  return `<div class="people-edit">${html}</div>`;
+}
+
+// Checkboxes for the grants that fit *level*. Only the owner sees any: GET /accounts
+// sends the grant table to accounts that may set grants, and {} to everyone else.
+function renderGrantBoxes(a, level) {
+  return Object.entries(_people.grants).filter(([, fits]) => fits === level).map(([g]) => {
+    const info = GRANT_INFO[g] || { label: g };
+    return `
+      <label class="people-grant">
+        <input type="checkbox" data-grant="${esc(g)}"${a.grants.includes(g) ? ' checked' : ''}>
+        <span>${esc(info.label)}${info.note ? `<span class="people-hint" style="display:block">${esc(info.note)}</span>` : ''}</span>
+      </label>`;
+  }).join('');
+}
+
+async function savePerson(a, item, btn) {
+  const name  = item.querySelector('[data-f="name"]').value.trim();
+  const pin   = item.querySelector('[data-f="pin"]').value.trim();
+  const level = item.querySelector('[data-f="level"]')?.value;
+  const boxes = [...item.querySelectorAll('[data-grant]')];
+  if (!name) return peopleMsg('Name is required.', true);
+  if (pin && !/^\d{4,8}$/.test(pin)) return peopleMsg('PIN must be 4–8 digits.', true);
+
+  const patch = {};
+  if (name !== a.name) patch.name = name;
+  if (pin) patch.pin = pin;
+  if (level && level !== a.level) patch.level = level;
+  const wanted = boxes.filter(b => b.checked).map(b => b.dataset.grant).sort();
+  // A level change drops grants that no longer fit, so compare with what the edit left.
+  const grantsDiffer = acc => boxes.length > 0 && wanted.join() !== [...acc.grants].sort().join();
+  if (!Object.keys(patch).length && !grantsDiffer(a)) return peopleMsg('Nothing to change.');
+
+  btn.disabled = true;
+  const done = [];
+  let acc = a;
+  let ok = true;
+  if (Object.keys(patch).length) {
+    const d = await peopleCall(`/accounts/${a.id}`, 'PATCH', patch);
+    if (d) {
+      acc = d.account;
+      if (patch.name)  done.push(`renamed from ${a.name}`);
+      if (patch.pin)   done.push(a.you ? 'PIN changed' : 'PIN reset, and signed out everywhere');
+      if (patch.level) done.push(`now ${levelName(acc.level)}`);
+    } else ok = false;
+  }
+  if (ok && grantsDiffer(acc)) {
+    if (await peopleCall(`/accounts/${a.id}/grants`, 'PUT', { grants: wanted })) done.push('grants updated');
+    else ok = false;
+  }
+  btn.disabled = false;
+  if (ok) {
+    _peopleOpen = null;
+    peopleMsg(`${acc.name}: ${done.join(', ')}.`);
+  }
+  if (done.length) {
+    await loadPeople();
+    if (a.you) loadInfo();
+  }
+  loadAudit(true);
+}
+
+async function kickPerson(a, remove) {
+  if (remove) {
+    const typed = prompt(`This permanently removes "${a.name}" and everything Kai remembers for them: chats, memory, notes and documents. Note files already written to disk are left where they are.\n\nType the name to confirm.`);
+    if (typed === null) return;
+    if (typed.trim() !== a.name) return peopleMsg('The name didn’t match. Nothing was removed.', true);
+  } else if (!confirm(`Sign ${a.name} out on every device?\n\nThey can sign straight back in with their PIN. Reset it too if you want to keep them out.`)) {
+    return;
+  }
+  const d = await peopleCall(`/accounts/${a.id}/kick`, 'POST', { delete: remove });
+  if (d) {
+    const n = d.sessions_ended;
+    if (remove && !d.deleted) peopleMsg(`${a.name} was signed out, but the account couldn’t be removed.`, true);
+    else peopleMsg(remove ? `${a.name} was removed.` : `${a.name} was signed out of ${n} session${n === 1 ? '' : 's'}.`);
+    _peopleOpen = null;
+    loadPeople();
+  }
+  loadAudit(true);
+}
+
+async function transferOwner(a) {
+  const typed = prompt(`Make ${a.name} the owner of this Kai?\n\nYou become an admin. To get it back, they hand it over, or you run "kai --set-owner" in a terminal on this machine.\n\nType their name to confirm.`);
+  if (typed === null) return;
+  if (typed.trim() !== a.name) return peopleMsg('The name didn’t match. Ownership didn’t change.', true);
+  if (await peopleCall('/accounts/transfer-owner', 'POST', { to_id: a.id })) {
+    peopleMsg(`${a.name} now owns this Kai. You’re an admin.`);
+    _peopleOpen = null;
+    await loadInfo();   // this account's capabilities just changed
+    loadPeople();
+  }
+  loadAudit(true);
+}
+
+function auditDetail(e) {
+  const d = e.detail;
+  if (d == null) return '';
+  if (typeof d !== 'object') return String(d);
+  if (!e.ok && d.refused) return d.refused;
+  const list = xs => (Array.isArray(xs) ? (xs.length ? xs.join(', ') : 'none') : String(xs));
+  if (e.action === 'account.grants') return `grants ${list(d.from)} → ${list(d.to)}`;
+  const parts = [];
+  for (const [k, v] of Object.entries(d)) {
+    if (v && typeof v === 'object' && 'from' in v && 'to' in v) parts.push(`${k} ${list(v.from)} → ${list(v.to)}`);
+    else if (k === 'pin') parts.push('PIN reset');
+    else if (k === 'sessions_ended') parts.push(`${v} session${v === 1 ? '' : 's'} ended`);
+    else if (k === 'deleted') { if (v) parts.push('account and its data removed'); }
+    else if (k === 'old_owner_is_now') parts.push(`previous owner is now ${v}`);
+    else if (k === 'by' || k === 'via' || k === 'from') parts.push(`${k} ${v}`);
+    else parts.push(`${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+  }
+  return parts.join(' · ');
+}
+
+function renderAuditEntry(e) {
+  const actor  = esc(e.actor_name || (e.actor_id ? `#${e.actor_id}` : 'someone'));
+  const target = e.target_name ? ` <b>${esc(e.target_name)}</b>` : '';
+  const verb   = e.action === 'account.kick' && e.detail?.deleted ? 'removed' : AUDIT_VERB[e.action];
+  const what   = e.ok
+    ? `<b>${actor}</b> ${verb ? esc(verb) : `<span class="audit-action">${esc(e.action)}</span>`}${target}`
+    : `<b>${actor}</b><span class="audit-refused">refused</span> <span class="audit-action">${esc(e.action)}</span>${target ? ` on${target}` : ''}`;
+  const detail = auditDetail(e);
+  return `<div class="audit-entry${e.ok ? '' : ' refused'}">
+      <span class="audit-time" title="${esc(e.ts)}">${esc(fmtWhen(e.ts))}</span>
+      <span class="audit-what">${what}</span>
+      ${detail ? `<span class="audit-detail">${esc(detail)}</span>` : ''}
+    </div>`;
+}
+
+async function loadAudit(reset) {
+  const el = $('audit-list');
+  if (!el) return;
+  const seq    = ++_auditSeq;
+  const before = reset ? null : _auditOldest;
+  let entries;
+  try {
+    const r = await fetch(`/accounts/audit?limit=${AUDIT_PAGE}${before ? `&before=${before}` : ''}`);
+    if (!r.ok) throw new Error(r.status);
+    entries = (await r.json()).entries || [];
+  } catch {
+    if (reset && seq === _auditSeq) el.innerHTML = '<div class="empty-hint">Could not load the audit log.</div>';
+    return;
+  }
+  if (seq !== _auditSeq) return;   // a newer load replaced this one
+  const html = entries.map(renderAuditEntry).join('');
+  if (reset) el.innerHTML = html || '<div class="empty-hint">Nothing recorded yet.</div>';
+  else el.insertAdjacentHTML('beforeend', html);
+  if (reset || entries.length) _auditOldest = entries.length ? entries[entries.length - 1].id : null;
+  const more = $('audit-more');
+  if (more) more.style.display = entries.length === AUDIT_PAGE ? '' : 'none';
+}
+
+(function initPeople() {
+  const list = $('people-list');
+  if (!list) return;
+  const accountIn = el => _people.accounts.find(x => x.id === Number(el?.closest('.people-item')?.dataset.id));
+
+  list.addEventListener('click', e => {
+    const toggle = e.target.closest('[data-toggle]');
+    if (toggle) {
+      const id = Number(toggle.dataset.toggle);
+      _peopleOpen = _peopleOpen === id ? null : id;
+      peopleMsg('');
+      renderPeople();
+      return;
+    }
+    const btn = e.target.closest('[data-act]');
+    const a = btn && accountIn(btn);
+    if (!a) return;
+    const act = btn.dataset.act;
+    if (act === 'close') { _peopleOpen = null; peopleMsg(''); renderPeople(); }
+    else if (act === 'save') savePerson(a, btn.closest('.people-item'), btn);
+    else if (act === 'signout') kickPerson(a, false);
+    else if (act === 'remove') kickPerson(a, true);
+    else if (act === 'transfer') transferOwner(a);
   });
 
-  if (cancelBtn) cancelBtn.addEventListener('click', () => {
-    form.style.display = 'none';
-    nameIn.value = '';
-    pinIn.value = '';
-    if (msgEl) msgEl.textContent = '';
+  // A new level brings its own description and the grants that fit it.
+  list.addEventListener('change', e => {
+    const sel = e.target.closest('select[data-f="level"]');
+    const a = sel && accountIn(sel);
+    if (!a) return;
+    const item = sel.closest('.people-item');
+    item.querySelector('[data-f="level-hint"]').textContent = LEVEL_INFO[sel.value] || '';
+    item.querySelector('[data-f="grants"]').innerHTML = renderGrantBoxes(a, sel.value);
   });
 
-  if (saveBtn) saveBtn.addEventListener('click', async () => {
-    const name = nameIn.value.trim();
-    const pin  = pinIn.value;
-
-    if (!name) { if (msgEl) msgEl.textContent = 'Enter a name.'; return; }
-    if (!/^\d{4,8}$/.test(pin)) { if (msgEl) msgEl.textContent = 'PIN must be 4–8 digits.'; return; }
-
-    saveBtn.disabled = true;
-    try {
-      const resp = await fetch('/users/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, pin }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json();
-        if (msgEl) msgEl.textContent = err.detail || 'Failed to add user.';
-        return;
-      }
-      nameIn.value = '';
-      pinIn.value = '';
-      form.style.display = 'none';
-      if (msgEl) msgEl.textContent = `${name} can now log in with their PIN.`;
-    } catch {
-      if (msgEl) msgEl.textContent = 'Network error. Please try again.';
-    } finally {
-      saveBtn.disabled = false;
+  list.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.matches('.people-edit input[data-f]')) {
+      e.target.closest('.people-edit').querySelector('[data-act="save"]')?.click();
     }
   });
+
+  const form    = $('people-add-form');
+  const nameIn  = $('people-add-name');
+  const pinIn   = $('people-add-pin');
+  const levelIn = $('people-add-level');
+  const saveBtn = $('people-save-btn');
+  const closeAdd = () => { form.style.display = 'none'; nameIn.value = ''; pinIn.value = ''; };
+
+  $('people-add-btn')?.addEventListener('click', () => {
+    peopleMsg('');
+    if (form.style.display === 'none') { form.style.display = ''; nameIn.focus(); }
+    else closeAdd();
+  });
+  $('people-cancel-btn')?.addEventListener('click', () => { closeAdd(); peopleMsg(''); });
+  levelIn?.addEventListener('change', () => { $('people-add-hint').textContent = LEVEL_INFO[levelIn.value] || ''; });
+  saveBtn?.addEventListener('click', async () => {
+    const name = nameIn.value.trim();
+    const pin  = pinIn.value.trim();
+    if (!name) return peopleMsg('Enter a name.', true);
+    if (!/^\d{4,8}$/.test(pin)) return peopleMsg('PIN must be 4–8 digits.', true);
+    saveBtn.disabled = true;
+    const d = await peopleCall('/accounts', 'POST', { name, pin, level: levelIn.value });
+    saveBtn.disabled = false;
+    if (d) {
+      closeAdd();
+      peopleMsg(`${d.account.name} can now sign in with their PIN, as ${levelName(d.account.level)}.`);
+      loadPeople();
+    }
+    loadAudit(true);
+  });
+
+  $('audit-refresh')?.addEventListener('click', () => loadAudit(true));
+  $('audit-more')?.addEventListener('click', () => loadAudit(false));
 })();
 
 // System control (owner only) — clean restart / shutdown with progress overlay
@@ -2667,6 +3021,7 @@ function openSettingsSub(name) {
   if (name === 'brains') { loadModels(); loadToolLevel(); loadToolsSettings(); }
   else if (name === 'skills') loadRecipes();
   else if (name === 'notes') loadNotesSettings();
+  else if (name === 'people') { peopleMsg(''); loadPeople(); loadAudit(true); }
   const pane = $('panel-settings');
   if (pane) pane.scrollTop = 0;
 }

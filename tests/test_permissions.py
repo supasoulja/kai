@@ -89,6 +89,15 @@ def test_update_account_never_touches_ownership_and_names_stay_unique():
     assert users.update_account(member, name="taken") is None
 
 
+def test_a_rename_follows_the_account_into_its_open_sessions():
+    from kai.apps import web
+
+    uid = _make("Sam")
+    token = web._issue_token({"user_id": uid, "name": "Sam"})
+    assert users.update_account(uid, name="Samantha")
+    assert web._get_session(token) == {"user_id": uid, "name": "Samantha"}
+
+
 def test_what_each_level_may_assign():
     owner = _make("owner")
     admin = _make("admin", level="admin")

@@ -689,6 +689,70 @@
     .settings-back:hover { background: var(--surface-high); }
     .settings-sub-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--text); }
 
+    /* People: accounts, levels, grants, audit log */
+    .people-hint { font-size: var(--t-xs); color: var(--text-3); line-height: 1.5; }
+    .people-msg { font-size: var(--t-sm); color: var(--text-2); }
+    .people-msg:not(:empty) { margin: 10px 0 2px; }
+    .people-msg.err { color: var(--risk-destructive); }
+    .people-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .people-item { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+    .people-item.open { border-color: var(--line-strong); }
+    .people-row {
+      display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px;
+      background: none; border: none; color: var(--text-1); text-align: left; font: inherit;
+    }
+    button.people-row { cursor: pointer; }
+    button.people-row:hover { background: var(--surface-2); }
+    .people-avatar {
+      width: 30px; height: 30px; border-radius: 50%; flex: none; display: grid; place-items: center;
+      background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: var(--t-sm);
+    }
+    .people-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .people-name { font-size: var(--t-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .people-you { font-weight: 400; color: var(--text-3); }
+    .people-meta { font-size: var(--t-xs); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .people-tags { display: flex; align-items: center; gap: 6px; flex: none; }
+    .people-chev { color: var(--text-3); font-size: 18px; transition: transform .15s; }
+    .people-item.open .people-chev { transform: rotate(180deg); }
+    .people-level {
+      font-size: var(--t-xs); padding: 1px 8px; border-radius: var(--r-pill);
+      border: 1px solid var(--line-strong); color: var(--text-2); text-transform: capitalize;
+    }
+    .people-level.lv-owner { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    .people-level.lv-admin { color: var(--memory); border-color: var(--memory); background: var(--memory-bg); }
+    .people-level.lv-guest { color: var(--text-3); border-style: dashed; }
+    .people-grant-tag { font-size: var(--t-xs); color: var(--risk-caution); }
+    .people-edit {
+      padding: 12px; border-top: 1px solid var(--line); background: var(--surface-2);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .people-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--t-xs); color: var(--text-3); }
+    .people-grants { display: flex; flex-direction: column; gap: 6px; }
+    .people-grant { display: flex; align-items: flex-start; gap: 8px; font-size: var(--t-sm); color: var(--text-1); cursor: pointer; }
+    .people-grant input { margin-top: 3px; }
+    .people-danger { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .people-danger-label { width: 100%; font-size: var(--t-xs); color: var(--text-3); }
+    .audit-list { margin-top: 10px; }
+    .audit-entry {
+      display: grid; grid-template-columns: 9.5em 1fr; gap: 2px 12px;
+      padding: 8px 0; border-top: 1px solid var(--line); font-size: var(--t-sm);
+    }
+    .audit-time { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--text-3); padding-top: 2px; }
+    .audit-what { color: var(--text-1); min-width: 0; overflow-wrap: anywhere; }
+    .audit-what b { font-weight: 600; }
+    .audit-action { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--text-2); }
+    .audit-detail { grid-column: 2; font-size: var(--t-xs); color: var(--text-3); overflow-wrap: anywhere; }
+    .audit-refused {
+      font-size: var(--t-xs); color: var(--risk-destructive); background: var(--risk-destructive-bg);
+      border-radius: var(--r-sm); padding: 0 6px; margin-left: 4px;
+    }
+    .audit-entry.refused .audit-detail { color: var(--risk-destructive); }
+    @media (max-width: 520px) {
+      .audit-entry { grid-template-columns: 1fr; }
+      .audit-detail { grid-column: 1; }
+      .people-meta { white-space: normal; }
+    }
+
     /* Mode selector */
     .mode-selector-wrap { position: relative; margin-top: 8px; }
     .mode-pill {
@@ -895,6 +959,7 @@
     .btn:not(.btn-muted):hover { filter: brightness(1.1); }
     .btn-muted { background: none; color: var(--muted); border: 1px solid var(--outline-v); }
     .btn-muted:hover { background: var(--surface-high); }
+    .btn.btn-danger { background: var(--risk-destructive-bg); color: var(--risk-destructive); border: 1px solid var(--risk-destructive); }
 
     /* Info rows (sidebar data) */
     .info-row {
@@ -1891,6 +1956,11 @@
             <span class="settings-nav-text"><span class="settings-nav-title">You</span><span class="settings-nav-sub">Account &amp; sign-out</span></span>
             <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
           </button>
+          <button class="settings-nav-item" data-sub="people" id="settings-nav-people" style="display:none">
+            <span class="material-symbols-outlined">group</span>
+            <span class="settings-nav-text"><span class="settings-nav-title">People</span><span class="settings-nav-sub">Accounts, levels &amp; the audit log</span></span>
+            <span class="material-symbols-outlined settings-nav-chev">chevron_right</span>
+          </button>
           <button class="settings-nav-item" data-sub="talk">
             <span class="material-symbols-outlined">forum</span>
             <span class="settings-nav-text"><span class="settings-nav-title">How Kai talks</span><span class="settings-nav-sub">Response style, creativity, temperature</span></span>
@@ -1937,22 +2007,46 @@
             </div>
           </div>
 
-          <div class="settings-section" id="add-user-section" style="display:none">
+        </div>
+
+        <!-- ── Sub: People (owner and admins) ── -->
+        <div class="settings-sub" id="settings-sub-people" style="display:none">
+          <div class="settings-sub-hdr"><button class="settings-back">&larr; Settings</button><span class="settings-sub-title">People</span></div>
+
+          <div class="settings-section">
             <div class="settings-header">
-              <span class="settings-label">Add User</span>
-              <button class="settings-view-btn" id="user-add-btn">+ Add</button>
+              <span class="settings-label">Accounts</span>
+              <span class="badge" id="people-count"></span>
+              <button class="settings-view-btn" id="people-add-btn" style="display:none">+ Add</button>
             </div>
-            <div id="user-add-form" class="model-add-form" style="display:none">
-              <input id="user-add-name" class="model-name-input" type="text"
+            <div id="people-add-form" class="model-add-form" style="display:none">
+              <input id="people-add-name" class="model-name-input" type="text"
                      placeholder="Name" maxlength="64" autocomplete="off">
-              <input id="user-add-pin" class="model-name-input" type="password"
-                     placeholder="PIN (4-8 digits)" maxlength="8" autocomplete="new-password">
+              <input id="people-add-pin" class="model-name-input" type="password" inputmode="numeric"
+                     placeholder="PIN (4–8 digits)" maxlength="8" autocomplete="new-password">
+              <select id="people-add-level" class="model-select"></select>
+              <div class="people-hint" id="people-add-hint"></div>
               <div class="model-add-actions">
-                <button class="btn btn-sm" id="user-save-btn">Save</button>
-                <button class="btn btn-sm btn-muted" id="user-cancel-btn">Cancel</button>
+                <button class="btn btn-sm" id="people-save-btn">Create</button>
+                <button class="btn btn-sm btn-muted" id="people-cancel-btn">Cancel</button>
               </div>
             </div>
-            <div id="user-add-msg" class="settings-label" style="margin-top:6px"></div>
+            <div id="people-msg" class="people-msg"></div>
+            <div id="people-list" class="people-list"></div>
+            <div class="people-hint" style="margin-top:12px">
+              Levels decide what each person can do through Kai. They don't stop someone with a
+              terminal on this machine — that person can read the database directly.
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-header">
+              <span class="settings-label">Audit log</span>
+              <button class="settings-view-btn" id="audit-refresh">Refresh</button>
+            </div>
+            <div class="people-hint">Who did what, including what was refused. It records actions, never anyone's chats.</div>
+            <div id="audit-list" class="audit-list"></div>
+            <button class="btn btn-sm btn-muted" id="audit-more" style="display:none;margin-top:10px">Load older</button>
           </div>
         </div>
 
