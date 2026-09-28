@@ -41,7 +41,7 @@ class _Ollama:
     def model_sizes(self):
         return self.installed
 
-    def loaded_models(self):
+    def running(self):
         return self.loaded
 
 
@@ -83,20 +83,37 @@ def test_models_reports_loaded_installed_and_missing(models_route):
 
     ollama = _Ollama(
         installed={"chat:1": 8 * GB, "tool:1": 3 * GB},
-        loaded={"chat:1": 7 * GB},
+        loaded={"chat:1": {"bytes": 8 * GB, "vram_bytes": 7 * GB}},
     )
     models_route.use(_brain(ollama, tool_model="tool:1"))
     body = _client(5).get("/dashboard/models").json()
     roles = _roles(body)
 
-    assert roles["chat"] == {"role": "chat", "model": "chat:1", "state": "loaded", "bytes": 7 * GB}
+    assert roles["chat"] == {
+        "role": "chat",
+        "model": "chat:1",
+        "state": "loaded",
+        "bytes": 8 * GB,
+        "vram_bytes": 7 * GB,
+    }
     assert roles["tools"]["state"] == "installed"
     assert roles["search_deep"]["model"] == dashboard.cfg.HQ_EMBED_MODEL
     assert roles["search_deep"]["state"] == "missing"
     assert roles["search_fast"]["state"] == "cpu"
     assert "crew" not in roles
     assert body["machine"]["gpus"][0]["name"] == "Example GPU"
-    assert body["machine"]["loaded"] == {"chat:1": 7 * GB}
+    assert body["machine"]["loaded"] == {"chat:1": {"bytes": 8 * GB, "vram_bytes": 7 * GB}}
+
+
+def test_model_running_on_cpu_reports_no_vram(models_route):
+    ollama = _Ollama(
+        installed={"chat:1": 8 * GB},
+        loaded={"chat:1": {"bytes": 10 * GB, "vram_bytes": 0}},
+    )
+    models_route.use(_brain(ollama))
+    chat = _roles(_client(5).get("/dashboard/models").json())["chat"]
+    assert chat["state"] == "loaded"
+    assert chat["vram_bytes"] == 0
 
 
 def test_tool_rounds_on_chat_model_show_the_chat_model(models_route):

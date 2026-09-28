@@ -323,9 +323,16 @@ const _ROLE_LABELS = { chat: 'Chat', tools: 'Tools', crew: 'Crew', search_fast: 
 
 function _gb(b) { return `${(b / 2 ** 30).toFixed(1)} GB`; }
 
+// Where a loaded model sits: all on the GPU, all in RAM (run by the CPU), or split.
+function _where(m) {
+  if (!m.vram_bytes) return `${_gb(m.bytes)} on CPU`;
+  if (m.vram_bytes < m.bytes) return `${_gb(m.bytes)}, ${_gb(m.vram_bytes)} on GPU`;
+  return _gb(m.bytes);
+}
+
 function _roleState(r) {
   switch (r.state) {
-    case 'loaded':    return `loaded · ${_gb(r.bytes)}`;
+    case 'loaded':    return `loaded · ${_where(r)}`;
     case 'installed': return `installed · ${_gb(r.bytes)}`;
     case 'missing':   return 'not installed';
     case 'cpu':       return 'on CPU · built in';
@@ -364,7 +371,7 @@ async function loadModelsCard() {
   const m = data.machine;
   if (!m || !machineEl) { if (machineEl) machineEl.style.display = 'none'; return; }
   const loaded = m.loaded;
-  const kaiBytes = loaded ? Object.values(loaded).reduce((a, b) => a + b, 0) : 0;
+  const kaiBytes = loaded ? Object.values(loaded).reduce((a, m) => a + m.vram_bytes, 0) : 0;
   // Ollama doesn't say which card holds a model, so only a lone GPU gets the Kai segment.
   const bars = m.gpus.map(g => _memBar(
     `GPU ${g.index}${g.name ? ' · ' + _esc(g.name) : ''}`,
@@ -377,7 +384,7 @@ async function loadModelsCard() {
   if (loaded === null) note = 'Ollama isn\'t reachable — what\'s loaded is unknown.';
   else if (!Object.keys(loaded).length) note = 'Nothing loaded in Ollama right now.';
   else {
-    note = 'Loaded: ' + Object.entries(loaded).map(([k, v]) => `${_esc(k)} (${_gb(v)})`).join(', ');
+    note = 'Loaded: ' + Object.entries(loaded).map(([k, m]) => `${_esc(k)} (${_where(m)})`).join(', ');
     if (m.gpus.length > 1) note += ' — Ollama doesn\'t say which card, so it isn\'t drawn on a bar.';
   }
   machineEl.innerHTML = `<div class="dash-machine-head"><span>This machine</span><span>live</span></div>

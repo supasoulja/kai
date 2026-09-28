@@ -233,6 +233,22 @@ class OllamaClient:
         except Exception:
             return {}
 
+    def running(self) -> dict[str, dict]:
+        """Model loaded right now → {"bytes": total, "vram_bytes": on the GPU}. The rest of
+        `bytes` sits in system RAM, run by the CPU. {} on error."""
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/ps", timeout=5) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            return {
+                m["name"]: {
+                    "bytes": int(m.get("size", 0)),
+                    "vram_bytes": int(m.get("size_vram", 0)),
+                }
+                for m in result.get("models", [])
+            }
+        except Exception:
+            return {}
+
     def loaded_models(self) -> dict[str, int]:
         """Model loaded right now → bytes it holds in VRAM. {} on error."""
         try:

@@ -84,14 +84,14 @@ async def dashboard_stats(request: Request):
     }
 
 
-def _model_state(model: str, installed: dict | None, loaded: dict | None) -> tuple[str, int]:
+def _model_state(model: str, installed: dict | None, loaded: dict | None) -> dict:
     if installed is None:
-        return "unknown", 0
+        return {"state": "unknown", "bytes": 0}
     if loaded and model in loaded:
-        return "loaded", loaded[model]
+        return {"state": "loaded", **loaded[model]}
     if model in installed:
-        return "installed", installed[model]
-    return "missing", 0
+        return {"state": "installed", "bytes": installed[model]}
+    return {"state": "missing", "bytes": 0}
 
 
 @router.get("/dashboard/models")
@@ -105,7 +105,7 @@ def dashboard_models(request: Request):
     brain = get_or_create_brain(uid)
     alive = brain.ollama is not None and brain.ollama.is_alive()
     installed = brain.ollama.model_sizes() if alive else None
-    loaded = brain.ollama.loaded_models() if alive else None
+    loaded = brain.ollama.running() if alive else None
 
     tool_model, _ = brain._engine._resolve_tool_model()
     rows = [("chat", brain.model), ("tools", tool_model or brain.model)]
@@ -116,10 +116,10 @@ def dashboard_models(request: Request):
     out = []
     for role, model in rows:
         if role == "chat" and brain._chat_client is not brain.ollama:
-            state, size = "cloud", 0
+            state = {"state": "cloud", "bytes": 0}
         else:
-            state, size = _model_state(model, installed, loaded)
-        out.append({"role": role, "model": model, "state": state, "bytes": size})
+            state = _model_state(model, installed, loaded)
+        out.append({"role": role, "model": model, **state})
     out.append({"role": "search_fast", "model": cfg.FAST_EMBED_MODEL, "state": "cpu", "bytes": 0})
 
     machine = None
