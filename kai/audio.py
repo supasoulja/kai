@@ -152,8 +152,8 @@ def synthesize(text: str, voice: str | None = None, speed: float | None = None) 
     speed = speed if speed is not None else TTS_SPEED
     text = _strip_urls_for_speech(text)
 
+    kokoro = _get_kokoro()  # takes _kokoro_lock itself; it isn't reentrant
     with _kokoro_lock:
-        kokoro = _get_kokoro()
         samples, sample_rate = kokoro.create(text, voice=voice, speed=speed)
 
     return _samples_to_wav(samples, sample_rate)
@@ -242,8 +242,8 @@ def synthesize_chunks(
     speed = speed if speed is not None else TTS_SPEED
     text = _strip_urls_for_speech(text)
 
+    kokoro = _get_kokoro()
     with _kokoro_lock:
-        kokoro = _get_kokoro()
         for chunk in _split_into_chunks(text):
             samples, sample_rate = kokoro.create(chunk, voice=voice, speed=speed)
             yield _samples_to_wav(samples, sample_rate)
