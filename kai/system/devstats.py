@@ -13,8 +13,12 @@ themselves carry no auth or web concerns.
 
 from __future__ import annotations
 
+import glob
+import re
+import shutil
 import socket
 import subprocess
+from pathlib import Path
 
 import psutil
 
@@ -40,6 +44,75 @@ def collect_disk() -> list[dict]:
         )
     out.sort(key=lambda d: d["total_gb"], reverse=True)
     return out
+
+
+def _gpu_name(device_dir: Path) -> str | None:
+    """Marketing name from lspci for a DRM device: the bracketed part of a
+    "Chip [Card Name]" device string. None when lspci is missing or says nothing."""
+    try:
+        uevent = (device_dir / "uevent").read_text()
+    except OSError:
+        return None
+    slot = next(
+        (ln.split("=", 1)[1] for ln in uevent.splitlines() if ln.startswith("PCI_SLOT_NAME=")),
+        None,
+    )
+    if not slot or not shutil.which("lspci"):
+        return None
+    try:
+        out = subprocess.run(
+            ["lspci", "-vmm", "-s", slot], capture_output=True, text=True, timeout=3
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    device = next(
+        (ln.split(":", 1)[1].strip() for ln in out.splitlines() if ln.startswith("Device:")), ""
+    )
+    bracketed = re.findall(r"\[([^\]]+)\]", device)
+    return (bracketed[-1] if bracketed else device) or None
+
+
+def collect_gpus() -> list[dict]:
+    """GPUs with readable VRAM, in card order: [{index, name, total_bytes, used_bytes}].
+    AMD sysfs first, nvidia-smi if there is none; [] on a machine with neither."""
+    out: list[dict] = []
+    cards = glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")
+    for path in sorted(cards, key=lambda p: int(re.search(r"card(\d+)", p).group(1))):
+        device_dir = Path(path).parent
+        try:
+            total = int((device_dir / "mem_info_vram_total").read_text())
+            used = int((device_dir / "mem_info_vram_used").read_text())
+        except (OSError, ValueError):
+            continue
+        out.append({"name": _gpu_name(device_dir), "total_bytes": total, "used_bytes": used})
+    if not out and shutil.which("nvidia-smi"):
+        try:
+            res = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,memory.used",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in res.stdout.strip().splitlines():
+                name, total, used = (s.strip() for s in line.rsplit(",", 2))
+                out.append(
+                    {"name": name, "total_bytes": int(total) << 20, "used_bytes": int(used) << 20}
+                )
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    for i, gpu in enumerate(out, 1):
+        gpu["index"] = i
+    return out
+
+
+def collect_ram() -> dict:
+    """{total_bytes, used_bytes}, where used is what isn't available to new programs."""
+    vm = psutil.virtual_memory()
+    return {"total_bytes": vm.total, "used_bytes": vm.total - vm.available}
 
 
 def collect_network() -> list[dict]:

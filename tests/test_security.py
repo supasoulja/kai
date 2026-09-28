@@ -271,6 +271,8 @@ class TestAuthGuard:
         ("GET", "/sessions"),
         ("GET", "/info"),
         ("GET", "/dashboard/stats"),
+        ("GET", "/dashboard/models"),
+        ("GET", "/dashboard/routine"),
         ("GET", "/docs/list"),
     ]
 

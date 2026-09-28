@@ -1519,7 +1519,7 @@
     /* ── Dashboard redesign ───────────────────────────────────────── */
     .dash-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 16px; }
     @media (max-width: 700px) { .dash-grid { grid-template-columns: 1fr; } }
-    .dash-col { display: flex; flex-direction: column; }
+    .dash-col { display: flex; flex-direction: column; min-width: 0; }
     .dash-section { background: var(--surface-low); border: 1px solid var(--outline-v); border-radius: 8px; padding: 12px 14px; }
     .dash-section-head { display: flex; align-items: center; gap: 6px; font-family: var(--font-ui); font-size: var(--t-xs); color: var(--muted); margin-bottom: 10px; }
     .dash-refresh-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--muted); padding: 0; display: flex; align-items: center; transition: color .15s; }
@@ -1544,6 +1544,36 @@
     /* Briefing card */
     .dash-briefing-card { background: var(--surface-low); border: 1px solid var(--outline-v); border-left: 3px solid var(--tertiary); border-radius: 8px; padding: 14px 16px; }
     .dash-briefing-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    /* Models + Routine cards */
+    .dash-note { font-size: var(--t-xs); color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    .dash-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--t-xs); color: var(--muted); margin-top: 4px; }
+    .dash-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+    .dash-role { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--outline-v); }
+    .dash-role:last-child { border-bottom: none; }
+    .dash-role-model { font-family: var(--font-mono); font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dash-role-state { display: flex; align-items: center; gap: 6px; font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .dash-role-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .dash-role-state.loaded { color: var(--text); }
+    .dash-role-state.loaded i { background: #4ade80; box-shadow: 0 0 6px #4ade8066; }
+    .dash-role-state.missing { color: var(--tertiary); }
+    .dash-role-state.missing i { background: var(--tertiary); }
+    .dash-role-state.cpu i, .dash-role-state.cloud i { background: transparent; border: 1px solid var(--muted); }
+    .dash-machine { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--outline-v); }
+    .dash-machine-head { display: flex; justify-content: space-between; font-family: var(--font-ui); font-size: var(--t-xs); color: var(--muted); margin-bottom: 8px; }
+    .dash-mem-bar { margin-bottom: 9px; }
+    .dash-mem-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text); margin-bottom: 4px; }
+    .dash-mem-top span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dash-mem-top .dash-mem-num { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .dash-mem-track { display: flex; height: 8px; background: var(--surface); border: 1px solid var(--outline-v); border-radius: 4px; overflow: hidden; }
+    .dash-mem-kai { background: var(--accent); }
+    .dash-mem-other { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+    .dash-rt-strip { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+    .dash-rt-cell { height: 26px; border-radius: 3px; background: var(--surface); border: 1px solid var(--outline-v); }
+    .dash-rt-cell.l1 { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+    .dash-rt-cell.l2 { background: color-mix(in srgb, var(--accent) 60%, var(--surface)); }
+    .dash-rt-cell.l3 { background: var(--accent); }
+    .dash-rt-cell.unknown, .dash-legend i.unknown { background: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--muted) 35%, transparent) 3px 4px); }
+    .dash-rt-ticks { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: var(--t-xs); color: var(--muted); margin-top: 3px; }
 
     /* ── Goals banner (above chat input) ────────────────────────── */
     .goals-banner { display: flex; align-items: center; gap: 8px; padding: 6px 24px; background: color-mix(in srgb, var(--tertiary) 8%, var(--surface)); border-top: 1px solid color-mix(in srgb, var(--tertiary) 20%, transparent); }
@@ -1740,6 +1770,19 @@
           <!-- Left: System + Stats -->
           <div class="dash-col">
 
+            <!-- Models: role → model, and this machine's GPU / RAM fill -->
+            <div class="dash-section">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">memory</span>
+                Models
+                <button id="dash-models-refresh" class="dash-refresh-btn" title="Refresh models">
+                  <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
+                </button>
+              </div>
+              <div id="dash-models-roles"><span class="dash-note">Loading…</span></div>
+              <div id="dash-models-machine" class="dash-machine" style="display:none"></div>
+            </div>
+
             <!-- Developer: live system stats (hidden unless dev mode is on) -->
             <div id="dash-dev-section" class="dash-section" style="margin-top:12px;display:none">
               <div class="dash-section-head">
@@ -1810,6 +1853,22 @@
 
           <!-- Right: Goals + Activity -->
           <div class="dash-col">
+
+            <!-- Routine: when this account talks to Kai, by hour -->
+            <div class="dash-section" style="margin-bottom:12px">
+              <div class="dash-section-head">
+                <span class="material-symbols-outlined" style="font-size:15px">schedule</span>
+                Your routine
+              </div>
+              <div id="dash-routine-strip" class="dash-rt-strip"></div>
+              <div class="dash-rt-ticks"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+              <div id="dash-routine-note" class="dash-note">Loading…</div>
+              <div class="dash-legend">
+                <span><i style="background:var(--accent)"></i>talking to Kai</span>
+                <span><i style="background:var(--surface);border:1px solid var(--outline-v)"></i>quiet</span>
+                <span><i class="unknown"></i>unknown</span>
+              </div>
+            </div>
 
             <!-- Active Goals -->
             <div class="dash-section">

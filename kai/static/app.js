@@ -305,7 +305,8 @@ async function loadDashboard() {
     }
   } catch { /* ignore */ }
 
-  // Local containers / VMs
+  loadModelsCard();
+  loadRoutineCard();
 
   // Developer system stats (only when dev mode is on)
   if (_devMode) loadDevStats();
@@ -314,6 +315,113 @@ async function loadDashboard() {
   loadSessions();
 }
 
+
+// ── Models + Routine cards ───────────────────────────────────────────────────
+// Only what a sensor said: unknowns render as unknown, never as zero.
+
+const _ROLE_LABELS = { chat: 'Chat', tools: 'Tools', crew: 'Crew', search_fast: 'Search · fast', search_deep: 'Search · deep' };
+
+function _gb(b) { return `${(b / 2 ** 30).toFixed(1)} GB`; }
+
+function _roleState(r) {
+  switch (r.state) {
+    case 'loaded':    return `loaded · ${_gb(r.bytes)}`;
+    case 'installed': return `installed · ${_gb(r.bytes)}`;
+    case 'missing':   return 'not installed';
+    case 'cpu':       return 'on CPU · built in';
+    case 'cloud':     return 'cloud';
+    default:          return 'unknown';
+  }
+}
+
+function _memBar(label, total, used, kaiBytes) {
+  const pct = b => `${Math.max(0, Math.min(100, b / total * 100)).toFixed(2)}%`;
+  const kai = kaiBytes ? `<div class="dash-mem-kai" style="width:${pct(kaiBytes)}"></div>` : '';
+  const other = Math.max(0, used - (kaiBytes || 0));
+  return `<div class="dash-mem-bar">
+    <div class="dash-mem-top"><span>${label}</span><span class="dash-mem-num">${_gb(used)} / ${_gb(total)}</span></div>
+    <div class="dash-mem-track">${kai}<div class="dash-mem-other" style="width:${pct(other)}"></div></div>
+  </div>`;
+}
+
+async function loadModelsCard() {
+  const rolesEl = $('dash-models-roles');
+  const machineEl = $('dash-models-machine');
+  if (!rolesEl) return;
+  let data;
+  try {
+    data = await fetch('/dashboard/models').then(r => { if (!r.ok) throw r; return r.json(); });
+  } catch {
+    rolesEl.innerHTML = '<span class="dash-note">Couldn\'t read the models right now.</span>';
+    return;
+  }
+  rolesEl.innerHTML = data.roles.map(r => `<div class="dash-role">
+      <span class="dash-stat-key">${_esc(_ROLE_LABELS[r.role] || r.role)}</span>
+      <span class="dash-role-model" title="${_esc(r.model)}">${_esc(r.model)}</span>
+      <span class="dash-role-state ${_esc(r.state)}"><i></i>${_roleState(r)}</span>
+    </div>`).join('');
+
+  const m = data.machine;
+  if (!m || !machineEl) { if (machineEl) machineEl.style.display = 'none'; return; }
+  const loaded = m.loaded;
+  const kaiBytes = loaded ? Object.values(loaded).reduce((a, b) => a + b, 0) : 0;
+  // Ollama doesn't say which card holds a model, so only a lone GPU gets the Kai segment.
+  const bars = m.gpus.map(g => _memBar(
+    `GPU ${g.index}${g.name ? ' · ' + _esc(g.name) : ''}`,
+    g.total_bytes, g.used_bytes, m.gpus.length === 1 ? kaiBytes : 0,
+  ));
+  if (!m.gpus.length) bars.push('<div class="dash-note" style="margin:0 0 9px">No GPU found — models run on the CPU and use RAM.</div>');
+  bars.push(_memBar('RAM', m.ram.total_bytes, m.ram.used_bytes, 0));
+
+  let note;
+  if (loaded === null) note = 'Ollama isn\'t reachable — what\'s loaded is unknown.';
+  else if (!Object.keys(loaded).length) note = 'Nothing loaded in Ollama right now.';
+  else {
+    note = 'Loaded: ' + Object.entries(loaded).map(([k, v]) => `${_esc(k)} (${_gb(v)})`).join(', ');
+    if (m.gpus.length > 1) note += ' — Ollama doesn\'t say which card, so it isn\'t drawn on a bar.';
+  }
+  machineEl.innerHTML = `<div class="dash-machine-head"><span>This machine</span><span>live</span></div>
+    ${bars.join('')}
+    <div class="dash-legend">
+      <span><i style="background:var(--accent)"></i>Kai's models</span>
+      <span><i class="dash-mem-other"></i>everything else</span>
+      <span><i style="background:var(--surface);border:1px solid var(--outline-v)"></i>free</span>
+    </div>
+    <div class="dash-note">${note}</div>`;
+  machineEl.style.display = '';
+}
+
+async function loadRoutineCard() {
+  const strip = $('dash-routine-strip');
+  const note = $('dash-routine-note');
+  if (!strip) return;
+  let d;
+  try {
+    d = await fetch('/dashboard/routine').then(r => { if (!r.ok) throw r; return r.json(); });
+  } catch {
+    strip.innerHTML = '<div class="dash-rt-cell unknown"></div>'.repeat(24);
+    if (note) note.textContent = 'Couldn\'t read your routine right now.';
+    return;
+  }
+  const summary = `${d.messages} message${d.messages === 1 ? '' : 's'} on ${d.days_seen} day${d.days_seen === 1 ? '' : 's'}, last ${d.days} days`;
+  if (!d.hours) {
+    strip.innerHTML = Array.from({ length: 24 }, (_, h) =>
+      `<div class="dash-rt-cell unknown" title="${String(h).padStart(2, '0')}:00 — unknown"></div>`).join('');
+    if (note) note.textContent = `${summary} — needs ${d.min_days} days before the hours mean anything.`;
+    return;
+  }
+  const peak = Math.max(1, ...d.hours);
+  strip.innerHTML = d.hours.map((c, h) => {
+    const lvl = c === 0 ? 0 : Math.min(3, Math.ceil(3 * c / peak));
+    return `<div class="dash-rt-cell l${lvl}" title="${String(h).padStart(2, '0')}:00 — ${c} message${c === 1 ? '' : 's'}"></div>`;
+  }).join('');
+  if (note) note.textContent = summary;
+}
+
+{
+  const btn = $('dash-models-refresh');
+  if (btn) btn.addEventListener('click', loadModelsCard);
+}
 
 // ── Developer mode: live system stats on the dashboard ────────────────────────
 // Toggle lives in Settings; the panel lives on the Dashboard. Stats reuse the

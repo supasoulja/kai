@@ -2,12 +2,14 @@
 
 import re
 import threading
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request
 
 import kai.config as cfg
-from kai.api.deps import get_user, uid_for
+from kai.api.deps import get_user, require_user, uid_for
 from kai.api.state import brain_for, get_or_create_brain
+from kai.llm import roles
 from kai.store.db import get_conn
 
 router = APIRouter()
@@ -79,6 +81,90 @@ async def dashboard_stats(request: Request):
         "sessions": sessions_count,
         "documents": docs_count,
         "notes": notes_count,
+    }
+
+
+def _model_state(model: str, installed: dict | None, loaded: dict | None) -> tuple[str, int]:
+    if installed is None:
+        return "unknown", 0
+    if loaded and model in loaded:
+        return "loaded", loaded[model]
+    if model in installed:
+        return "installed", installed[model]
+    return "missing", 0
+
+
+@router.get("/dashboard/models")
+def dashboard_models(request: Request):
+    """Which model runs each role, whether it's loaded, and — for non-guests — this
+    machine's GPU and RAM fill. Every number comes from Ollama, sysfs or psutil."""
+    from kai.core import permissions
+    from kai.system import devstats
+
+    uid = require_user(request)["user_id"]
+    brain = get_or_create_brain(uid)
+    alive = brain.ollama is not None and brain.ollama.is_alive()
+    installed = brain.ollama.model_sizes() if alive else None
+    loaded = brain.ollama.loaded_models() if alive else None
+
+    tool_model, _ = brain._engine._resolve_tool_model()
+    rows = [("chat", brain.model), ("tools", tool_model or brain.model)]
+    if cfg.CREW_ENABLED:
+        rows.append(("crew", roles.model_for("crew")))
+    rows.append(("search_deep", cfg.HQ_EMBED_MODEL))
+
+    out = []
+    for role, model in rows:
+        if role == "chat" and brain._chat_client is not brain.ollama:
+            state, size = "cloud", 0
+        else:
+            state, size = _model_state(model, installed, loaded)
+        out.append({"role": role, "model": model, "state": state, "bytes": size})
+    out.append({"role": "search_fast", "model": cfg.FAST_EMBED_MODEL, "state": "cpu", "bytes": 0})
+
+    machine = None
+    if permissions.level_of(uid) != "guest":
+        machine = {
+            "gpus": devstats.collect_gpus(),
+            "ram": devstats.collect_ram(),
+            "loaded": loaded,
+        }
+    return {"roles": out, "machine": machine}
+
+
+_ROUTINE_DAYS = 30
+_ROUTINE_MIN_DAYS = 7
+
+
+@router.get("/dashboard/routine")
+def dashboard_routine(request: Request):
+    """The caller's own messages by hour of day over the last 30 days. `hours` is None
+    until messages span enough distinct days to mean anything."""
+    uid = require_user(request)["user_id"]
+    since = (datetime.now() - timedelta(days=_ROUTINE_DAYS)).isoformat()
+    rows = get_conn().execute(
+        "SELECT timestamp FROM session_messages WHERE user_id = ? AND role = 'user' "
+        "AND timestamp >= ?",
+        (uid, since),
+    )
+    stamps = []
+    for (ts,) in rows:
+        try:
+            stamps.append(datetime.fromisoformat(ts))
+        except (TypeError, ValueError):
+            continue
+    days_seen = len({s.date() for s in stamps})
+    hours = None
+    if days_seen >= _ROUTINE_MIN_DAYS:
+        hours = [0] * 24
+        for s in stamps:
+            hours[s.hour] += 1
+    return {
+        "days": _ROUTINE_DAYS,
+        "min_days": _ROUTINE_MIN_DAYS,
+        "days_seen": days_seen,
+        "messages": len(stamps),
+        "hours": hours,
     }
 
 
